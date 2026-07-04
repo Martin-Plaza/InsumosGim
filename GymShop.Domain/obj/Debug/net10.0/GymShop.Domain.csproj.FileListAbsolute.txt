@@ -1,0 +1,11 @@
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\bin\Debug\net10.0\GymShop.Domain.deps.json
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\bin\Debug\net10.0\GymShop.Domain.dll
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\bin\Debug\net10.0\GymShop.Domain.pdb
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.AssemblyInfoInputs.cache
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.AssemblyInfo.cs
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.csproj.CoreCompileInputs.cache
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.dll
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\refint\GymShop.Domain.dll
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\GymShop.Domain.pdb
+C:\Users\HP\Documents\E-Commerce gimnasio\GymShop.Domain\obj\Debug\net10.0\ref\GymShop.Domain.dll

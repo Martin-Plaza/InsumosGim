@@ -1,4 +1,4 @@
-namespace GymShop.Domain.Entities;
+﻿namespace GymShop.Domain.Entities;
 
 public class Product
 {
@@ -13,5 +13,7 @@ public class Product
     public DateTime? UpdatedAt { get; set; }
 
     public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
+    public ICollection<CartItem> CartItems { get; set; } = new List<CartItem>();
 }
+
 

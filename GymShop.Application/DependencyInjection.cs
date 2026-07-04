@@ -1,4 +1,5 @@
-using GymShop.Application.UseCases.Auth;
+﻿using GymShop.Application.UseCases.Auth;
+using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Products;
 using GymShop.Application.UseCases.Users;
@@ -27,6 +28,13 @@ public static class DependencyInjection
         services.AddScoped<IGetOrdersUseCase, GetOrdersUseCase>();
         services.AddScoped<IUpdateOrderStatusUseCase, UpdateOrderStatusUseCase>();
 
+        services.AddScoped<IGetCartUseCase, GetCartUseCase>();
+        services.AddScoped<IAddCartItemUseCase, AddCartItemUseCase>();
+        services.AddScoped<IUpdateCartItemUseCase, UpdateCartItemUseCase>();
+        services.AddScoped<IRemoveCartItemUseCase, RemoveCartItemUseCase>();
+        services.AddScoped<IClearCartUseCase, ClearCartUseCase>();
+        services.AddScoped<ICheckoutCartUseCase, CheckoutCartUseCase>();
+
         services.AddScoped<IGetUsersUseCase, GetUsersUseCase>();
         services.AddScoped<ICreateUserUseCase, CreateUserUseCase>();
         services.AddScoped<IUpdateUserRoleUseCase, UpdateUserRoleUseCase>();
@@ -35,3 +43,4 @@ public static class DependencyInjection
         return services;
     }
 }
+

@@ -20,7 +20,15 @@ builder.Services.AddSwaggerGen(options =>
         Type = SecuritySchemeType.Http,
         Scheme = "bearer",
         BearerFormat = "JWT",
-        Description = "Ingresar el token JWT. Ejemplo: Bearer eyJhbGci..."
+        Description = "Ingresar solo el token JWT, sin el prefijo Bearer."
+    });
+
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecuritySchemeReference("Bearer", document, null),
+            []
+        }
     });
 });
 builder.Services.AddHttpContextAccessor();

@@ -1,4 +1,4 @@
-using GymShop.Application.Abstractions;
+﻿using GymShop.Application.Abstractions;
 using GymShop.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,6 +15,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Cart> Carts => Set<Cart>();
+    public DbSet<CartItem> CartItems => Set<CartItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -89,6 +91,43 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+
+        modelBuilder.Entity<Cart>(entity =>
+        {
+            entity.ToTable("Carts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => x.UserId).IsUnique();
+
+            entity
+                .HasOne(x => x.User)
+                .WithOne(x => x.Cart)
+                .HasForeignKey<Cart>(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CartItem>(entity =>
+        {
+            entity.ToTable("CartItems", table =>
+            {
+                table.HasCheckConstraint("CK_CartItems_Quantity_Positive", "[Quantity] > 0");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => new { x.CartId, x.ProductId }).IsUnique();
+
+            entity
+                .HasOne(x => x.Cart)
+                .WithMany(x => x.Items)
+                .HasForeignKey(x => x.CartId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne(x => x.Product)
+                .WithMany(x => x.CartItems)
+                .HasForeignKey(x => x.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<OrderItem>(entity =>
         {
             entity.ToTable("OrderItems", table =>
@@ -114,3 +153,4 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         });
     }
 }
+

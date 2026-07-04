@@ -1,4 +1,4 @@
-namespace GymShop.Domain.Entities;
+﻿namespace GymShop.Domain.Entities;
 
 public class User
 {
@@ -16,5 +16,7 @@ public class User
 
     public Role Role { get; set; } = null!;
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public Cart? Cart { get; set; }
 }
+
 

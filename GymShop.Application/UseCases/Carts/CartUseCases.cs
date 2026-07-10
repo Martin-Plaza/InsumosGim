@@ -230,10 +230,12 @@ public class ClearCartUseCase : IClearCartUseCase
 public class CheckoutCartUseCase : ICheckoutCartUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly ITransactionManager? _transactionManager;
 
-    public CheckoutCartUseCase(IApplicationDbContext db)
+    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null)
     {
         _db = db;
+        _transactionManager = transactionManager;
     }
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
@@ -245,7 +247,6 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         var cart = await _db.Carts
             .Include(x => x.Items)
-            .ThenInclude(x => x.Product)
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
 
         if (cart is null || cart.Items.Count == 0)
@@ -259,18 +260,44 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de crear otra.");
         }
 
+        var productIds = cart.Items.Select(x => x.ProductId).Distinct().ToList();
+        var products = await _db.Products
+            .Where(x => productIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+
         foreach (var item in cart.Items)
         {
-            if (!item.Product.IsActive)
+            if (!products.TryGetValue(item.ProductId, out var product) || !product.IsActive)
             {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"El producto {item.Product.Name} no esta activo.");
+                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "Uno de los productos del carrito no existe o no esta activo.");
             }
 
-            if (item.Product.Stock < item.Quantity)
+            if (product.Stock < item.Quantity)
             {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {item.Product.Name}.");
+                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
             }
         }
+
+        var orderLines = cart.Items
+            .OrderBy(x => x.Id)
+            .Select(item =>
+            {
+                var product = products[item.ProductId];
+                var unitPrice = product.Price;
+
+                return new
+                {
+                    Product = product,
+                    ProductId = product.Id,
+                    ProductName = product.Name,
+                    UnitPrice = unitPrice,
+                    item.Quantity,
+                    Subtotal = unitPrice * item.Quantity
+                };
+            })
+            .ToList();
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
 
         var order = new Order
         {
@@ -279,37 +306,41 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             Status = OrderStatus.Pending
         };
 
-        foreach (var item in cart.Items.OrderBy(x => x.Id))
+        foreach (var line in orderLines)
         {
-            var subtotal = item.Product.Price * item.Quantity;
             order.Items.Add(new OrderItem
             {
-                ProductId = item.Product.Id,
-                ProductName = item.Product.Name,
-                UnitPrice = item.Product.Price,
-                Quantity = item.Quantity,
-                Subtotal = subtotal
+                ProductId = line.ProductId,
+                ProductName = line.ProductName,
+                UnitPrice = line.UnitPrice,
+                Quantity = line.Quantity,
+                Subtotal = line.Subtotal
             });
 
-            order.Total += subtotal;
-            item.Product.Stock -= item.Quantity;
-            item.Product.UpdatedAt = DateTime.UtcNow;
+            order.Total += line.Subtotal;
+            line.Product.Stock -= line.Quantity;
+            line.Product.UpdatedAt = DateTime.UtcNow;
         }
 
         _db.Orders.Add(order);
         _db.CartItems.RemoveRange(cart.Items);
         cart.UpdatedAt = DateTime.UtcNow;
 
-        try
+        await _db.SaveChangesAsync(cancellationToken);
+
+        if (transaction is not null)
         {
-            await _db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El stock de uno o mas productos cambio durante la compra. Volve a intentar.");
+            await transaction.CommitAsync(cancellationToken);
         }
 
         return AppResult<OrderResponse>.Success(await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken));
+    }
+
+    private async Task<IApplicationTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        return _transactionManager is null
+            ? null
+            : await _transactionManager.BeginTransactionAsync(cancellationToken);
     }
 }
 
@@ -364,9 +395,3 @@ internal static class CartQueries
         return new CartResponse(cart.Id, cart.UserId, items.Sum(x => x.Subtotal), items);
     }
 }
-
-
-
-
-
-

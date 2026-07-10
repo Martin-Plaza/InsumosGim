@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using GymShop.Api.Middleware;
 using GymShop.Api.Services;
 using GymShop.Application;
 using GymShop.Application.Abstractions;
@@ -12,6 +13,8 @@ using Microsoft.IdentityModel.Tokens;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -84,6 +87,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseExceptionHandler();
 app.UseStaticFiles();
 app.UseCors("Frontend");
 app.UseAuthentication();

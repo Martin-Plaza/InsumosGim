@@ -1,4 +1,4 @@
-﻿using GymShop.Application.Abstractions;
+using GymShop.Application.Abstractions;
 using GymShop.Application.Abstractions.Repositories;
 using GymShop.Infrastructure.Data;
 using GymShop.Infrastructure.Repositories;
@@ -17,6 +17,7 @@ public static class DependencyInjection
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<GymShopDbContext>());
+        services.AddScoped<ITransactionManager, EfTransactionManager>();
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<GymShopDbContext>());
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
@@ -37,5 +38,3 @@ public static class DependencyInjection
         return services;
     }
 }
-
-

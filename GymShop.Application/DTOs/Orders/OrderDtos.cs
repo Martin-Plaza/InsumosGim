@@ -1,16 +1,14 @@
 namespace GymShop.Application.DTOs.Orders;
 
-public record CreateOrderRequest(
-    string ShippingAddress,
-    List<CreateOrderItemRequest> Items
-);
-
-public record CreateOrderItemRequest(
-    int ProductId,
-    int Quantity
-);
-
 public record UpdateOrderStatusRequest(string Status);
+
+public record OrderFilterRequest(string? UserEmail);
+
+public record CancelOrderRequest(string? Reason);
+
+public record ExpirePendingOrdersRequest(int OlderThanMinutes);
+
+public record ExpirePendingOrdersResponse(int CanceledOrders);
 
 public record OrderResponse(
     int Id,
@@ -20,7 +18,8 @@ public record OrderResponse(
     decimal Total,
     string Status,
     string ShippingAddress,
-    List<OrderItemResponse> Items
+    List<OrderItemResponse> Items,
+    List<OrderPaymentResponse> Payments
 );
 
 public record OrderSummaryResponse(
@@ -29,7 +28,9 @@ public record OrderSummaryResponse(
     string? UserEmail,
     DateTime CreatedAt,
     decimal Total,
-    string Status
+    string Status,
+    string? LastPaymentStatus,
+    int? LastPaymentId
 );
 
 public record OrderItemResponse(
@@ -39,4 +40,16 @@ public record OrderItemResponse(
     int Quantity,
     decimal Subtotal
 );
+
+public record OrderPaymentResponse(
+    int Id,
+    string Provider,
+    decimal Amount,
+    string Currency,
+    string Status,
+    DateTime CreatedAt,
+    DateTime? PaidAt
+);
+
+
 

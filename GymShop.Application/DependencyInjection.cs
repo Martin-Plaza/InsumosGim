@@ -1,6 +1,7 @@
-﻿using GymShop.Application.UseCases.Auth;
+using GymShop.Application.UseCases.Auth;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Orders;
+using GymShop.Application.UseCases.Payments;
 using GymShop.Application.UseCases.Products;
 using GymShop.Application.UseCases.Users;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,11 +23,19 @@ public static class DependencyInjection
         services.AddScoped<IUpdateProductStockUseCase, UpdateProductStockUseCase>();
         services.AddScoped<IUpdateProductStatusUseCase, UpdateProductStatusUseCase>();
 
-        services.AddScoped<ICreateOrderUseCase, CreateOrderUseCase>();
         services.AddScoped<IGetMyOrdersUseCase, GetMyOrdersUseCase>();
         services.AddScoped<IGetOrderByIdUseCase, GetOrderByIdUseCase>();
         services.AddScoped<IGetOrdersUseCase, GetOrdersUseCase>();
         services.AddScoped<IUpdateOrderStatusUseCase, UpdateOrderStatusUseCase>();
+        services.AddScoped<ICancelOrderUseCase, CancelOrderUseCase>();
+        services.AddScoped<IExpirePendingOrdersUseCase, ExpirePendingOrdersUseCase>();
+
+        services.AddScoped<ICreatePaymentUseCase, CreatePaymentUseCase>();
+        services.AddScoped<ICreateCurrentPaymentUseCase, CreateCurrentPaymentUseCase>();
+        services.AddScoped<IGetPaymentByIdUseCase, GetPaymentByIdUseCase>();
+        services.AddScoped<IGetOrderPaymentsUseCase, GetOrderPaymentsUseCase>();
+        services.AddScoped<IUpdatePaymentStatusUseCase, UpdatePaymentStatusUseCase>();
+        services.AddScoped<IHandlePaymentWebhookUseCase, HandlePaymentWebhookUseCase>();
 
         services.AddScoped<IGetCartUseCase, GetCartUseCase>();
         services.AddScoped<IAddCartItemUseCase, AddCartItemUseCase>();
@@ -43,4 +52,10 @@ public static class DependencyInjection
         return services;
     }
 }
+
+
+
+
+
+
 

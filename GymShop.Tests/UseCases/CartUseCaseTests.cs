@@ -1,7 +1,8 @@
-﻿using GymShop.Application.Common;
+using GymShop.Application.Common;
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Domain.Entities;
+using GymShop.Domain.Enums;
 using GymShop.Infrastructure.Services;
 using GymShop.Tests.TestSupport;
 
@@ -69,6 +70,33 @@ public class CartUseCaseTests
         Assert.Empty(db.CartItems);
     }
 
+    [Fact]
+    public async Task CheckoutCart_rejects_when_user_already_has_pending_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        await db.SaveChangesAsync();
+
+        var addToCart = new AddCartItemUseCase(db);
+        await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+
+        db.Orders.Add(new Order
+        {
+            UserId = user.Id,
+            ShippingAddress = "Av. Siempre Viva 742",
+            Status = OrderStatus.Pending,
+            Total = 100
+        });
+        await db.SaveChangesAsync();
+
+        var checkout = new CheckoutCartUseCase(db);
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Otra direccion 123"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Single(db.Orders);
+    }
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var role = db.Roles.Single(x => x.Name == "User");
@@ -102,3 +130,8 @@ public class CartUseCaseTests
         return product;
     }
 }
+
+
+
+
+

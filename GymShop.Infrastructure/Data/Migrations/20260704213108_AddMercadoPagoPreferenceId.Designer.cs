@@ -4,6 +4,7 @@ using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace GymShop.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(GymShopDbContext))]
-    partial class GymShopDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260704213108_AddMercadoPagoPreferenceId")]
+    partial class AddMercadoPagoPreferenceId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -122,10 +125,7 @@ namespace GymShop.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId")
-                        .IsUnique()
-                        .HasDatabaseName("UX_Orders_UserId_Pending")
-                        .HasFilter("[Status] = 'Pending'");
+                    b.HasIndex("UserId");
 
                     b.ToTable("Orders", (string)null);
                 });

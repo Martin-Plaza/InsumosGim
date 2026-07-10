@@ -1,4 +1,4 @@
-﻿using GymShop.Application.Abstractions;
+using GymShop.Application.Abstractions;
 using GymShop.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +17,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -70,6 +71,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.Price).HasPrecision(18, 2);
             entity.Property(x => x.ImageUrl).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+            entity.Property(x => x.RowVersion).IsRowVersion();
         });
 
         modelBuilder.Entity<Order>(entity =>
@@ -84,13 +87,18 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
+            entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.UserId)
+                .IsUnique()
+                .HasDatabaseName("UX_Orders_UserId_Pending")
+                .HasFilter("[Status] = 'Pending'");
+
             entity
                 .HasOne(x => x.User)
                 .WithMany(x => x.Orders)
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
-
 
         modelBuilder.Entity<Cart>(entity =>
         {
@@ -128,6 +136,37 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .HasForeignKey(x => x.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
+
+
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.ToTable("Payments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Provider).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.ExternalReference).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.ProviderPreferenceId).HasMaxLength(100);
+            entity.Property(x => x.ProviderPaymentId).HasMaxLength(100);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(100);
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.Status)
+                .HasConversion<string>()
+                .HasMaxLength(30)
+                .IsRequired();
+            entity.Property(x => x.CheckoutUrl).HasMaxLength(500);
+            entity.Property(x => x.FailureReason).HasMaxLength(500);
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => x.ExternalReference);
+            entity.HasIndex(x => new { x.Provider, x.ProviderPreferenceId }).HasFilter("[ProviderPreferenceId] IS NOT NULL");
+            entity.HasIndex(x => new { x.Provider, x.ProviderPaymentId }).HasFilter("[ProviderPaymentId] IS NOT NULL");
+            entity.HasIndex(x => x.IdempotencyKey);
+
+            entity
+                .HasOne(x => x.Order)
+                .WithMany(x => x.Payments)
+                .HasForeignKey(x => x.OrderId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<OrderItem>(entity =>
         {
             entity.ToTable("OrderItems", table =>
@@ -153,4 +192,6 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         });
     }
 }
+
+
 

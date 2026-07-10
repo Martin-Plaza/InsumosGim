@@ -7,11 +7,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Application.UseCases.Orders;
 
-public interface ICreateOrderUseCase
-{
-    Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CreateOrderRequest request, CancellationToken cancellationToken = default);
-}
-
 public interface IGetMyOrdersUseCase
 {
     Task<List<OrderSummaryResponse>> ExecuteAsync(int userId, CancellationToken cancellationToken = default);
@@ -24,95 +19,22 @@ public interface IGetOrderByIdUseCase
 
 public interface IGetOrdersUseCase
 {
-    Task<List<OrderSummaryResponse>> ExecuteAsync(CancellationToken cancellationToken = default);
+    Task<List<OrderSummaryResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default);
+}
+
+public interface ICancelOrderUseCase
+{
+    Task<AppResult<OrderResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancelOrderRequest request, CancellationToken cancellationToken = default);
+}
+
+public interface IExpirePendingOrdersUseCase
+{
+    Task<AppResult<ExpirePendingOrdersResponse>> ExecuteAsync(ExpirePendingOrdersRequest request, CancellationToken cancellationToken = default);
 }
 
 public interface IUpdateOrderStatusUseCase
 {
     Task<AppResult> ExecuteAsync(int id, UpdateOrderStatusRequest request, CancellationToken cancellationToken = default);
-}
-
-public class CreateOrderUseCase : ICreateOrderUseCase
-{
-    private readonly IApplicationDbContext _db;
-
-    public CreateOrderUseCase(IApplicationDbContext db)
-    {
-        _db = db;
-    }
-
-    public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CreateOrderRequest request, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(request.ShippingAddress))
-        {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
-        }
-
-        if (request.Items.Count == 0)
-        {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El pedido debe tener al menos un item.");
-        }
-
-        if (request.Items.Any(x => x.ProductId <= 0 || x.Quantity <= 0))
-        {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "Todos los items deben tener producto y cantidad validos.");
-        }
-
-        var requestedItems = request.Items
-            .GroupBy(x => x.ProductId)
-            .Select(x => new CreateOrderItemRequest(x.Key, x.Sum(i => i.Quantity)))
-            .ToList();
-
-        var productIds = requestedItems.Select(x => x.ProductId).ToList();
-        var products = await _db.Products
-            .Where(x => productIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, cancellationToken);
-
-        foreach (var item in requestedItems)
-        {
-            if (!products.TryGetValue(item.ProductId, out var product) || !product.IsActive)
-            {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"El producto {item.ProductId} no existe o no esta activo.");
-            }
-
-            if (product.Stock < item.Quantity)
-            {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
-            }
-        }
-
-        var order = new Order
-        {
-            UserId = userId,
-            ShippingAddress = request.ShippingAddress.Trim(),
-            Status = OrderStatus.Pending
-        };
-
-        foreach (var item in requestedItems)
-        {
-            var product = products[item.ProductId];
-            var subtotal = product.Price * item.Quantity;
-
-            order.Items.Add(new OrderItem
-            {
-                ProductId = product.Id,
-                ProductName = product.Name,
-                UnitPrice = product.Price,
-                Quantity = item.Quantity,
-                Subtotal = subtotal
-            });
-
-            order.Total += subtotal;
-            product.Stock -= item.Quantity;
-            product.UpdatedAt = DateTime.UtcNow;
-        }
-
-        _db.Orders.Add(order);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        var created = await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken);
-        return AppResult<OrderResponse>.Success(created);
-    }
 }
 
 public class GetMyOrdersUseCase : IGetMyOrdersUseCase
@@ -129,8 +51,10 @@ public class GetMyOrdersUseCase : IGetMyOrdersUseCase
         return await _db.Orders
             .AsNoTracking()
             .Where(x => x.UserId == userId)
+            .Include(x => x.User)
+            .Include(x => x.Payments)
             .OrderByDescending(x => x.Id)
-            .Select(x => OrderMapper.ToSummaryResponse(x, null))
+            .Select(x => OrderMapper.ToSummaryResponse(x, x.User.Email))
             .ToListAsync(cancellationToken);
     }
 }
@@ -150,6 +74,7 @@ public class GetOrderByIdUseCase : IGetOrderByIdUseCase
             .AsNoTracking()
             .Include(x => x.User)
             .Include(x => x.Items)
+            .Include(x => x.Payments)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (order is null)
@@ -175,14 +100,123 @@ public class GetOrdersUseCase : IGetOrdersUseCase
         _db = db;
     }
 
-    public async Task<List<OrderSummaryResponse>> ExecuteAsync(CancellationToken cancellationToken = default)
+    public async Task<List<OrderSummaryResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default)
     {
-        return await _db.Orders
+        var query = _db.Orders
             .AsNoTracking()
             .Include(x => x.User)
+            .Include(x => x.Payments)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(filter.UserEmail))
+        {
+            var email = filter.UserEmail.Trim();
+            query = query.Where(x => x.User.Email.Contains(email));
+        }
+
+        return await query
             .OrderByDescending(x => x.Id)
             .Select(x => OrderMapper.ToSummaryResponse(x, x.User.Email))
             .ToListAsync(cancellationToken);
+    }
+}
+
+
+public class CancelOrderUseCase : ICancelOrderUseCase
+{
+    private readonly IApplicationDbContext _db;
+
+    public CancelOrderUseCase(IApplicationDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task<AppResult<OrderResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancelOrderRequest request, CancellationToken cancellationToken = default)
+    {
+        var order = await _db.Orders
+            .Include(x => x.User)
+            .Include(x => x.Items)
+            .ThenInclude(x => x.Product)
+            .Include(x => x.Payments)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (order is null)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
+        }
+
+        if (order.UserId != userId && !canManageAll)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Forbidden, "No tenes permisos para cancelar este pedido.");
+        }
+
+        if (order.Status == OrderStatus.Canceled)
+        {
+            return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
+        }
+
+        if (order.Status != OrderStatus.Pending)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Solo se pueden cancelar pedidos pendientes desde este flujo.");
+        }
+
+        OrderCancellation.CancelPendingAndRestoreStock(order);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
+    }
+}
+
+public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
+{
+    private readonly IApplicationDbContext _db;
+
+    public ExpirePendingOrdersUseCase(IApplicationDbContext db)
+    {
+        _db = db;
+    }
+
+    public async Task<AppResult<ExpirePendingOrdersResponse>> ExecuteAsync(ExpirePendingOrdersRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.OlderThanMinutes <= 0)
+        {
+            return AppResult<ExpirePendingOrdersResponse>.Failure(AppErrorType.Validation, "El vencimiento debe ser mayor a cero minutos.");
+        }
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-request.OlderThanMinutes);
+        var orders = await _db.Orders
+            .Include(x => x.Items)
+            .ThenInclude(x => x.Product)
+            .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff)
+            .ToListAsync(cancellationToken);
+
+        foreach (var order in orders)
+        {
+            OrderCancellation.CancelPendingAndRestoreStock(order);
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return AppResult<ExpirePendingOrdersResponse>.Success(new ExpirePendingOrdersResponse(orders.Count));
+    }
+}
+
+internal static class OrderCancellation
+{
+    public static void CancelPendingAndRestoreStock(Order order)
+    {
+        if (order.Status != OrderStatus.Pending)
+        {
+            return;
+        }
+
+        order.Status = OrderStatus.Canceled;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        foreach (var item in order.Items)
+        {
+            item.Product.Stock += item.Quantity;
+            item.Product.UpdatedAt = DateTime.UtcNow;
+        }
     }
 }
 
@@ -208,11 +242,35 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             return AppResult.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
         }
 
+        if (!OrderStatusTransitions.CanAdminMove(order.Status, status))
+        {
+            return AppResult.Failure(AppErrorType.Validation, "Transicion de estado invalida. El estado Paid solo puede venir del flujo de pagos.");
+        }
+
         order.Status = status;
         order.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult.Success();
+    }
+}
+
+internal static class OrderStatusTransitions
+{
+    public static bool CanAdminMove(OrderStatus current, OrderStatus next)
+    {
+        if (current == next)
+        {
+            return true;
+        }
+
+        return (current, next) switch
+        {
+            (OrderStatus.Pending, OrderStatus.Canceled) => true,
+            (OrderStatus.Paid, OrderStatus.Shipped) => true,
+            (OrderStatus.Paid, OrderStatus.Canceled) => true,
+            _ => false
+        };
     }
 }
 
@@ -224,6 +282,7 @@ internal static class OrderQueries
             .AsNoTracking()
             .Include(x => x.User)
             .Include(x => x.Items)
+            .Include(x => x.Payments)
             .SingleAsync(x => x.Id == id, cancellationToken);
 
         return OrderMapper.ToResponse(order);
@@ -245,19 +304,37 @@ internal static class OrderMapper
             order.Items
                 .OrderBy(x => x.Id)
                 .Select(x => new OrderItemResponse(x.ProductId, x.ProductName, x.UnitPrice, x.Quantity, x.Subtotal))
+                .ToList(),
+            order.Payments
+                .OrderByDescending(x => x.Id)
+                .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt))
                 .ToList()
         );
     }
 
     public static OrderSummaryResponse ToSummaryResponse(Order order, string? userEmail)
     {
+        var lastPayment = order.Payments.OrderByDescending(x => x.Id).FirstOrDefault();
+
         return new OrderSummaryResponse(
             order.Id,
             order.UserId,
             userEmail,
             order.CreatedAt,
             order.Total,
-            order.Status.ToString()
+            order.Status.ToString(),
+            lastPayment?.Status.ToString(),
+            lastPayment?.Id
         );
     }
 }
+
+
+
+
+
+
+
+
+
+

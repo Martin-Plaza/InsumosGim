@@ -1,4 +1,4 @@
-using GymShop.Domain.Enums;
+﻿using GymShop.Domain.Enums;
 
 namespace GymShop.Domain.Entities;
 
@@ -14,5 +14,7 @@ public class Order
 
     public User User { get; set; } = null!;
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
+    public ICollection<Payment> Payments { get; set; } = new List<Payment>();
 }
+
 

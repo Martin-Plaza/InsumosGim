@@ -31,20 +31,4 @@ GET {{GymShop.Api_HostAddress}}/api/auth/me
 Authorization: Bearer {{Token}}
 Accept: application/json
 
-###
 
-POST {{GymShop.Api_HostAddress}}/api/orders
-Authorization: Bearer {{Token}}
-Content-Type: application/json
-
-{
-  "shippingAddress": "Av. Siempre Viva 742",
-  "items": [
-    {
-      "productId": 1,
-      "quantity": 1
-    }
-  ]
-}
-
-###

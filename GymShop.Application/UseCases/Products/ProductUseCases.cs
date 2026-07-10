@@ -1,4 +1,4 @@
-using GymShop.Application.Abstractions;
+﻿using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Products;
 using GymShop.Domain.Entities;
@@ -143,7 +143,15 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         product.IsActive = request.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return AppResult<ProductResponse>.Failure(AppErrorType.Conflict, "El producto fue modificado por otra operacion. Volve a intentar.");
+        }
+
         return AppResult<ProductResponse>.Success(ProductMapper.ToResponse(product));
     }
 }
@@ -172,7 +180,15 @@ public class UpdateProductStockUseCase : IUpdateProductStockUseCase
 
         product.Stock = request.Stock;
         product.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return AppResult.Failure(AppErrorType.Conflict, "El producto fue modificado por otra operacion. Volve a intentar.");
+        }
+
         return AppResult.Success();
     }
 }
@@ -196,7 +212,15 @@ public class UpdateProductStatusUseCase : IUpdateProductStatusUseCase
 
         product.IsActive = request.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return AppResult.Failure(AppErrorType.Conflict, "El producto fue modificado por otra operacion. Volve a intentar.");
+        }
+
         return AppResult.Success();
     }
 }
@@ -239,3 +263,5 @@ internal static class ProductMapper
         );
     }
 }
+
+

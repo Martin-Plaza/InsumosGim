@@ -1,4 +1,4 @@
-﻿using GymShop.Application.Abstractions;
+using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Orders;
@@ -72,6 +72,11 @@ public class AddCartItemUseCase : IAddCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Producto y cantidad son obligatorios.");
         }
 
+        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
+        {
+            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
+        }
+
         var product = await _db.Products.SingleOrDefaultAsync(x => x.Id == request.ProductId, cancellationToken);
         if (product is null || !product.IsActive)
         {
@@ -91,7 +96,7 @@ public class AddCartItemUseCase : IAddCartItemUseCase
         {
             _db.CartItems.Add(new CartItem
             {
-                CartId = cart.Id,
+                Cart = cart,
                 ProductId = product.Id,
                 Quantity = request.Quantity
             });
@@ -122,6 +127,11 @@ public class UpdateCartItemUseCase : IUpdateCartItemUseCase
         if (productId <= 0 || request.Quantity <= 0)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Producto y cantidad son obligatorios.");
+        }
+
+        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
+        {
+            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
         }
 
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
@@ -161,6 +171,11 @@ public class RemoveCartItemUseCase : IRemoveCartItemUseCase
 
     public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, CancellationToken cancellationToken = default)
     {
+        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
+        {
+            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
+        }
+
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
         {
@@ -192,6 +207,11 @@ public class ClearCartUseCase : IClearCartUseCase
 
     public async Task<AppResult> ExecuteAsync(int userId, CancellationToken cancellationToken = default)
     {
+        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
+        {
+            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
+        }
+
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
         {
@@ -231,6 +251,12 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         if (cart is null || cart.Items.Count == 0)
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El carrito esta vacio.");
+        }
+
+        var hasPendingOrder = await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken);
+        if (hasPendingOrder)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de crear otra.");
         }
 
         foreach (var item in cart.Items)
@@ -273,7 +299,15 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         _db.Orders.Add(order);
         _db.CartItems.RemoveRange(cart.Items);
         cart.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El stock de uno o mas productos cambio durante la compra. Volve a intentar.");
+        }
 
         return AppResult<OrderResponse>.Success(await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken));
     }
@@ -294,9 +328,16 @@ internal static class CartQueries
         return cart;
     }
 
+    public static Task<bool> HasPendingOrderAsync(IApplicationDbContext db, int userId, CancellationToken cancellationToken)
+    {
+        return db.Orders.AnyAsync(x => x.UserId == userId && x.Status == OrderStatus.Pending, cancellationToken);
+    }
+
     public static Task<Cart?> GetUserCartAsync(IApplicationDbContext db, int userId, CancellationToken cancellationToken)
     {
-        return db.Carts.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        return db.Carts
+            .Include(x => x.Items)
+            .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
     }
 
     public static async Task<CartResponse> LoadCartResponseAsync(IApplicationDbContext db, int cartId, CancellationToken cancellationToken)
@@ -323,3 +364,9 @@ internal static class CartQueries
         return new CartResponse(cart.Id, cart.UserId, items.Sum(x => x.Subtotal), items);
     }
 }
+
+
+
+
+
+

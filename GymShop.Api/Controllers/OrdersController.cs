@@ -11,37 +11,32 @@ namespace GymShop.Api.Controllers;
 [Route("api/orders")]
 public class OrdersController : ApiControllerBase
 {
-    private readonly ICreateOrderUseCase _createOrder;
     private readonly IGetMyOrdersUseCase _getMyOrders;
     private readonly IGetOrderByIdUseCase _getOrderById;
     private readonly IGetOrdersUseCase _getOrders;
     private readonly IUpdateOrderStatusUseCase _updateOrderStatus;
+    private readonly ICancelOrderUseCase _cancelOrder;
+    private readonly IExpirePendingOrdersUseCase _expirePendingOrders;
     private readonly ICurrentUserService _currentUser;
 
     public OrdersController(
-        ICreateOrderUseCase createOrder,
         IGetMyOrdersUseCase getMyOrders,
         IGetOrderByIdUseCase getOrderById,
         IGetOrdersUseCase getOrders,
         IUpdateOrderStatusUseCase updateOrderStatus,
+        ICancelOrderUseCase cancelOrder,
+        IExpirePendingOrdersUseCase expirePendingOrders,
         ICurrentUserService currentUser)
     {
-        _createOrder = createOrder;
         _getMyOrders = getMyOrders;
         _getOrderById = getOrderById;
         _getOrders = getOrders;
         _updateOrderStatus = updateOrderStatus;
+        _cancelOrder = cancelOrder;
+        _expirePendingOrders = expirePendingOrders;
         _currentUser = currentUser;
     }
 
-    [HttpPost]
-    public async Task<ActionResult<OrderResponse>> Create(CreateOrderRequest request, CancellationToken cancellationToken)
-    {
-        var result = await _createOrder.ExecuteAsync(_currentUser.UserId, request, cancellationToken);
-        return result.IsSuccess
-            ? CreatedAtAction(nameof(GetById), new { id = result.Value!.Id }, result.Value)
-            : ToErrorResponse(result.Error!);
-    }
 
     [HttpGet("my")]
     public async Task<ActionResult<List<OrderSummaryResponse>>> GetMyOrders(CancellationToken cancellationToken)
@@ -58,9 +53,9 @@ public class OrdersController : ApiControllerBase
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpGet]
-    public async Task<ActionResult<List<OrderSummaryResponse>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<List<OrderSummaryResponse>>> GetAll([FromQuery] string? userEmail, CancellationToken cancellationToken)
     {
-        return Ok(await _getOrders.ExecuteAsync(cancellationToken));
+        return Ok(await _getOrders.ExecuteAsync(new OrderFilterRequest(userEmail), cancellationToken));
     }
 
     [Authorize(Roles = "Admin,SuperAdmin")]
@@ -69,4 +64,20 @@ public class OrdersController : ApiControllerBase
     {
         return FromResult(await _updateOrderStatus.ExecuteAsync(id, request, cancellationToken));
     }
+
+    [HttpPost("{id:int}/cancel")]
+    public async Task<ActionResult<OrderResponse>> Cancel(int id, CancelOrderRequest request, CancellationToken cancellationToken)
+    {
+        var canManageAll = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+        return FromResult(await _cancelOrder.ExecuteAsync(id, _currentUser.UserId, canManageAll, request, cancellationToken));
+    }
+
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    [HttpPost("expire-pending")]
+    public async Task<ActionResult<ExpirePendingOrdersResponse>> ExpirePending(ExpirePendingOrdersRequest request, CancellationToken cancellationToken)
+    {
+        return FromResult(await _expirePendingOrders.ExecuteAsync(request, cancellationToken));
+    }
 }
+
+

@@ -1,9 +1,10 @@
-﻿using GymShop.Domain.Entities;
+﻿using GymShop.Application.Abstractions.Repositories;
+using GymShop.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Application.Abstractions;
 
-public interface IApplicationDbContext
+public interface IApplicationDbContext : IUnitOfWork
 {
     DbSet<Role> Roles { get; }
     DbSet<User> Users { get; }
@@ -12,7 +13,5 @@ public interface IApplicationDbContext
     DbSet<OrderItem> OrderItems { get; }
     DbSet<Cart> Carts { get; }
     DbSet<CartItem> CartItems { get; }
-
-    Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+    DbSet<Payment> Payments { get; }
 }
-

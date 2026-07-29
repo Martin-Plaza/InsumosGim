@@ -159,7 +159,10 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(x => x.ExternalReference);
             entity.HasIndex(x => new { x.Provider, x.ProviderPreferenceId }).HasFilter("[ProviderPreferenceId] IS NOT NULL");
             entity.HasIndex(x => new { x.Provider, x.ProviderPaymentId }).HasFilter("[ProviderPaymentId] IS NOT NULL");
-            entity.HasIndex(x => x.IdempotencyKey);
+            entity.HasIndex(x => x.IdempotencyKey)
+                .IsUnique()
+                .HasDatabaseName("UX_Payments_IdempotencyKey")
+                .HasFilter("[IdempotencyKey] IS NOT NULL");
 
             entity
                 .HasOne(x => x.Order)
@@ -192,6 +195,3 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         });
     }
 }
-
-
-

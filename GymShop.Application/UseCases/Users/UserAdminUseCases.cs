@@ -23,7 +23,7 @@ public interface IUpdateUserRoleUseCase
 
 public interface IUpdateUserStatusUseCase
 {
-    Task<AppResult> ExecuteAsync(int id, UpdateUserStatusRequest request, CancellationToken cancellationToken = default);
+    Task<AppResult> ExecuteAsync(int id, UpdateUserStatusRequest request, int? currentUserId = null, CancellationToken cancellationToken = default);
 }
 
 public class GetUsersUseCase : IGetUsersUseCase
@@ -140,12 +140,17 @@ public class UpdateUserStatusUseCase : IUpdateUserStatusUseCase
         _db = db;
     }
 
-    public async Task<AppResult> ExecuteAsync(int id, UpdateUserStatusRequest request, CancellationToken cancellationToken = default)
+    public async Task<AppResult> ExecuteAsync(int id, UpdateUserStatusRequest request, int? currentUserId = null, CancellationToken cancellationToken = default)
     {
         var user = await _db.Users.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (user is null)
         {
             return AppResult.Failure(AppErrorType.NotFound, "Usuario no encontrado.");
+        }
+
+        if (currentUserId == id && !request.IsActive)
+        {
+            return AppResult.Failure(AppErrorType.Conflict, "No podes desactivar tu propio usuario.");
         }
 
         user.IsActive = request.IsActive;

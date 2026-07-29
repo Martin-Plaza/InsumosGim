@@ -34,6 +34,40 @@ public class PaymentUseCaseTests
     }
 
     [Fact]
+    public async Task CreatePayment_rejects_missing_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var gateway = new FakeMercadoPagoGateway();
+
+        var useCase = new CreatePaymentUseCase(db, [gateway]);
+        var result = await useCase.ExecuteAsync(999999, user.Id, false, new CreatePaymentRequest("MercadoPago", "missing-order"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, result.Error?.Type);
+        Assert.Equal(0, gateway.CreatePreferenceCalls);
+        Assert.Empty(db.Payments);
+    }
+
+    [Fact]
+    public async Task CreatePayment_rejects_paid_order_without_creating_second_preference()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway();
+
+        var useCase = new CreatePaymentUseCase(db, [gateway]);
+        var result = await useCase.ExecuteAsync(order.Id, user.Id, false, new CreatePaymentRequest("MercadoPago", "paid-order"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(0, gateway.CreatePreferenceCalls);
+        Assert.Empty(db.Payments);
+    }
+    [Fact]
     public async Task CreateMercadoPagoPayment_uses_gateway_and_persists_preference_data()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -50,6 +84,30 @@ public class PaymentUseCaseTests
         Assert.Equal("pref-123", result.Value?.ProviderPreferenceId);
         Assert.Equal("https://sandbox.mercadopago.test/checkout", result.Value?.CheckoutUrl);
         Assert.Equal("idem-1", db.Payments.Single().IdempotencyKey);
+    }
+
+    [Fact]
+    public async Task CreatePayment_returns_existing_payment_for_same_idempotency_key()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var gateway = new FakeMercadoPagoGateway();
+        var useCase = new CreatePaymentUseCase(db, [gateway]);
+
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, false, new CreatePaymentRequest("MercadoPago", "idem-1"));
+        var payment = await db.Payments.SingleAsync();
+        payment.Status = PaymentStatus.Rejected;
+        await db.SaveChangesAsync();
+
+        var second = await useCase.ExecuteAsync(order.Id, user.Id, false, new CreatePaymentRequest("MercadoPago", "idem-1"));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsSuccess);
+        Assert.Equal(first.Value?.Id, second.Value?.Id);
+        Assert.Equal(PaymentStatus.Rejected.ToString(), second.Value?.Status);
+        Assert.Equal(1, gateway.CreatePreferenceCalls);
+        Assert.Single(db.Payments);
     }
 
     [Fact]
@@ -285,7 +343,3 @@ public class PaymentUseCaseTests
         }
     }
 }
-
-
-
-

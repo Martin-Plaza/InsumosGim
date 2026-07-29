@@ -124,6 +124,24 @@ internal static class PaymentCreator
         CreatePaymentRequest request,
         CancellationToken cancellationToken)
     {
+        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey) ? null : request.IdempotencyKey.Trim();
+        if (idempotencyKey is not null)
+        {
+            var idempotentPayment = await db.Payments
+                .AsNoTracking()
+                .SingleOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
+
+            if (idempotentPayment is not null)
+            {
+                if (idempotentPayment.OrderId != order.Id)
+                {
+                    return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otra orden.");
+                }
+
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(idempotentPayment));
+            }
+        }
+
         var activePayment = order.Payments
             .Where(x => x.Status == PaymentStatus.Pending)
             .OrderByDescending(x => x.Id)
@@ -157,7 +175,7 @@ internal static class PaymentCreator
             Provider = preference.Provider,
             ExternalReference = $"order-{order.Id}",
             ProviderPreferenceId = preference.ProviderPreferenceId,
-            IdempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey) ? null : request.IdempotencyKey.Trim(),
+            IdempotencyKey = idempotencyKey,
             Amount = order.Total,
             Currency = "ARS",
             Status = PaymentStatus.Pending,
@@ -462,4 +480,3 @@ internal static class PaymentMapper
         );
     }
 }
-

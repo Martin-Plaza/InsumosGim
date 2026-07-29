@@ -8,22 +8,23 @@ namespace GymShop.Infrastructure.Data;
 
 public static class DatabaseInitializer
 {
-    public static async Task InitializeAsync(IServiceProvider services)
+    public static async Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken = default)
     {
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
 
-        await db.Database.MigrateAsync();
-        await SeedSuperAdminAsync(db, configuration, passwordHasher);
-        await SeedSampleProductsAsync(db);
+        await db.Database.MigrateAsync(cancellationToken);
+        await SeedSuperAdminAsync(db, configuration, passwordHasher, cancellationToken);
+        await SeedSampleProductsAsync(db, cancellationToken);
     }
 
     private static async Task SeedSuperAdminAsync(
         GymShopDbContext db,
         IConfiguration configuration,
-        IPasswordHasher passwordHasher)
+        IPasswordHasher passwordHasher,
+        CancellationToken cancellationToken)
     {
         var section = configuration.GetSection("SeedSuperAdmin");
         var email = section["Email"]?.Trim().ToLowerInvariant();
@@ -35,12 +36,12 @@ public static class DatabaseInitializer
             return;
         }
 
-        if (await db.Users.AnyAsync(x => x.Email == email))
+        if (await db.Users.AnyAsync(x => x.Email == email, cancellationToken))
         {
             return;
         }
 
-        var role = await db.Roles.SingleAsync(x => x.Name == "SuperAdmin");
+        var role = await db.Roles.SingleAsync(x => x.Name == "SuperAdmin", cancellationToken);
         db.Users.Add(new User
         {
             Email = email,
@@ -50,12 +51,12 @@ public static class DatabaseInitializer
             IsActive = true
         });
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static async Task SeedSampleProductsAsync(GymShopDbContext db)
+    private static async Task SeedSampleProductsAsync(GymShopDbContext db, CancellationToken cancellationToken)
     {
-        if (await db.Products.AnyAsync())
+        if (await db.Products.AnyAsync(cancellationToken))
         {
             return;
         }
@@ -81,6 +82,6 @@ public static class DatabaseInitializer
             }
         );
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(cancellationToken);
     }
 }

@@ -107,7 +107,7 @@ public class PaymentsController : ApiControllerBase
     }
 }
 
-internal static class MercadoPagoWebhookSignatureValidator
+public static class MercadoPagoWebhookSignatureValidator
 {
     public static bool IsValid(string? xSignature, string? xRequestId, string dataId, string secret)
     {
@@ -136,7 +136,3 @@ internal static class MercadoPagoWebhookSignatureValidator
             Encoding.UTF8.GetBytes(receivedSignature.ToLowerInvariant()));
     }
 }
-
-
-
-

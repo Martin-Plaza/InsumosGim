@@ -38,6 +38,19 @@ public class AuthUseCaseTests
     }
 
     [Fact]
+    public async Task Register_rejects_duplicate_email_with_different_casing()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var useCase = new RegisterUserUseCase(db, new PasswordHasher(), new FakeJwtTokenService());
+
+        await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "Cliente@Test.com", "123456"));
+        var duplicate = await useCase.ExecuteAsync(new RegisterRequest("Otro", "cliente@test.com", "123456"));
+
+        Assert.False(duplicate.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, duplicate.Error?.Type);
+        Assert.Single(db.Users);
+    }
+    [Fact]
     public async Task Login_returns_token_for_valid_credentials()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

@@ -5,6 +5,7 @@ using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using GymShop.Infrastructure.Services;
 using GymShop.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Tests.UseCases;
 
@@ -47,6 +48,22 @@ public class CartUseCaseTests
     }
 
     [Fact]
+    public async Task AddCartItem_rejects_zero_quantity()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        await db.SaveChangesAsync();
+
+        var useCase = new AddCartItemUseCase(db);
+        var result = await useCase.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 0));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Empty(db.CartItems);
+    }
+
+    [Fact]
     public async Task CheckoutCart_creates_order_decrements_stock_and_clears_cart()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -68,6 +85,72 @@ public class CartUseCaseTests
         Assert.Single(db.Orders);
         Assert.Single(db.OrderItems);
         Assert.Empty(db.CartItems);
+    }
+
+    [Fact]
+    public async Task CheckoutCart_preserves_product_price_at_purchase_time()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        await db.SaveChangesAsync();
+
+        var addToCart = new AddCartItemUseCase(db);
+        await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
+
+        var checkout = new CheckoutCartUseCase(db);
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+        product.Price = 999;
+        await db.SaveChangesAsync();
+
+        var item = await db.OrderItems.SingleAsync();
+        Assert.True(result.IsSuccess);
+        Assert.Equal(100, item.UnitPrice);
+        Assert.Equal(200, item.Subtotal);
+    }
+
+    [Fact]
+    public async Task CheckoutCart_with_two_products_decrements_both_stocks()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var firstProduct = SeedProduct(db, stock: 5, price: 100);
+        var secondProduct = SeedProduct(db, stock: 8, price: 50);
+        await db.SaveChangesAsync();
+
+        var addToCart = new AddCartItemUseCase(db);
+        await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(firstProduct.Id, 2));
+        await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(secondProduct.Id, 3));
+
+        var checkout = new CheckoutCartUseCase(db);
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(3, firstProduct.Stock);
+        Assert.Equal(5, secondProduct.Stock);
+        Assert.Equal(350, result.Value?.Total);
+        Assert.Equal(2, db.OrderItems.Count());
+    }
+
+    [Fact]
+    public async Task CheckoutCart_rejects_missing_product_without_changing_stock()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        var cart = new Cart { UserId = user.Id };
+        cart.Items.Add(new CartItem { ProductId = product.Id, Quantity = 1 });
+        cart.Items.Add(new CartItem { ProductId = 999999, Quantity = 1 });
+        db.Carts.Add(cart);
+        await db.SaveChangesAsync();
+
+        var checkout = new CheckoutCartUseCase(db);
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Equal(5, product.Stock);
+        Assert.Empty(db.Orders);
     }
 
     [Fact]
@@ -97,6 +180,7 @@ public class CartUseCaseTests
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Single(db.Orders);
     }
+
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var role = db.Roles.Single(x => x.Name == "User");
@@ -119,8 +203,8 @@ public class CartUseCaseTests
     {
         var product = new Product
         {
-            Name = "Mancuerna",
-            Description = "Mancuerna 10kg",
+            Name = $"Producto {Guid.NewGuid():N}",
+            Description = "Producto test",
             Price = price,
             Stock = stock,
             IsActive = true
@@ -130,8 +214,3 @@ public class CartUseCaseTests
         return product;
     }
 }
-
-
-
-
-

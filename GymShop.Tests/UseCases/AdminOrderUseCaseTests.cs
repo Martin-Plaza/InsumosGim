@@ -92,6 +92,38 @@ public class AdminOrderUseCaseTests
         Assert.Equal(OrderStatus.Paid, oldPaid.Status);
     }
 
+    [Fact]
+    public async Task GetOrderById_rejects_other_user_and_allows_admin()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var owner = await SeedUserAsync(db, "owner@test.com");
+        var otherUser = await SeedUserAsync(db, "other@test.com");
+        var order = await SeedOrderAsync(db, owner.Id, stock: 5, quantity: 1, price: 100);
+
+        var useCase = new GetOrderByIdUseCase(db);
+        var otherUserResult = await useCase.ExecuteAsync(order.Id, otherUser.Id, canViewAll: false);
+        var adminResult = await useCase.ExecuteAsync(order.Id, otherUser.Id, canViewAll: true);
+
+        Assert.False(otherUserResult.IsSuccess);
+        Assert.Equal(AppErrorType.Forbidden, otherUserResult.Error?.Type);
+        Assert.True(adminResult.IsSuccess);
+        Assert.Equal(order.Id, adminResult.Value?.Id);
+    }
+
+    [Fact]
+    public async Task UpdateOrderStatus_rejects_invalid_transition()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "cliente@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+
+        var useCase = new UpdateOrderStatusUseCase(db);
+        var result = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+    }
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db, string email)
     {
         var role = db.Roles.Single(x => x.Name == "User");
@@ -147,7 +179,3 @@ public class AdminOrderUseCaseTests
         return await db.Orders.Include(x => x.Items).ThenInclude(x => x.Product).SingleAsync(x => x.Id == order.Id);
     }
 }
-
-
-
-

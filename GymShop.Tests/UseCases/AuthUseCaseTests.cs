@@ -1,8 +1,11 @@
+using System.IdentityModel.Tokens.Jwt;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Auth;
 using GymShop.Application.UseCases.Auth;
 using GymShop.Infrastructure.Services;
+using GymShop.Infrastructure.Configuration;
 using GymShop.Tests.TestSupport;
+using Microsoft.Extensions.Options;
 
 namespace GymShop.Tests.UseCases;
 
@@ -64,6 +67,30 @@ public class AuthUseCaseTests
         Assert.True(result.IsSuccess);
         Assert.NotNull(result.Value);
         Assert.Equal("cliente@test.com", result.Value.User.Email);
+    }
+
+    [Fact]
+    public async Task Login_emits_current_token_version()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var passwordHasher = new PasswordHasher();
+        var jwt = new JwtTokenService(Options.Create(new JwtOptions
+        {
+            Issuer = "GymShop.Tests",
+            Audience = "GymShop.Tests.Client",
+            Secret = "test-signing-secret-with-at-least-32-characters"
+        }));
+        var register = new RegisterUserUseCase(db, passwordHasher, new FakeJwtTokenService());
+        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "123456"));
+        var user = db.Users.Single();
+        user.TokenVersion = 7;
+        await db.SaveChangesAsync();
+        var login = new LoginUserUseCase(db, passwordHasher, jwt);
+
+        var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "123456"));
+        var token = new JwtSecurityTokenHandler().ReadJwtToken(result.Value!.Token);
+
+        Assert.Equal("7", token.Claims.Single(x => x.Type == GymShop.Application.Abstractions.JwtClaimNames.TokenVersion).Value);
     }
 
     [Fact]

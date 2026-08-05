@@ -3,28 +3,23 @@ using System.Security.Claims;
 using System.Text;
 using GymShop.Application.Abstractions;
 using GymShop.Domain.Entities;
-using Microsoft.Extensions.Configuration;
+using GymShop.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace GymShop.Infrastructure.Services;
 
 public class JwtTokenService : IJwtTokenService
 {
-    private readonly IConfiguration _configuration;
+    private readonly JwtOptions _options;
 
-    public JwtTokenService(IConfiguration configuration)
+    public JwtTokenService(IOptions<JwtOptions> options)
     {
-        _configuration = configuration;
+        _options = options.Value;
     }
 
     public string CreateToken(User user)
     {
-        var jwtSection = _configuration.GetSection("Jwt");
-        var secret = jwtSection["Secret"] ?? throw new InvalidOperationException("Jwt:Secret is not configured.");
-        var issuer = jwtSection["Issuer"];
-        var audience = jwtSection["Audience"];
-        var expirationMinutes = jwtSection.GetValue("ExpirationMinutes", 10080);
-
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -32,16 +27,17 @@ public class JwtTokenService : IJwtTokenService
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, user.Name),
-            new(ClaimTypes.Role, user.Role.Name)
+            new(ClaimTypes.Role, user.Role.Name),
+            new(JwtClaimNames.TokenVersion, user.TokenVersion.ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Secret!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
-            issuer,
-            audience,
+            _options.Issuer,
+            _options.Audience,
             claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
+            expires: DateTime.UtcNow.AddMinutes(_options.ExpirationMinutes),
             signingCredentials: credentials
         );
 

@@ -8,10 +8,14 @@ namespace GymShop.Api.Middleware;
 public sealed class GlobalExceptionHandler : IExceptionHandler
 {
     private readonly IProblemDetailsService _problemDetailsService;
+    private readonly ILogger<GlobalExceptionHandler> _logger;
 
-    public GlobalExceptionHandler(IProblemDetailsService problemDetailsService)
+    public GlobalExceptionHandler(
+        IProblemDetailsService problemDetailsService,
+        ILogger<GlobalExceptionHandler> logger)
     {
         _problemDetailsService = problemDetailsService;
+        _logger = logger;
     }
 
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
@@ -26,6 +30,13 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
         };
 
         httpContext.Response.StatusCode = statusCode;
+        var traceId = httpContext.TraceIdentifier;
+        var isUnexpected = statusCode == StatusCodes.Status500InternalServerError;
+
+        if (isUnexpected)
+        {
+            _logger.LogError(exception, "Unhandled exception while processing request. TraceId: {TraceId}", traceId);
+        }
 
         return await _problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
@@ -35,7 +46,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             {
                 Status = statusCode,
                 Title = title,
-                Detail = exception.Message
+                Detail = isUnexpected
+                    ? "Ocurrio un error inesperado. Use el traceId para contactar al soporte."
+                    : exception.Message,
+                Extensions = { ["traceId"] = traceId }
             }
         });
     }

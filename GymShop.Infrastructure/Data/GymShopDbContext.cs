@@ -48,6 +48,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.LastName).HasMaxLength(100);
             entity.Property(x => x.Phone).HasMaxLength(50);
             entity.Property(x => x.Address).HasMaxLength(300);
+            entity.Property(x => x.TokenVersion).HasDefaultValue(0);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             entity.HasIndex(x => x.Email).IsUnique();
 

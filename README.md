@@ -254,6 +254,7 @@ Backend para un e-commerce de productos de gimnasio construido con .NET, ASP.NET
 ## Caracteristicas principales
 
 - Autenticacion con JWT.
+- Invalidacion inmediata de JWT al desactivar usuarios o cambiar roles.
 - Roles: User, Admin y SuperAdmin.
 - Gestion de usuarios para SuperAdmin.
 - Catalogo de productos con control de stock.
@@ -293,6 +294,8 @@ La API no accede directamente a la persistencia. La logica se concentra en casos
 8. El backend valida autenticidad, consulta el pago al proveedor y actualiza la orden.
 
 ## Mercado Pago
+
+Mercado Pago esta deshabilitado por defecto mediante `MercadoPago:Enabled=false`. En ese estado solo queda disponible el proveedor `Mock`, que no requiere tokens ni secretos de Mercado Pago, y el webhook de Mercado Pago responde 404 sin procesar la notificacion.
 
 La integracion cubre:
 
@@ -356,20 +359,53 @@ La integracion cubre:
 
 ## Configuracion local
 
-El archivo `appsettings.json` no contiene credenciales reales. Configura secretos localmente con User Secrets:
+Los archivos `appsettings*.json` no deben contener credenciales reales. El valor de `Jwt:Secret` que aparece alli es solo un placeholder deliberadamente invalido: la aplicacion lo rechaza al iniciar.
+
+`Jwt:Secret` es obligatorio en todos los ambientes y debe tener al menos 32 caracteres. Para Development, configura una clave generada con buena entropia mediante User Secrets (los valores siguientes son nombres descriptivos, no secretos reales):
 
 ```powershell
-dotnet user-secrets set "Jwt:Secret" "TU_SECRET_LARGO" --project "GymShop.Api/GymShop.Api.csproj"
-dotnet user-secrets set "SeedSuperAdmin:Password" "TU_PASSWORD_ADMIN" --project "GymShop.Api/GymShop.Api.csproj"
-dotnet user-secrets set "MercadoPago:AccessToken" "TU_ACCESS_TOKEN" --project "GymShop.Api/GymShop.Api.csproj"
-dotnet user-secrets set "MercadoPago:WebhookSecret" "TU_WEBHOOK_SECRET" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "Jwt:Secret" "<CLAVE-ALEATORIA-DE-32-O-MAS-CARACTERES>" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "SeedSuperAdmin:Password" "<PASSWORD-LOCAL>" --project "GymShop.Api/GymShop.Api.csproj"
 ```
 
-Para webhooks reales en desarrollo local, usa una URL publica como ngrok y configura:
+Si solo se usa el proveedor `Mock`, no hay que configurar nada de Mercado Pago. Para habilitar Mercado Pago en Development se requiere `Enabled=true` y `AccessToken`:
 
 ```powershell
-dotnet user-secrets set "MercadoPago:NotificationUrl" "https://TU-DOMINIO/api/payments/mercadopago/webhook" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "MercadoPago:Enabled" "true" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "MercadoPago:AccessToken" "<ACCESS-TOKEN-DE-DESARROLLO>" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "MercadoPago:WebhookSecret" "<WEBHOOK-SECRET-DE-DESARROLLO>" --project "GymShop.Api/GymShop.Api.csproj"
 ```
+
+Development permite omitir `MercadoPago:WebhookSecret` para pruebas locales relajadas. Al hacerlo, la aplicacion emite un warning seguro al iniciar y acepta webhooks sin HMAC. No se debe usar esa modalidad con notificaciones reales. Para webhooks reales en desarrollo local, configura el secreto y una URL publica como ngrok:
+
+```powershell
+dotnet user-secrets set "MercadoPago:NotificationUrl" "https://<DOMINIO-PUBLICO>/api/payments/mercadopago/webhook" --project "GymShop.Api/GymShop.Api.csproj"
+```
+
+En Production usa variables de entorno o un secret manager. `Jwt__Secret` siempre es obligatorio. Si `MercadoPago__Enabled=true`, tambien son obligatorios `MercadoPago__AccessToken` y `MercadoPago__WebhookSecret`; la aplicacion falla al iniciar si falta alguno y nunca acepta silenciosamente un webhook de produccion sin HMAC. Por ejemplo, configura las claves en la plataforma de despliegue, sin escribir valores reales en archivos versionados:
+
+```text
+Jwt__Secret=<SECRET-GESTIONADO-DE-32-O-MAS-CARACTERES>
+MercadoPago__Enabled=true
+MercadoPago__AccessToken=<SECRET-GESTIONADO>
+MercadoPago__WebhookSecret=<SECRET-GESTIONADO>
+```
+
+Si falta una configuracion obligatoria, si `Jwt:Secret` conserva el placeholder o si la clave JWT tiene menos de 32 caracteres, el arranque falla con un error de validacion que identifica la clave pero nunca imprime su valor.
+
+## Sesiones JWT y cambios de rol
+
+Cada JWT incluye el claim privado `token_version`, además de los claims existentes de identidad y rol. En cada request autenticado, la API consulta el usuario actual y exige que:
+
+- el usuario exista y este activo;
+- `token_version` coincida con `Users.TokenVersion`;
+- el rol del token coincida con el rol persistido.
+
+Cambiar el rol o estado de un usuario incrementa `TokenVersion` cuando el valor realmente cambia. Por eso los tokens emitidos anteriormente reciben `401 Unauthorized` inmediatamente. Un token vigente cuyo rol no alcanza para un endpoint recibe `403 Forbidden`.
+
+La migracion `AddUserTokenVersion` agrega la columna con valor inicial `0`. Al desplegar esta version, todos los JWT emitidos por versiones anteriores —que no contienen `token_version`— quedan invalidados y los usuarios deben iniciar sesion otra vez. La migracion debe aplicarse antes o junto con el backend actualizado.
+
+Esta implementacion realiza una consulta indexada por usuario en cada request autenticado para priorizar invalidacion inmediata y coherencia entre instancias. No utiliza cache de sesiones, refresh tokens ni cambia la duracion configurada de los JWT.
 
 ## Ejecutar el proyecto
 
@@ -405,6 +441,8 @@ La suite cubre, entre otros puntos:
 - Webhooks duplicados.
 - Firma invalida de webhook.
 - Restricciones de autorizacion por roles.
+- Invalidacion por usuario desactivado, cambio de rol, version obsoleta o usuario inexistente.
+- Emision del `token_version` actual y respuestas 401/403 de autenticacion y autorizacion.
 
 ## CI
 
@@ -423,5 +461,6 @@ dotnet test GymShop.slnx --configuration Release --no-build --verbosity normal
 - No commitear tokens, passwords ni secretos.
 - Usar User Secrets en desarrollo.
 - Usar variables de entorno o secret manager en produccion.
-- Configurar `MercadoPago:WebhookSecret` en ambientes reales.
+- Mantener `MercadoPago:Enabled=false` cuando se usa el proveedor Mock.
+- Configurar `MercadoPago:WebhookSecret` siempre que se procesen notificaciones reales; es obligatorio en Production.
 - Mantener `Jwt:Secret` fuera de `appsettings.json`.

@@ -6,3 +6,8 @@ public interface IJwtTokenService
 {
     string CreateToken(User user);
 }
+
+public static class JwtClaimNames
+{
+    public const string TokenVersion = "token_version";
+}

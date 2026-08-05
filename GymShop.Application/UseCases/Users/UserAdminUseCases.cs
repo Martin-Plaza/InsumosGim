@@ -123,9 +123,13 @@ public class UpdateUserRoleUseCase : IUpdateUserRoleUseCase
             return AppResult.Failure(AppErrorType.Validation, "Rol invalido.");
         }
 
-        user.RoleId = role.Id;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        if (user.RoleId != role.Id)
+        {
+            user.RoleId = role.Id;
+            user.TokenVersion++;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         return AppResult.Success();
     }
@@ -153,9 +157,13 @@ public class UpdateUserStatusUseCase : IUpdateUserStatusUseCase
             return AppResult.Failure(AppErrorType.Conflict, "No podes desactivar tu propio usuario.");
         }
 
-        user.IsActive = request.IsActive;
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        if (user.IsActive != request.IsActive)
+        {
+            user.IsActive = request.IsActive;
+            user.TokenVersion++;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         return AppResult.Success();
     }

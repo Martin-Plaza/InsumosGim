@@ -4,8 +4,10 @@ using System.Text.Json;
 using GymShop.Application.Abstractions;
 using GymShop.Application.DTOs.Payments;
 using GymShop.Application.UseCases.Payments;
+using GymShop.Infrastructure.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace GymShop.Api.Controllers;
 
@@ -20,7 +22,7 @@ public class PaymentsController : ApiControllerBase
     private readonly IUpdatePaymentStatusUseCase _updatePaymentStatus;
     private readonly IHandlePaymentWebhookUseCase _handlePaymentWebhook;
     private readonly ICurrentUserService _currentUser;
-    private readonly IConfiguration _configuration;
+    private readonly MercadoPagoOptions _mercadoPagoOptions;
 
     public PaymentsController(
         ICreateCurrentPaymentUseCase createCurrentPayment,
@@ -29,7 +31,7 @@ public class PaymentsController : ApiControllerBase
         IUpdatePaymentStatusUseCase updatePaymentStatus,
         IHandlePaymentWebhookUseCase handlePaymentWebhook,
         ICurrentUserService currentUser,
-        IConfiguration configuration)
+        IOptions<MercadoPagoOptions> mercadoPagoOptions)
     {
         _createCurrentPayment = createCurrentPayment;
         _getPaymentById = getPaymentById;
@@ -37,7 +39,7 @@ public class PaymentsController : ApiControllerBase
         _updatePaymentStatus = updatePaymentStatus;
         _handlePaymentWebhook = handlePaymentWebhook;
         _currentUser = currentUser;
-        _configuration = configuration;
+        _mercadoPagoOptions = mercadoPagoOptions.Value;
     }
 
     [HttpPost("current")]
@@ -72,13 +74,18 @@ public class PaymentsController : ApiControllerBase
     [HttpPost("mercadopago/webhook")]
     public async Task<ActionResult> MercadoPagoWebhook([FromQuery(Name = "data.id")] string? queryDataId, [FromBody] JsonElement body, CancellationToken cancellationToken)
     {
+        if (!_mercadoPagoOptions.Enabled)
+        {
+            return NotFound(new { message = "La integracion de Mercado Pago no esta habilitada." });
+        }
+
         var dataId = GetMercadoPagoPaymentId(queryDataId, body);
         if (string.IsNullOrWhiteSpace(dataId))
         {
             return BadRequest(new { message = "No se encontro data.id en la notificacion." });
         }
 
-        var secret = _configuration["MercadoPago:WebhookSecret"];
+        var secret = _mercadoPagoOptions.WebhookSecret;
         if (!string.IsNullOrWhiteSpace(secret) && !MercadoPagoWebhookSignatureValidator.IsValid(Request.Headers["x-signature"], Request.Headers["x-request-id"], dataId, secret))
         {
             return Unauthorized(new { message = "Firma de Mercado Pago invalida." });

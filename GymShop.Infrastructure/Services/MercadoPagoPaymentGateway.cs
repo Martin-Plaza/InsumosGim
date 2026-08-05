@@ -3,31 +3,33 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using GymShop.Application.Abstractions;
 using GymShop.Domain.Entities;
-using Microsoft.Extensions.Configuration;
+using GymShop.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace GymShop.Infrastructure.Services;
 
 public class MercadoPagoPaymentGateway : IPaymentGateway
 {
     private readonly HttpClient _httpClient;
-    private readonly IConfiguration _configuration;
+    private readonly MercadoPagoOptions _options;
 
-    public MercadoPagoPaymentGateway(HttpClient httpClient, IConfiguration configuration)
+    public MercadoPagoPaymentGateway(HttpClient httpClient, IOptions<MercadoPagoOptions> options)
     {
         _httpClient = httpClient;
-        _configuration = configuration;
+        _options = options.Value;
     }
 
-    public bool CanHandle(string provider) => string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
+    public bool CanHandle(string provider) =>
+        _options.Enabled && string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
 
     public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
     {
         ConfigureAuthorization();
 
-        var notificationUrl = _configuration["MercadoPago:NotificationUrl"];
-        var successUrl = FormatUrl(_configuration["MercadoPago:SuccessUrl"], order.Id);
-        var failureUrl = FormatUrl(_configuration["MercadoPago:FailureUrl"], order.Id);
-        var pendingUrl = FormatUrl(_configuration["MercadoPago:PendingUrl"], order.Id);
+        var notificationUrl = _options.NotificationUrl;
+        var successUrl = FormatUrl(_options.SuccessUrl, order.Id);
+        var failureUrl = FormatUrl(_options.FailureUrl, order.Id);
+        var pendingUrl = FormatUrl(_options.PendingUrl, order.Id);
 
         var payload = new Dictionary<string, object?>
         {
@@ -93,8 +95,7 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement;
         var preferenceId = root.GetProperty("id").GetString();
-        var useSandbox = _configuration.GetValue<bool>("MercadoPago:UseSandboxInitPoint");
-        var checkoutUrl = ReadString(root, useSandbox ? "sandbox_init_point" : "init_point") ?? ReadString(root, "init_point");
+        var checkoutUrl = ReadString(root, _options.UseSandboxInitPoint ? "sandbox_init_point" : "init_point") ?? ReadString(root, "init_point");
 
         if (string.IsNullOrWhiteSpace(preferenceId) || string.IsNullOrWhiteSpace(checkoutUrl))
         {
@@ -130,7 +131,7 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
 
     private void ConfigureAuthorization()
     {
-        var accessToken = _configuration["MercadoPago:AccessToken"];
+        var accessToken = _options.AccessToken;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             throw new PaymentGatewayException("MercadoPago:AccessToken no esta configurado.");

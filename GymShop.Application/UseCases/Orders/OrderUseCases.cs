@@ -133,6 +133,11 @@ public class CancelOrderUseCase : ICancelOrderUseCase
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancelOrderRequest request, CancellationToken cancellationToken = default)
     {
+        if (request.Reason?.Trim().Length > ValidationLimits.CancellationReason)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El motivo no puede superar 500 caracteres.");
+        }
+
         var order = await _db.Orders
             .Include(x => x.User)
             .Include(x => x.Items)
@@ -160,7 +165,10 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Solo se pueden cancelar pedidos pendientes desde este flujo.");
         }
 
-        OrderCancellation.CancelPendingAndRestoreStock(order);
+        var reason = string.IsNullOrWhiteSpace(request.Reason)
+            ? "Cancelacion solicitada para el pedido."
+            : request.Reason.Trim();
+        OrderCompensation.CancelPendingAndRestoreStock(order, reason);
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
@@ -187,12 +195,13 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
         var orders = await _db.Orders
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Payments)
             .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff)
             .ToListAsync(cancellationToken);
 
         foreach (var order in orders)
         {
-            OrderCancellation.CancelPendingAndRestoreStock(order);
+            OrderCompensation.CancelPendingAndRestoreStock(order, "Pedido pendiente expirado.");
         }
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -200,23 +209,56 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
     }
 }
 
-internal static class OrderCancellation
+internal static class OrderCompensation
 {
-    public static void CancelPendingAndRestoreStock(Order order)
+    public static bool CancelPendingAndRestoreStock(Order order, string reason)
     {
         if (order.Status != OrderStatus.Pending)
         {
-            return;
+            return false;
         }
 
         order.Status = OrderStatus.Canceled;
         order.UpdatedAt = DateTime.UtcNow;
+
+        foreach (var payment in order.Payments.Where(x =>
+                     x.Status == PaymentStatus.Creating || x.Status == PaymentStatus.Pending))
+        {
+            payment.Status = PaymentStatus.Canceled;
+            payment.FailureReason = reason;
+            payment.UpdatedAt = DateTime.UtcNow;
+        }
 
         foreach (var item in order.Items)
         {
             item.Product.Stock += item.Quantity;
             item.Product.UpdatedAt = DateTime.UtcNow;
         }
+
+        return true;
+    }
+
+    public static bool RefundAndRestoreStockIfNotShipped(Order order)
+    {
+        if (order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+        {
+            return false;
+        }
+
+        var restoreStock = order.Status == OrderStatus.Paid;
+        order.Status = OrderStatus.Refunded;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        if (restoreStock)
+        {
+            foreach (var item in order.Items)
+            {
+                item.Product.Stock += item.Quantity;
+                item.Product.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -231,12 +273,16 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateOrderStatusRequest request, CancellationToken cancellationToken = default)
     {
-        if (!Enum.TryParse<OrderStatus>(request.Status, true, out var status))
+        if (!Enum.TryParse<OrderStatus>(request.Status, true, out var status) || !Enum.IsDefined(status))
         {
             return AppResult.Failure(AppErrorType.Validation, "Estado invalido.");
         }
 
-        var order = await _db.Orders.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        var order = await _db.Orders
+            .Include(x => x.Items)
+            .ThenInclude(x => x.Product)
+            .Include(x => x.Payments)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (order is null)
         {
             return AppResult.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
@@ -244,11 +290,23 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
 
         if (!OrderStatusTransitions.CanAdminMove(order.Status, status))
         {
-            return AppResult.Failure(AppErrorType.Validation, "Transicion de estado invalida. El estado Paid solo puede venir del flujo de pagos.");
+            return AppResult.Failure(AppErrorType.Conflict, "Transicion de estado invalida. Los pagos y reembolsos deben resolverse desde su flujo especifico.");
         }
 
-        order.Status = status;
-        order.UpdatedAt = DateTime.UtcNow;
+        if (order.Status == status)
+        {
+            return AppResult.Success();
+        }
+
+        if (status == OrderStatus.Canceled)
+        {
+            OrderCompensation.CancelPendingAndRestoreStock(order, "Cancelacion administrativa del pedido.");
+        }
+        else
+        {
+            order.Status = status;
+            order.UpdatedAt = DateTime.UtcNow;
+        }
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult.Success();
@@ -268,7 +326,6 @@ internal static class OrderStatusTransitions
         {
             (OrderStatus.Pending, OrderStatus.Canceled) => true,
             (OrderStatus.Paid, OrderStatus.Shipped) => true,
-            (OrderStatus.Paid, OrderStatus.Canceled) => true,
             _ => false
         };
     }

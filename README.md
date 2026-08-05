@@ -308,6 +308,41 @@ La integracion cubre:
 - Cancelacion y restauracion de stock cuando el pago se rechaza, cancela o expira.
 - Manejo seguro de notificaciones repetidas.
 
+## Cancelaciones y reembolsos
+
+GymShop distingue una cancelacion previa a completar la venta de un reembolso confirmado por el proveedor:
+
+| Estado inicial | Evento | Payment final | Order final | Stock |
+|---|---|---|---|---|
+| `Pending` | Cancelacion del pedido | pagos pendientes `Canceled` | `Canceled` | se restaura una vez |
+| `Pending` | pago `Rejected`, `Canceled` o `Expired` | estado informado | `Canceled` | se restaura una vez |
+| `Pending` | pago `Approved` | `Approved` | `Paid` | no cambia |
+| `Paid` | despacho | `Approved` | `Shipped` | no cambia |
+| `Paid` | refund total confirmado | `Refunded` | `Refunded` | se restaura una vez |
+| `Shipped` | refund total confirmado | `Refunded` | `Refunded` | no se restaura automaticamente |
+
+`Paid -> Canceled` esta prohibido en el cambio administrativo generico. Un pago aprobado solo pasa a `Refunded` cuando el webhook consulta Mercado Pago y el proveedor confirma el reembolso. GymShop no inicia refunds ni llama a la API de refunds en esta fase; deben iniciarse desde Mercado Pago.
+
+Los webhooks `refunded` repetidos son idempotentes. Si el pedido todavia estaba `Paid`, solo la primera transicion restaura stock. Si ya estaba `Shipped`, la devolucion fisica y el stock quedan pendientes de gestion manual y el motivo se registra en `Payment.FailureReason`.
+
+Los reembolsos parciales no se automatizan: el pago conserva `Approved`, la orden conserva `Paid` o `Shipped`, no se modifica stock y `FailureReason` indica que el caso requiere gestion manual.
+
+Las transiciones incompatibles con el estado actual responden `409 Conflict`. Los estados o formatos desconocidos continúan respondiendo errores de validacion.
+
+## Concurrencia al crear pagos
+
+La creacion de pagos reserva primero un registro local con estado `Creating`. Esa reserva se guarda antes de llamar al gateway y el indice SQL Server `UX_Payments_OrderId_Active` permite solamente un pago `Creating` o `Pending` por orden. Los intentos `CreationFailed`, `Rejected`, `Canceled`, `Expired` y `Refunded` permanecen como historial y no bloquean un nuevo intento.
+
+`IdempotencyKey` puede ser enviada por el cliente. Si se omite, el servidor genera una clave con prefijo `server-`; `PaymentResponse` siempre expone la clave efectiva. Repetir una clave reutiliza el mismo intento. Para reintentar un `CreationFailed` se debe usar una clave nueva.
+
+Si otro request encuentra el pago ganador todavia en `Creating`, `POST /api/payments/current` responde `202 Accepted`, incluye el Payment con `CheckoutUrl=null` y una cabecera `Location` hacia `GET /api/payments/{id}`. Cuando el gateway termina correctamente, el estado pasa a `Pending` y queda disponible la URL de checkout.
+
+Si el gateway falla, la reserva pasa a `CreationFailed`, conserva un motivo seguro y libera el indice activo para un nuevo intento. No se mantiene una transaccion SQL abierta durante la llamada externa y no se utilizan locks en memoria.
+
+Un `Creating` sin actividad durante `Payments:CreatingTimeoutSeconds` puede ser retomado por el siguiente request. El valor predeterminado es 300 segundos. La toma se hace con una actualizacion SQL condicional y el recuperador reutiliza la misma `IdempotencyKey`; no existe un worker en segundo plano ni Outbox en esta fase.
+
+La migracion `EnforceSingleActivePaymentPerOrder` se detiene si detecta mas de un pago activo existente para una orden. No modifica estados financieros automaticamente: los duplicados deben revisarse manualmente antes de reintentar el despliegue.
+
 ## Endpoints principales
 
 ### Auth
@@ -393,6 +428,14 @@ MercadoPago__WebhookSecret=<SECRET-GESTIONADO>
 
 Si falta una configuracion obligatoria, si `Jwt:Secret` conserva el placeholder o si la clave JWT tiene menos de 32 caracteres, el arranque falla con un error de validacion que identifica la clave pero nunca imprime su valor.
 
+El tiempo para considerar abandonada una reserva de pago puede configurarse sin secretos:
+
+```text
+Payments__CreatingTimeoutSeconds=300
+```
+
+Debe ser un entero mayor que cero. Un valor menor recupera antes los procesos interrumpidos, pero aumenta el riesgo de solaparse con una llamada externa excepcionalmente lenta.
+
 ## Sesiones JWT y cambios de rol
 
 Cada JWT incluye el claim privado `token_version`, además de los claims existentes de identidad y rol. En cada request autenticado, la API consulta el usuario actual y exige que:
@@ -406,6 +449,25 @@ Cambiar el rol o estado de un usuario incrementa `TokenVersion` cuando el valor 
 La migracion `AddUserTokenVersion` agrega la columna con valor inicial `0`. Al desplegar esta version, todos los JWT emitidos por versiones anteriores —que no contienen `token_version`— quedan invalidados y los usuarios deben iniciar sesion otra vez. La migracion debe aplicarse antes o junto con el backend actualizado.
 
 Esta implementacion realiza una consulta indexada por usuario en cada request autenticado para priorizar invalidacion inmediata y coherencia entre instancias. No utiliza cache de sesiones, refresh tokens ni cambia la duracion configurada de los JWT.
+
+## Validacion de entradas y visibilidad del catalogo
+
+ASP.NET Core valida los contratos antes de ejecutar el caso de uso. Las entradas invalidas responden `400 Bad Request` con `ValidationProblemDetails`; las validaciones de Application repiten las reglas críticas antes de persistir para proteger también llamadas que no provengan de HTTP.
+
+Limites principales:
+
+- email requerido, formato valido y maximo 256 caracteres;
+- nombre de usuario requerido y maximo 100;
+- password de 8 a 128 caracteres, con al menos una letra y un numero;
+- nombre de producto maximo 150 y descripcion maxima 1000;
+- precio mayor a cero, hasta 16 digitos enteros y 2 decimales; stock no negativo;
+- direccion de envio requerida y maxima 300;
+- `IdempotencyKey` maxima 100 y motivos de cancelacion/fallo maximos 500;
+- proveedores y estados deben corresponder a proveedores configurados y valores definidos por el dominio.
+
+`ImageUrl` puede omitirse, usar una URL absoluta `http/https` o una ruta web local que comience con `/`, por ejemplo `/images/productos/mancuerna.jpg`. No se aceptan rutas fisicas, `file://`, rutas con `..` ni URLs relativas a otro host mediante `//`. La longitud maxima es 500.
+
+El catalogo publico y los usuarios comunes solo ven productos activos. Solicitar `GET /api/products?includeInactive=true` exige Admin o SuperAdmin: un cliente anonimo recibe 401 y un usuario sin ese rol recibe 403. `GET /api/products/{id}` devuelve 404 para un producto inactivo cuando lo consulta publico/User, igual que para un ID inexistente; Admin y SuperAdmin pueden consultarlo.
 
 ## Ejecutar el proyecto
 
@@ -443,6 +505,10 @@ La suite cubre, entre otros puntos:
 - Restricciones de autorizacion por roles.
 - Invalidacion por usuario desactivado, cambio de rol, version obsoleta o usuario inexistente.
 - Emision del `token_version` actual y respuestas 401/403 de autenticacion y autorizacion.
+- Cancelaciones idempotentes con cierre de pagos pendientes y restitucion unica de stock.
+- Refund total antes y despues del envio, webhooks repetidos y reembolsos parciales manuales.
+- Reservas `Creating`, recuperacion de intentos atascados e historial `CreationFailed`.
+- Carreras de pago e indices filtrados verificados sobre SQL Server real.
 
 ## CI
 

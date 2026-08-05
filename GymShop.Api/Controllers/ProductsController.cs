@@ -33,21 +33,35 @@ public class ProductsController : ApiControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(List<ProductResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<List<ProductResponse>>> GetAll(
         [FromQuery] bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
-        return Ok(await _getProducts.ExecuteAsync(includeInactive, cancellationToken));
+        var canViewInactive = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+        if (includeInactive && !canViewInactive)
+        {
+            return User.Identity?.IsAuthenticated == true ? Forbid() : Challenge();
+        }
+
+        return Ok(await _getProducts.ExecuteAsync(includeInactive, canViewInactive, cancellationToken));
     }
 
     [HttpGet("{id:int}")]
+    [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ProductResponse>> GetById(int id, CancellationToken cancellationToken)
     {
-        return FromResult(await _getProductById.ExecuteAsync(id, cancellationToken));
+        var canViewInactive = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+        return FromResult(await _getProductById.ExecuteAsync(id, canViewInactive, cancellationToken));
     }
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPost]
+    [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ProductResponse>> Create(CreateProductRequest request, CancellationToken cancellationToken)
     {
         var result = await _createProduct.ExecuteAsync(request, cancellationToken);
@@ -58,6 +72,7 @@ public class ProductsController : ApiControllerBase
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPut("{id:int}")]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ProductResponse>> Update(int id, UpdateProductRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _updateProduct.ExecuteAsync(id, request, cancellationToken));

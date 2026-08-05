@@ -17,7 +17,7 @@ public class AuthUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var useCase = new RegisterUserUseCase(db, new PasswordHasher(), new FakeJwtTokenService());
 
-        var result = await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "CLIENTE@TEST.COM", "123456"));
+        var result = await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "CLIENTE@TEST.COM", "clave123"));
 
         Assert.True(result.IsSuccess);
         Assert.NotNull(result.Value);
@@ -33,8 +33,8 @@ public class AuthUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var useCase = new RegisterUserUseCase(db, new PasswordHasher(), new FakeJwtTokenService());
 
-        await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "123456"));
-        var duplicate = await useCase.ExecuteAsync(new RegisterRequest("Otro", "cliente@test.com", "123456"));
+        await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "clave123"));
+        var duplicate = await useCase.ExecuteAsync(new RegisterRequest("Otro", "cliente@test.com", "clave123"));
 
         Assert.False(duplicate.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, duplicate.Error?.Type);
@@ -46,8 +46,8 @@ public class AuthUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var useCase = new RegisterUserUseCase(db, new PasswordHasher(), new FakeJwtTokenService());
 
-        await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "Cliente@Test.com", "123456"));
-        var duplicate = await useCase.ExecuteAsync(new RegisterRequest("Otro", "cliente@test.com", "123456"));
+        await useCase.ExecuteAsync(new RegisterRequest("Cliente Test", "Cliente@Test.com", "clave123"));
+        var duplicate = await useCase.ExecuteAsync(new RegisterRequest("Otro", "cliente@test.com", "clave123"));
 
         Assert.False(duplicate.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, duplicate.Error?.Type);
@@ -61,8 +61,8 @@ public class AuthUseCaseTests
         var register = new RegisterUserUseCase(db, passwordHasher, new FakeJwtTokenService());
         var login = new LoginUserUseCase(db, passwordHasher, new FakeJwtTokenService());
 
-        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "123456"));
-        var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "123456"));
+        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "clave123"));
+        var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "clave123"));
 
         Assert.True(result.IsSuccess);
         Assert.NotNull(result.Value);
@@ -81,13 +81,13 @@ public class AuthUseCaseTests
             Secret = "test-signing-secret-with-at-least-32-characters"
         }));
         var register = new RegisterUserUseCase(db, passwordHasher, new FakeJwtTokenService());
-        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "123456"));
+        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "clave123"));
         var user = db.Users.Single();
         user.TokenVersion = 7;
         await db.SaveChangesAsync();
         var login = new LoginUserUseCase(db, passwordHasher, jwt);
 
-        var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "123456"));
+        var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "clave123"));
         var token = new JwtSecurityTokenHandler().ReadJwtToken(result.Value!.Token);
 
         Assert.Equal("7", token.Claims.Single(x => x.Type == GymShop.Application.Abstractions.JwtClaimNames.TokenVersion).Value);
@@ -101,7 +101,7 @@ public class AuthUseCaseTests
         var register = new RegisterUserUseCase(db, passwordHasher, new FakeJwtTokenService());
         var login = new LoginUserUseCase(db, passwordHasher, new FakeJwtTokenService());
 
-        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "123456"));
+        await register.ExecuteAsync(new RegisterRequest("Cliente Test", "cliente@test.com", "clave123"));
         var result = await login.ExecuteAsync(new LoginRequest("cliente@test.com", "wrong-password"));
 
         Assert.False(result.IsSuccess);

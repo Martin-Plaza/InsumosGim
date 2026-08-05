@@ -12,7 +12,7 @@ Content-Type: application/json
 {
   "name": "Usuario Demo",
   "email": "demo@gymshop.com",
-  "password": "123456"
+  "password": "clave123"
 }
 
 ###
@@ -22,7 +22,7 @@ Content-Type: application/json
 
 {
   "email": "demo@gymshop.com",
-  "password": "123456"
+  "password": "clave123"
 }
 
 ###

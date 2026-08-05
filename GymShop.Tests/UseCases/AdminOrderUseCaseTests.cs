@@ -38,6 +38,16 @@ public class AdminOrderUseCaseTests
         var user = await SeedUserAsync(db, "cliente@test.com");
         var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
         var product = await db.Products.SingleAsync();
+        var payment = new Payment
+        {
+            OrderId = order.Id,
+            Provider = "Mock",
+            ExternalReference = $"order-{order.Id}",
+            Amount = order.Total,
+            Status = PaymentStatus.Creating
+        };
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
 
         Assert.Equal(3, product.Stock);
 
@@ -48,6 +58,8 @@ public class AdminOrderUseCaseTests
         Assert.True(first.IsSuccess);
         Assert.True(second.IsSuccess);
         Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(PaymentStatus.Canceled, payment.Status);
+        Assert.Equal("Cliente no pago", payment.FailureReason);
         Assert.Equal(5, product.Stock);
     }
 
@@ -121,8 +133,56 @@ public class AdminOrderUseCaseTests
         var result = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped"));
 
         Assert.False(result.IsSuccess);
-        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(OrderStatus.Pending, order.Status);
+    }
+
+    [Fact]
+    public async Task Admin_cancel_pending_restores_stock_and_cancels_pending_payment_once()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "cliente@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = new Payment
+        {
+            OrderId = order.Id,
+            Provider = "Mock",
+            ExternalReference = $"order-{order.Id}",
+            Amount = order.Total,
+            Status = PaymentStatus.Pending
+        };
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
+        var useCase = new UpdateOrderStatusUseCase(db);
+
+        var first = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Canceled"));
+        var second = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Canceled"));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsSuccess);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(PaymentStatus.Canceled, payment.Status);
+        Assert.Equal("Cancelacion administrativa del pedido.", payment.FailureReason);
+        Assert.Equal(5, product.Stock);
+    }
+
+    [Fact]
+    public async Task Admin_generic_status_cannot_cancel_paid_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "cliente@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+
+        var result = await new UpdateOrderStatusUseCase(db)
+            .ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Canceled"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(4, db.Products.Single().Stock);
     }
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db, string email)
     {

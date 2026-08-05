@@ -1,10 +1,13 @@
+using System.ComponentModel.DataAnnotations;
+using GymShop.Application.Common;
+
 namespace GymShop.Application.DTOs.Orders;
 
-public record UpdateOrderStatusRequest(string Status);
+public record UpdateOrderStatusRequest([Required, StringLength(30)] string Status);
 
 public record OrderFilterRequest(string? UserEmail);
 
-public record CancelOrderRequest(string? Reason);
+public record CancelOrderRequest([StringLength(ValidationLimits.CancellationReason)] string? Reason);
 
 public record ExpirePendingOrdersRequest(int OlderThanMinutes);
 

@@ -30,6 +30,8 @@ public class PaymentUseCaseTests
         Assert.Equal(200, result.Value.Amount);
         Assert.Equal(PaymentStatus.Pending.ToString(), result.Value.Status);
         Assert.Equal("mock-pref-" + order.Id, result.Value.ProviderPreferenceId);
+        Assert.StartsWith("server-", result.Value.IdempotencyKey);
+        Assert.Equal(result.Value.IdempotencyKey, db.Payments.Single().IdempotencyKey);
         Assert.Single(db.Payments);
     }
 
@@ -167,6 +169,119 @@ public class PaymentUseCaseTests
     }
 
     [Fact]
+    public async Task Webhook_refunded_before_shipping_updates_payment_and_order_and_restores_stock_once()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        payment.PaidAt = DateTime.UtcNow;
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "refunded",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}"
+        };
+        var useCase = new HandlePaymentWebhookUseCase(db, [gateway]);
+
+        var first = await useCase.ExecuteAsync("MercadoPago", "mp-pay-1");
+        var second = await useCase.ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsSuccess);
+        Assert.Equal(PaymentStatus.Refunded, payment.Status);
+        Assert.Equal(OrderStatus.Refunded, order.Status);
+        Assert.Equal(5, product.Stock);
+        Assert.Contains("Reembolso total", payment.FailureReason);
+    }
+
+    [Fact]
+    public async Task Webhook_refunded_after_shipping_does_not_restore_stock()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        payment.PaidAt = DateTime.UtcNow;
+        order.Status = OrderStatus.Shipped;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "refunded",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}"
+        };
+
+        var result = await new HandlePaymentWebhookUseCase(db, [gateway])
+            .ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PaymentStatus.Refunded, payment.Status);
+        Assert.Equal(OrderStatus.Refunded, order.Status);
+        Assert.Equal(3, product.Stock);
+        Assert.Contains("despues del envio", payment.FailureReason);
+    }
+
+    [Fact]
+    public async Task Partial_refund_is_recorded_for_manual_handling_without_changing_states_or_stock()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "partially_refunded",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}"
+        };
+
+        var result = await new HandlePaymentWebhookUseCase(db, [gateway])
+            .ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PaymentStatus.Approved, payment.Status);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(3, product.Stock);
+        Assert.Contains("gestion manual", payment.FailureReason);
+    }
+
+    [Fact]
+    public async Task Admin_cannot_mark_approved_payment_as_refunded()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+
+        var result = await new UpdatePaymentStatusUseCase(db).ExecuteAsync(
+            payment.Id,
+            new UpdatePaymentStatusRequest("Refunded", "mp-pay-1", "manual"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(PaymentStatus.Approved, payment.Status);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
     public async Task ApprovePayment_marks_order_as_paid()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -216,7 +331,7 @@ public class PaymentUseCaseTests
         var result = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Paid"));
 
         Assert.False(result.IsSuccess);
-        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(OrderStatus.Pending, order.Status);
     }
 

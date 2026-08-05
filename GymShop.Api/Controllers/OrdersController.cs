@@ -60,12 +60,16 @@ public class OrdersController : ApiControllerBase
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPatch("{id:int}/status")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult> UpdateStatus(int id, UpdateOrderStatusRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _updateOrderStatus.ExecuteAsync(id, request, cancellationToken));
     }
 
     [HttpPost("{id:int}/cancel")]
+    [ProducesResponseType(typeof(OrderResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<OrderResponse>> Cancel(int id, CancelOrderRequest request, CancellationToken cancellationToken)
     {
         var canManageAll = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");

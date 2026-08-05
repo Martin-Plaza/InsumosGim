@@ -44,9 +44,19 @@ public class RegisterUserUseCase : IRegisterUserUseCase
             return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "Nombre, email y password son obligatorios.");
         }
 
-        if (request.Password.Length < 6)
+        if (name.Length > ValidationLimits.UserName)
         {
-            return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "La password debe tener al menos 6 caracteres.");
+            return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "El nombre no puede superar los 100 caracteres.");
+        }
+
+        if (email.Length > ValidationLimits.Email || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
+        {
+            return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "El email no es valido o supera los 256 caracteres.");
+        }
+
+        if (!new StrongPasswordAttribute().IsValid(request.Password))
+        {
+            return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "La password debe tener entre 8 y 128 caracteres e incluir al menos una letra y un numero.");
         }
 
         if (await _db.Users.AnyAsync(x => x.Email == email, cancellationToken))

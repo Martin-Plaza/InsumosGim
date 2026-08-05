@@ -8,12 +8,12 @@ namespace GymShop.Application.UseCases.Products;
 
 public interface IGetProductsUseCase
 {
-    Task<List<ProductResponse>> ExecuteAsync(bool includeInactive = false, CancellationToken cancellationToken = default);
+    Task<List<ProductResponse>> ExecuteAsync(bool includeInactive, bool canViewInactive, CancellationToken cancellationToken = default);
 }
 
 public interface IGetProductByIdUseCase
 {
-    Task<AppResult<ProductResponse>> ExecuteAsync(int id, CancellationToken cancellationToken = default);
+    Task<AppResult<ProductResponse>> ExecuteAsync(int id, bool canViewInactive, CancellationToken cancellationToken = default);
 }
 
 public interface ICreateProductUseCase
@@ -45,10 +45,10 @@ public class GetProductsUseCase : IGetProductsUseCase
         _db = db;
     }
 
-    public async Task<List<ProductResponse>> ExecuteAsync(bool includeInactive = false, CancellationToken cancellationToken = default)
+    public async Task<List<ProductResponse>> ExecuteAsync(bool includeInactive, bool canViewInactive, CancellationToken cancellationToken = default)
     {
         var query = _db.Products.AsNoTracking();
-        if (!includeInactive)
+        if (!includeInactive || !canViewInactive)
         {
             query = query.Where(x => x.IsActive);
         }
@@ -69,9 +69,10 @@ public class GetProductByIdUseCase : IGetProductByIdUseCase
         _db = db;
     }
 
-    public async Task<AppResult<ProductResponse>> ExecuteAsync(int id, CancellationToken cancellationToken = default)
+    public async Task<AppResult<ProductResponse>> ExecuteAsync(int id, bool canViewInactive, CancellationToken cancellationToken = default)
     {
-        var product = await _db.Products.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        var product = await _db.Products.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == id && (x.IsActive || canViewInactive), cancellationToken);
         return product is null
             ? AppResult<ProductResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado.")
             : AppResult<ProductResponse>.Success(ProductMapper.ToResponse(product));
@@ -89,7 +90,7 @@ public class CreateProductUseCase : ICreateProductUseCase
 
     public async Task<AppResult<ProductResponse>> ExecuteAsync(CreateProductRequest request, CancellationToken cancellationToken = default)
     {
-        var validationError = ProductValidator.Validate(request.Name, request.Price, request.Stock);
+        var validationError = ProductValidator.Validate(request.Name, request.Description, request.Price, request.Stock, request.ImageUrl);
         if (validationError is not null)
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
@@ -129,7 +130,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
             return AppResult<ProductResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado.");
         }
 
-        var validationError = ProductValidator.Validate(request.Name, request.Price, request.Stock);
+        var validationError = ProductValidator.Validate(request.Name, request.Description, request.Price, request.Stock, request.ImageUrl);
         if (validationError is not null)
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
@@ -225,23 +226,38 @@ public class UpdateProductStatusUseCase : IUpdateProductStatusUseCase
     }
 }
 
-internal static class ProductValidator
+public static class ProductValidator
 {
-    public static string? Validate(string name, decimal price, int stock)
+    public static string? Validate(string name, string? description, decimal price, int stock, string? imageUrl)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             return "El nombre es obligatorio.";
         }
 
+        if (name.Trim().Length > ValidationLimits.ProductName) return "El nombre no puede superar los 150 caracteres.";
+        if (description?.Trim().Length > ValidationLimits.ProductDescription) return "La descripcion no puede superar los 1000 caracteres.";
+
         if (price <= 0)
         {
             return "El precio debe ser mayor a cero.";
         }
 
+        if (price > 9999999999999999.99m || decimal.Round(price, 2) != price)
+        {
+            return "El precio debe ser compatible con decimal(18,2).";
+        }
+
         if (stock < 0)
         {
             return "El stock no puede ser negativo.";
+        }
+
+
+        if (imageUrl?.Trim().Length > ValidationLimits.ImageUrl) return "ImageUrl no puede superar los 500 caracteres.";
+        if (!new ProductImageUrlAttribute().IsValid(imageUrl?.Trim()))
+        {
+            return "ImageUrl debe ser una URL http/https o una ruta web local valida.";
         }
 
         return null;

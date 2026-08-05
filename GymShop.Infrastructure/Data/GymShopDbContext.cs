@@ -164,6 +164,10 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .IsUnique()
                 .HasDatabaseName("UX_Payments_IdempotencyKey")
                 .HasFilter("[IdempotencyKey] IS NOT NULL");
+            entity.HasIndex(x => x.OrderId)
+                .IsUnique()
+                .HasDatabaseName("UX_Payments_OrderId_Active")
+                .HasFilter("[Status] IN ('Creating', 'Pending')");
 
             entity
                 .HasOne(x => x.Order)

@@ -245,6 +245,11 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
         }
 
+        if (request.ShippingAddress.Trim().Length > ValidationLimits.ShippingAddress)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio no puede superar los 300 caracteres.");
+        }
+
         var cart = await _db.Carts
             .Include(x => x.Items)
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);

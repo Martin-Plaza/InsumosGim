@@ -5,6 +5,7 @@ using GymShop.Api.Services;
 using GymShop.Api.Security;
 using GymShop.Application;
 using GymShop.Application.Abstractions;
+using GymShop.Application.UseCases.Payments;
 using GymShop.Infrastructure;
 using GymShop.Infrastructure.Configuration;
 using GymShop.Infrastructure.Data;
@@ -39,6 +40,8 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddApplication();
+builder.Services.AddSingleton(PaymentCreationPolicy.FromSeconds(
+    builder.Configuration.GetValue("Payments:CreatingTimeoutSeconds", 300)));
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<JwtTokenValidationEvents>();
 builder.Services.AddSingleton<IValidateOptions<JwtOptions>, JwtOptionsValidator>();

@@ -1,6 +1,7 @@
 using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Payments;
+using GymShop.Application.UseCases.Orders;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -37,15 +38,47 @@ public interface IHandlePaymentWebhookUseCase
     Task<AppResult<PaymentResponse>> ExecuteAsync(string provider, string providerPaymentId, CancellationToken cancellationToken = default);
 }
 
+public sealed class PaymentCreationPolicy
+{
+    public static PaymentCreationPolicy Default { get; } = FromSeconds(300);
+
+    private PaymentCreationPolicy(TimeSpan creatingTimeout)
+    {
+        CreatingTimeout = creatingTimeout;
+    }
+
+    public TimeSpan CreatingTimeout { get; }
+
+    public static PaymentCreationPolicy FromSeconds(int seconds)
+    {
+        if (seconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(seconds), "The payment creation timeout must be greater than zero.");
+        }
+
+        return new PaymentCreationPolicy(TimeSpan.FromSeconds(seconds));
+    }
+}
+
 public class CreatePaymentUseCase : ICreatePaymentUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly IEnumerable<IPaymentGateway> _gateways;
+    private readonly PaymentCreationPolicy _policy;
 
     public CreatePaymentUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways)
+        : this(db, gateways, PaymentCreationPolicy.Default)
+    {
+    }
+
+    public CreatePaymentUseCase(
+        IApplicationDbContext db,
+        IEnumerable<IPaymentGateway> gateways,
+        PaymentCreationPolicy policy)
     {
         _db = db;
         _gateways = gateways;
+        _policy = policy;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(int orderId, int userId, bool canManageAll, CreatePaymentRequest request, CancellationToken cancellationToken = default)
@@ -76,7 +109,7 @@ public class CreatePaymentUseCase : ICreatePaymentUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido no admite nuevos pagos.");
         }
 
-        return await PaymentCreator.CreateAsync(_db, _gateways, order, request, cancellationToken);
+        return await PaymentCreator.CreateAsync(_db, _gateways, order, request, _policy, cancellationToken);
     }
 }
 
@@ -84,11 +117,21 @@ public class CreateCurrentPaymentUseCase : ICreateCurrentPaymentUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly IEnumerable<IPaymentGateway> _gateways;
+    private readonly PaymentCreationPolicy _policy;
 
     public CreateCurrentPaymentUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways)
+        : this(db, gateways, PaymentCreationPolicy.Default)
+    {
+    }
+
+    public CreateCurrentPaymentUseCase(
+        IApplicationDbContext db,
+        IEnumerable<IPaymentGateway> gateways,
+        PaymentCreationPolicy policy)
     {
         _db = db;
         _gateways = gateways;
+        _policy = policy;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(int userId, CreatePaymentRequest request, CancellationToken cancellationToken = default)
@@ -111,7 +154,7 @@ public class CreateCurrentPaymentUseCase : ICreateCurrentPaymentUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Tenes mas de una orden pendiente. Resolve una antes de continuar.");
         }
 
-        return await PaymentCreator.CreateAsync(_db, _gateways, pendingOrders[0], request, cancellationToken);
+        return await PaymentCreator.CreateAsync(_db, _gateways, pendingOrders[0], request, _policy, cancellationToken);
     }
 }
 
@@ -122,71 +165,206 @@ internal static class PaymentCreator
         IEnumerable<IPaymentGateway> gateways,
         Order order,
         CreatePaymentRequest request,
+        PaymentCreationPolicy policy,
         CancellationToken cancellationToken)
     {
-        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey) ? null : request.IdempotencyKey.Trim();
-        if (idempotencyKey is not null)
+        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
+            ? $"server-{Guid.NewGuid():N}"
+            : request.IdempotencyKey.Trim();
+        if (idempotencyKey.Length > ValidationLimits.IdempotencyKey)
         {
-            var idempotentPayment = await db.Payments
-                .AsNoTracking()
-                .SingleOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
-
-            if (idempotentPayment is not null)
-            {
-                if (idempotentPayment.OrderId != order.Id)
-                {
-                    return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otra orden.");
-                }
-
-                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(idempotentPayment));
-            }
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia no puede superar 100 caracteres.");
         }
 
-        var activePayment = order.Payments
-            .Where(x => x.Status == PaymentStatus.Pending)
+        var idempotentPayment = await db.Payments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
+        if (idempotentPayment is not null)
+        {
+            if (idempotentPayment.OrderId != order.Id)
+            {
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otra orden.");
+            }
+
+            return await ResumeOrReuseAsync(db, gateways, order, idempotentPayment, policy, cancellationToken);
+        }
+
+        var activePayment = await db.Payments
+            .AsNoTracking()
+            .Where(x => x.OrderId == order.Id &&
+                        (x.Status == PaymentStatus.Creating || x.Status == PaymentStatus.Pending))
             .OrderByDescending(x => x.Id)
-            .FirstOrDefault();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (activePayment is not null)
         {
-            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(activePayment));
+            return await ResumeOrReuseAsync(db, gateways, order, activePayment, policy, cancellationToken);
         }
 
         var provider = string.IsNullOrWhiteSpace(request.Provider) ? "Mock" : request.Provider.Trim();
+        if (provider.Length > ValidationLimits.PaymentProvider)
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "El proveedor no puede superar 50 caracteres.");
+        }
+
         var gateway = gateways.FirstOrDefault(x => x.CanHandle(provider));
         if (gateway is null)
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, $"Proveedor de pago no soportado: {provider}.");
         }
 
-        PaymentPreferenceResult preference;
-        try
-        {
-            preference = await gateway.CreatePreferenceAsync(order, request.IdempotencyKey, cancellationToken);
-        }
-        catch (PaymentGatewayException ex)
-        {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, ex.Message);
-        }
-
-        var payment = new Payment
+        var now = DateTime.UtcNow;
+        var reservation = new Payment
         {
             OrderId = order.Id,
-            Provider = preference.Provider,
+            Provider = provider,
             ExternalReference = $"order-{order.Id}",
-            ProviderPreferenceId = preference.ProviderPreferenceId,
             IdempotencyKey = idempotencyKey,
             Amount = order.Total,
             Currency = "ARS",
-            Status = PaymentStatus.Pending,
-            CheckoutUrl = preference.CheckoutUrl
+            Status = PaymentStatus.Creating,
+            CreatedAt = now,
+            UpdatedAt = now
         };
 
-        db.Payments.Add(payment);
+        db.Payments.Add(reservation);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            db.Payments.Remove(reservation);
+
+            var winner = await db.Payments
+                .AsNoTracking()
+                .Where(x => x.IdempotencyKey == idempotencyKey ||
+                            (x.OrderId == order.Id &&
+                             (x.Status == PaymentStatus.Creating || x.Status == PaymentStatus.Pending)))
+                .OrderByDescending(x => x.IdempotencyKey == idempotencyKey)
+                .ThenByDescending(x => x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (winner is null)
+            {
+                throw;
+            }
+
+            if (winner.IdempotencyKey == idempotencyKey && winner.OrderId != order.Id)
+            {
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otra orden.");
+            }
+
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(winner));
+        }
+
+        return await CompleteReservationAsync(db, gateway, order, reservation, cancellationToken);
+    }
+
+    private static async Task<AppResult<PaymentResponse>> ResumeOrReuseAsync(
+        IApplicationDbContext db,
+        IEnumerable<IPaymentGateway> gateways,
+        Order order,
+        Payment payment,
+        PaymentCreationPolicy policy,
+        CancellationToken cancellationToken)
+    {
+        if (payment.Status != PaymentStatus.Creating)
+        {
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        }
+
+        var lastActivity = payment.UpdatedAt ?? payment.CreatedAt;
+        var staleBefore = DateTime.UtcNow.Subtract(policy.CreatingTimeout);
+        if (lastActivity > staleBefore)
+        {
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        }
+
+        var claimedAt = DateTime.UtcNow;
+        var claimed = await db.Payments
+            .Where(x => x.Id == payment.Id &&
+                        x.Status == PaymentStatus.Creating &&
+                        (x.UpdatedAt ?? x.CreatedAt) <= staleBefore)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(x => x.UpdatedAt, claimedAt),
+                cancellationToken);
+
+        if (claimed == 0)
+        {
+            var current = await db.Payments.AsNoTracking().SingleAsync(x => x.Id == payment.Id, cancellationToken);
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(current));
+        }
+
+        var reservation = await db.Payments.SingleAsync(x => x.Id == payment.Id, cancellationToken);
+        var gateway = gateways.FirstOrDefault(x => x.CanHandle(reservation.Provider));
+        if (gateway is null)
+        {
+            reservation.Status = PaymentStatus.CreationFailed;
+            reservation.FailureReason = $"Proveedor de pago no soportado: {reservation.Provider}.";
+            reservation.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, reservation.FailureReason);
+        }
+
+        return await CompleteReservationAsync(db, gateway, order, reservation, cancellationToken);
+    }
+
+    private static async Task<AppResult<PaymentResponse>> CompleteReservationAsync(
+        IApplicationDbContext db,
+        IPaymentGateway gateway,
+        Order order,
+        Payment reservation,
+        CancellationToken cancellationToken)
+    {
+        PaymentPreferenceResult preference;
+        try
+        {
+            preference = await gateway.CreatePreferenceAsync(order, reservation.IdempotencyKey, cancellationToken);
+        }
+        catch (PaymentGatewayException ex)
+        {
+            var stillCreating = await IsReservationStillCreatingForPendingOrderAsync(db, reservation.Id, cancellationToken);
+            if (!stillCreating)
+            {
+                var current = await db.Payments.AsNoTracking().SingleAsync(x => x.Id == reservation.Id, cancellationToken);
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(current));
+            }
+
+            reservation.Status = PaymentStatus.CreationFailed;
+            reservation.FailureReason = ex.Message;
+            reservation.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, ex.Message);
+        }
+
+        var canComplete = await IsReservationStillCreatingForPendingOrderAsync(db, reservation.Id, cancellationToken);
+        if (!canComplete)
+        {
+            var current = await db.Payments.AsNoTracking().SingleAsync(x => x.Id == reservation.Id, cancellationToken);
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(current));
+        }
+
+        reservation.Provider = preference.Provider;
+        reservation.ProviderPreferenceId = preference.ProviderPreferenceId;
+        reservation.Status = PaymentStatus.Pending;
+        reservation.CheckoutUrl = preference.CheckoutUrl;
+        reservation.FailureReason = null;
+        reservation.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
 
-        return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(reservation));
     }
+
+    private static Task<bool> IsReservationStillCreatingForPendingOrderAsync(
+        IApplicationDbContext db,
+        int paymentId,
+        CancellationToken cancellationToken) =>
+        db.Payments.AsNoTracking().AnyAsync(
+            x => x.Id == paymentId &&
+                 x.Status == PaymentStatus.Creating &&
+                 x.Order.Status == OrderStatus.Pending,
+            cancellationToken);
 }
 public class GetPaymentByIdUseCase : IGetPaymentByIdUseCase
 {
@@ -262,7 +440,17 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(int id, UpdatePaymentStatusRequest request, CancellationToken cancellationToken = default)
     {
-        if (!Enum.TryParse<PaymentStatus>(request.Status, true, out var newStatus))
+        if (request.ProviderPaymentId?.Trim().Length > ValidationLimits.PaymentProviderId)
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "El identificador del proveedor no puede superar 100 caracteres.");
+        }
+
+        if (request.FailureReason?.Trim().Length > ValidationLimits.PaymentFailureReason)
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "El motivo no puede superar 500 caracteres.");
+        }
+
+        if (!Enum.TryParse<PaymentStatus>(request.Status, true, out var newStatus) || !Enum.IsDefined(newStatus))
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "Estado de pago invalido.");
         }
@@ -273,7 +461,14 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Pago no encontrado.");
         }
 
-        return await PaymentStatusApplier.ApplyAsync(_db, payment, newStatus, request.ProviderPaymentId, request.FailureReason, cancellationToken);
+        return await PaymentStatusApplier.ApplyAsync(
+            _db,
+            payment,
+            newStatus,
+            request.ProviderPaymentId,
+            request.FailureReason,
+            isProviderNotification: false,
+            cancellationToken);
     }
 }
 
@@ -342,6 +537,22 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El monto o la moneda del pago no coinciden con la orden.");
         }
 
+        if (PaymentStatusMapper.IsPartialRefund(providerPayment.Status))
+        {
+            if (payment.Status != PaymentStatus.Approved ||
+                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+            {
+                return AppResult<PaymentResponse>.Failure(
+                    AppErrorType.Conflict,
+                    "El pago y el pedido no se encuentran en un estado compatible con un reembolso parcial.");
+            }
+
+            payment.FailureReason = "Reembolso parcial informado por el proveedor; requiere gestion manual.";
+            payment.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        }
+
         var status = PaymentStatusMapper.FromProviderStatus(providerPayment.Status);
         if (status is null)
         {
@@ -350,7 +561,14 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
-        return await PaymentStatusApplier.ApplyAsync(_db, payment, status.Value, providerPayment.ProviderPaymentId, providerPayment.FailureReason, cancellationToken);
+        return await PaymentStatusApplier.ApplyAsync(
+            _db,
+            payment,
+            status.Value,
+            providerPayment.ProviderPaymentId,
+            providerPayment.FailureReason,
+            isProviderNotification: true,
+            cancellationToken);
     }
 }
 
@@ -374,16 +592,49 @@ internal static class PaymentStatusApplier
         PaymentStatus newStatus,
         string? providerPaymentId,
         string? failureReason,
+        bool isProviderNotification,
         CancellationToken cancellationToken)
     {
-        if (payment.Status != PaymentStatus.Pending)
+        if (payment.Status == newStatus)
         {
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
+        if (newStatus == PaymentStatus.Refunded)
+        {
+            if (!isProviderNotification)
+            {
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Un reembolso solo puede aplicarse despues de ser confirmado por el proveedor.");
+            }
+
+            if (payment.Status != PaymentStatus.Approved ||
+                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+            {
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pago y el pedido no se encuentran en un estado reembolsable.");
+            }
+
+            var wasShipped = payment.Order.Status == OrderStatus.Shipped;
+            OrderCompensation.RefundAndRestoreStockIfNotShipped(payment.Order);
+            payment.Status = PaymentStatus.Refunded;
+            payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
+            payment.FailureReason = string.IsNullOrWhiteSpace(failureReason)
+                ? wasShipped
+                    ? "Reembolso total confirmado despues del envio; devolucion y stock pendientes de gestion manual."
+                    : "Reembolso total confirmado por el proveedor."
+                : failureReason.Trim();
+            payment.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        }
+
+        if (payment.Status != PaymentStatus.Pending)
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Transicion de estado de pago invalida.");
+        }
+
         if (newStatus == PaymentStatus.Pending)
         {
-            payment.ProviderPaymentId = string.IsNullOrWhiteSpace(providerPaymentId) ? payment.ProviderPaymentId : providerPaymentId.Trim();
+            payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
             payment.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
@@ -395,26 +646,22 @@ internal static class PaymentStatusApplier
         }
 
         payment.Status = newStatus;
-        payment.ProviderPaymentId = string.IsNullOrWhiteSpace(providerPaymentId) ? payment.ProviderPaymentId : providerPaymentId.Trim();
+        payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
         payment.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
         payment.UpdatedAt = DateTime.UtcNow;
 
         if (newStatus == PaymentStatus.Approved)
         {
+            payment.FailureReason = null;
             payment.PaidAt = DateTime.UtcNow;
             payment.Order.Status = OrderStatus.Paid;
             payment.Order.UpdatedAt = DateTime.UtcNow;
         }
         else if (newStatus is PaymentStatus.Rejected or PaymentStatus.Canceled or PaymentStatus.Expired)
         {
-            payment.Order.Status = OrderStatus.Canceled;
-            payment.Order.UpdatedAt = DateTime.UtcNow;
-
-            foreach (var item in payment.Order.Items)
-            {
-                item.Product.Stock += item.Quantity;
-                item.Product.UpdatedAt = DateTime.UtcNow;
-            }
+            OrderCompensation.CancelPendingAndRestoreStock(
+                payment.Order,
+                payment.FailureReason ?? $"Pago resuelto como {newStatus}.");
         }
         else
         {
@@ -424,10 +671,17 @@ internal static class PaymentStatusApplier
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
     }
+
+    private static string? NormalizeProviderPaymentId(string? currentValue, string? newValue) =>
+        string.IsNullOrWhiteSpace(newValue) ? currentValue : newValue.Trim();
 }
 
 internal static class PaymentStatusMapper
 {
+    public static bool IsPartialRefund(string status) =>
+        string.Equals(status, "partially_refunded", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "partially-refunded", StringComparison.OrdinalIgnoreCase);
+
     public static PaymentStatus? FromProviderStatus(string status)
     {
         return status.ToLowerInvariant() switch
@@ -469,6 +723,7 @@ internal static class PaymentMapper
             payment.ExternalReference,
             payment.ProviderPreferenceId,
             payment.ProviderPaymentId,
+            payment.IdempotencyKey,
             payment.Amount,
             payment.Currency,
             payment.Status.ToString(),

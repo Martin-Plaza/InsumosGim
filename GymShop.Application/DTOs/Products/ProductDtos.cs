@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations;
+using GymShop.Application.Common;
+
 namespace GymShop.Application.DTOs.Products;
 
 public record ProductResponse(
@@ -11,23 +14,23 @@ public record ProductResponse(
 );
 
 public record CreateProductRequest(
-    string Name,
-    string? Description,
-    decimal Price,
-    int Stock,
-    string? ImageUrl
+    [Required, StringLength(ValidationLimits.ProductName)] string Name,
+    [StringLength(ValidationLimits.ProductDescription)] string? Description,
+    [SqlDecimal] decimal Price,
+    [Range(0, int.MaxValue)] int Stock,
+    [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl
 );
 
 public record UpdateProductRequest(
-    string Name,
-    string? Description,
-    decimal Price,
-    int Stock,
-    string? ImageUrl,
+    [Required, StringLength(ValidationLimits.ProductName)] string Name,
+    [StringLength(ValidationLimits.ProductDescription)] string? Description,
+    [SqlDecimal] decimal Price,
+    [Range(0, int.MaxValue)] int Stock,
+    [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
     bool IsActive
 );
 
-public record UpdateProductStockRequest(int Stock);
+public record UpdateProductStockRequest([Range(0, int.MaxValue)] int Stock);
 
 public record UpdateProductStatusRequest(bool IsActive);
 

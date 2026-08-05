@@ -43,9 +43,17 @@ public class PaymentsController : ApiControllerBase
     }
 
     [HttpPost("current")]
+    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status202Accepted)]
     public async Task<ActionResult<PaymentResponse>> CreateForCurrentOrder(CreatePaymentRequest request, CancellationToken cancellationToken)
     {
-        return FromResult(await _createCurrentPayment.ExecuteAsync(_currentUser.UserId, request, cancellationToken));
+        var result = await _createCurrentPayment.ExecuteAsync(_currentUser.UserId, request, cancellationToken);
+        if (result.IsSuccess && string.Equals(result.Value!.Status, "Creating", StringComparison.Ordinal))
+        {
+            return AcceptedAtAction(nameof(GetById), new { id = result.Value.Id }, result.Value);
+        }
+
+        return FromResult(result);
     }
 
 
@@ -65,6 +73,8 @@ public class PaymentsController : ApiControllerBase
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPost("{id:int}/status")]
+    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<PaymentResponse>> UpdateStatus(int id, UpdatePaymentStatusRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _updatePaymentStatus.ExecuteAsync(id, request, cancellationToken));

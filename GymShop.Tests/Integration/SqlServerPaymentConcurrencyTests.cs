@@ -12,6 +12,9 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace GymShop.Tests.Integration;
 
+[Trait("Category", "Integration")]
+[Trait("Category", "SqlServer")]
+[Trait("Category", "Concurrency")]
 public sealed class SqlServerPaymentConcurrencyTests
 {
     [Fact]
@@ -158,7 +161,7 @@ public sealed class SqlServerPaymentConcurrencyTests
     public async Task Migration_stops_when_duplicate_pending_payments_exist_without_changing_them()
     {
         await using var database = await SqlTestDatabase.CreateAtPreviousMigrationAsync();
-        var seed = await database.SeedPendingOrderAsync();
+        var seed = await database.SeedPendingOrderUsingPreviousSchemaAsync();
         await using (var seedContext = database.CreateContext())
         {
             seedContext.Payments.AddRange(
@@ -381,6 +384,32 @@ internal sealed class SqlTestDatabase : IAsyncDisposable
         db.Orders.Add(order);
         await db.SaveChangesAsync();
         return new SeedResult(user.Id, order.Id);
+    }
+
+    public async Task<SeedResult> SeedPendingOrderUsingPreviousSchemaAsync()
+    {
+        await using var db = CreateContext();
+        var email = $"legacy-{Guid.NewGuid():N}@test.com";
+        await db.Database.ExecuteSqlInterpolatedAsync($$"""
+            INSERT INTO Users (Email, PasswordHash, Name, IsActive, RoleId, TokenVersion)
+            VALUES ({{email}}, 'not-used', 'Legacy SQL Test', 1, 1, 0);
+            DECLARE @UserId int = SCOPE_IDENTITY();
+
+            INSERT INTO Products (Name, Price, Stock, IsActive)
+            VALUES ('Legacy SQL Product', 100, 4, 1);
+            DECLARE @ProductId int = SCOPE_IDENTITY();
+
+            INSERT INTO Orders (UserId, Total, Status, ShippingAddress)
+            VALUES (@UserId, 100, 'Pending', 'Legacy SQL Test Address');
+            DECLARE @OrderId int = SCOPE_IDENTITY();
+
+            INSERT INTO OrderItems (OrderId, ProductId, ProductName, UnitPrice, Quantity, Subtotal)
+            VALUES (@OrderId, @ProductId, 'Legacy SQL Product', 100, 1, 100);
+            """);
+
+        var userId = await db.Users.AsNoTracking().Where(x => x.Email == email).Select(x => x.Id).SingleAsync();
+        var orderId = await db.Orders.AsNoTracking().Where(x => x.UserId == userId).Select(x => x.Id).SingleAsync();
+        return new SeedResult(userId, orderId);
     }
 
     public async ValueTask DisposeAsync()

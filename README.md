@@ -276,7 +276,7 @@ Backend para un e-commerce de productos de gimnasio construido con .NET, ASP.NET
 GymShop.Api             HTTP API, controllers, auth, Swagger, middleware
 GymShop.Application     Use cases, DTOs, contratos, reglas de aplicacion
 GymShop.Domain          Entidades y enums del dominio
-GymShop.Infrastructure  EF Core, repositorios, servicios externos, migraciones
+GymShop.Infrastructure  EF Core, servicios externos, transacciones y migraciones
 GymShop.Tests           Tests de use cases, pagos, ordenes y autorizacion
 ```
 
@@ -288,7 +288,7 @@ La API no accede directamente a la persistencia. La logica se concentra en casos
 2. Ejecuta checkout con `POST /api/cart/checkout` enviando direccion de envio.
 3. El backend valida productos, stock y orden pendiente.
 4. Se crea la orden, sus items, se descuentan stocks y se limpia el carrito en una unica operacion atomica.
-5. El usuario crea el pago con `POST /api/payments/current`.
+5. El usuario crea el pago con `POST /api/orders/{orderId}/payments`.
 6. Si usa Mercado Pago, recibe una URL de checkout.
 7. Mercado Pago notifica al webhook.
 8. El backend valida autenticidad, consulta el pago al proveedor y actualiza la orden.
@@ -321,7 +321,7 @@ GymShop distingue una cancelacion previa a completar la venta de un reembolso co
 | `Paid` | refund total confirmado | `Refunded` | `Refunded` | se restaura una vez |
 | `Shipped` | refund total confirmado | `Refunded` | `Refunded` | no se restaura automaticamente |
 
-`Paid -> Canceled` esta prohibido en el cambio administrativo generico. Un pago aprobado solo pasa a `Refunded` cuando el webhook consulta Mercado Pago y el proveedor confirma el reembolso. GymShop no inicia refunds ni llama a la API de refunds en esta fase; deben iniciarse desde Mercado Pago.
+`Paid -> Canceled` esta prohibido en el cambio administrativo generico. Un pago aprobado solo pasa a `Refunded` cuando el webhook consulta Mercado Pago y el proveedor confirma el reembolso. GymShop no inicia refunds ni llama a la API de refunds en esta fase; deben iniciarse desde Mercado Pago. La primera razon de cancelacion se conserva en `Order.CancellationReason` y tambien se copia a los pagos activos cancelados; los reintentos no reemplazan el motivo original.
 
 Los webhooks `refunded` repetidos son idempotentes. Si el pedido todavia estaba `Paid`, solo la primera transicion restaura stock. Si ya estaba `Shipped`, la devolucion fisica y el stock quedan pendientes de gestion manual y el motivo se registra en `Payment.FailureReason`.
 
@@ -335,7 +335,7 @@ La creacion de pagos reserva primero un registro local con estado `Creating`. Es
 
 `IdempotencyKey` puede ser enviada por el cliente. Si se omite, el servidor genera una clave con prefijo `server-`; `PaymentResponse` siempre expone la clave efectiva. Repetir una clave reutiliza el mismo intento. Para reintentar un `CreationFailed` se debe usar una clave nueva.
 
-Si otro request encuentra el pago ganador todavia en `Creating`, `POST /api/payments/current` responde `202 Accepted`, incluye el Payment con `CheckoutUrl=null` y una cabecera `Location` hacia `GET /api/payments/{id}`. Cuando el gateway termina correctamente, el estado pasa a `Pending` y queda disponible la URL de checkout.
+Si otro request encuentra el pago ganador todavia en `Creating`, `POST /api/orders/{orderId}/payments` responde `202 Accepted`, incluye el Payment con `CheckoutUrl=null` y una cabecera `Location` hacia `GET /api/payments/{id}`. Cuando el gateway termina correctamente, el estado pasa a `Pending` y queda disponible la URL de checkout.
 
 Si el gateway falla, la reserva pasa a `CreationFailed`, conserva un motivo seguro y libera el indice activo para un nuevo intento. No se mantiene una transaccion SQL abierta durante la llamada externa y no se utilizan locks en memoria.
 
@@ -380,11 +380,27 @@ La migracion `EnforceSingleActivePaymentPerOrder` se detiene si detecta mas de u
 
 ### Payments
 
-- `POST /api/payments/current`
+- `POST /api/orders/{orderId}/payments`
 - `GET /api/payments/{id}`
 - `GET /api/payments/orders/{orderId}`
 - `POST /api/payments/{id}/status` - Admin, SuperAdmin
 - `POST /api/payments/mercadopago/webhook`
+
+### Audit
+
+- `GET /api/audit?page=1&pageSize=50` - solo SuperAdmin
+
+## Auditoria administrativa
+
+Las operaciones sensibles se registran en `AuditEntries` dentro del mismo `SaveChangesAsync` que persiste el cambio. Si la auditoria no puede guardarse, la operacion sensible tambien falla y la transaccion local no se confirma.
+
+Se auditan cambios de rol y estado de usuarios, stock y estado de productos, cambios administrativos de orden, cancelaciones, expiraciones, resoluciones manuales de pago y reembolsos informados por Mercado Pago. Las operaciones idempotentes que no cambian estado no generan entradas duplicadas. Una expiracion masiva genera una entrada por cada orden modificada con el mismo correlation ID del request.
+
+`OldValue` y `NewValue` contienen JSON acotado con campos permitidos explicitamente, hasta 2000 caracteres. La auditoria no serializa entidades, requests completos, passwords, hashes, JWT, secretos, datos de tarjeta, payloads completos de Mercado Pago ni URLs de checkout. `Reason` admite hasta 500 caracteres y `CorrelationId` hasta 100.
+
+Las acciones humanas conservan `ActorUserId`. Los eventos confirmados por proveedor, como un refund de Mercado Pago, permiten actor nulo y usan una accion que identifica el origen. No se almacena IP en esta fase por minimizacion de datos personales; la correlacion con logs se realiza mediante `CorrelationId`.
+
+La consulta de auditoria es de solo lectura y exclusiva para SuperAdmin. Admite filtros `action`, `entityType`, `entityId`, `actorUserId`, `fromUtc` y `toUtc`. `page` comienza en 1, `pageSize` es 50 por defecto y su maximo es 100. No existen endpoints comunes para crear, editar o eliminar entradas. Las fechas de filtro deben enviarse en UTC.
 
 ## Requisitos
 
@@ -469,6 +485,47 @@ Limites principales:
 
 El catalogo publico y los usuarios comunes solo ven productos activos. Solicitar `GET /api/products?includeInactive=true` exige Admin o SuperAdmin: un cliente anonimo recibe 401 y un usuario sin ese rol recibe 403. `GET /api/products/{id}` devuelve 404 para un producto inactivo cuando lo consulta publico/User, igual que para un ID inexistente; Admin y SuperAdmin pueden consultarlo.
 
+## Rate limiting, HTTPS y reverse proxy
+
+Rate limiting esta habilitado de forma segura por defecto y se deshabilita explicitamente en `appsettings.Development.json` para no interferir con el desarrollo local. Puede habilitarse localmente cambiando `RateLimiting:Enabled=true`.
+
+Las solicitudes deben superar todos los limites aplicables:
+
+| Flujo | Particiones predeterminadas de Production |
+|---|---|
+| Login | 10 por IP/minuto y 5 por cuenta/15 minutos |
+| Registro | 5 por IP/hora y 100 globales/hora |
+| Crear pago | 10 por `UserId`/minuto y 3 por `OrderId`/minuto |
+| Webhook Mercado Pago | 120 por IP/minuto y 3000 globales/minuto, despues de validar HMAC |
+
+La cuenta de login se normaliza y se transforma con SHA-256 para no conservar ni registrar el email como clave del limitador. Un rechazo responde `429 Too Many Requests` con `ProblemDetails`, `traceId` y `Retry-After`, sin indicar si la cuenta existe. Los contadores son locales a cada instancia de la API; un despliegue con varias replicas debe mover esta defensa a un gateway o almacenamiento distribuido como Redis.
+
+Todos los valores se configuran bajo `RateLimiting`. En Production, `RateLimiting:Enabled=false` hace fallar el arranque. Los limites usan ventanas fijas y no encolan solicitudes.
+
+HTTPS es obligatorio en Production. ASP.NET Core activa redireccion HTTPS y HSTS fuera de Development. Si Kestrel recibe trafico directamente, debe tener un endpoint TLS y certificado configurados. Si TLS termina en un reverse proxy, ese proxy tambien debe exigir HTTPS y enviar `X-Forwarded-Proto: https`.
+
+El procesamiento de forwarded headers esta deshabilitado por defecto:
+
+```json
+"ReverseProxy": {
+  "Enabled": false,
+  "ForwardLimit": 1,
+  "KnownProxies": []
+}
+```
+
+Solo debe habilitarse cuando realmente exista un proxy. Cada IP de proxy autorizada debe declararse en `KnownProxies`; habilitarlo sin proxies validos hace fallar el arranque. GymShop procesa solamente `X-Forwarded-For` y `X-Forwarded-Proto`, con un salto por defecto. Un header enviado directamente por un cliente no confiable se ignora.
+
+Ejemplo sin direcciones reales:
+
+```text
+ReverseProxy__Enabled=true
+ReverseProxy__ForwardLimit=1
+ReverseProxy__KnownProxies__0=<IP-PRIVADA-DEL-PROXY>
+```
+
+HSTS puede ser emitido por ASP.NET Core como en esta configuracion o centralizarse en el proxy. Si el proxy lo administra, debe revisarse la politica antes de retirar `UseHsts` del backend; no se debe desactivar HTTPS.
+
 ## Ejecutar el proyecto
 
 ```powershell
@@ -490,6 +547,30 @@ La aplicacion aplica migraciones automaticamente en ambiente Development.
 dotnet test GymShop.slnx
 ```
 
+Los tests con `Category=Integration` levantan el pipeline HTTP real y/o verifican comportamiento propio de SQL Server. En Windows usan LocalDB por defecto. En Linux, CI o cuando se prefiera una instancia completa, definir una conexion administrativa en `GYMSHOP_TEST_SQLSERVER`; cada test crea una base aislada, aplica todas las migraciones desde cero y la elimina al terminar.
+
+Ejemplo sin credenciales reales:
+
+```powershell
+$env:GYMSHOP_TEST_SQLSERVER="Server=<HOST>,1433;Database=master;User Id=<USUARIO>;Password=<PASSWORD>;TrustServerCertificate=True"
+dotnet test GymShop.slnx --configuration Release --filter "Category=Integration"
+```
+
+Para ejecutar solamente la suite rapida:
+
+```powershell
+dotnet test GymShop.slnx --configuration Release --filter "Category!=Integration"
+```
+
+Para generar y resumir cobertura por proyecto:
+
+```powershell
+dotnet test GymShop.slnx --configuration Release --collect:"XPlat Code Coverage" --results-directory TestResults
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/Summarize-Coverage.ps1 -ResultsDirectory TestResults
+```
+
+La cobertura indica que lineas y ramas fueron ejecutadas durante los tests; no indica que porcentaje de funciones usa un cliente real ni demuestra por si sola ausencia de defectos. Se reporta por proyecto como señal para detectar huecos, sin imponer un porcentaje artificial.
+
 La suite cubre, entre otros puntos:
 
 - Registro, login y duplicados por email case-insensitive.
@@ -509,6 +590,10 @@ La suite cubre, entre otros puntos:
 - Refund total antes y despues del envio, webhooks repetidos y reembolsos parciales manuales.
 - Reservas `Creating`, recuperacion de intentos atascados e historial `CreationFailed`.
 - Carreras de pago e indices filtrados verificados sobre SQL Server real.
+- Pipeline HTTP real: login, JWT, 401/403, roles, serializacion, ProblemDetails, errores 500, productos inactivos, rate limiting y webhook HMAC.
+- Migraciones desde una base vacia, restricciones, indices filtrados, RowVersion, rollback de checkout y consultas traducidas por SQL Server.
+- Concurrencia sobre ultimo stock, actualizacion de stock y creacion de pagos activos.
+- Gateway HTTP de Mercado Pago ante exito, timeout, JSON invalido, 4xx/5xx, reintento idempotente y estado refunded.
 
 ## CI
 
@@ -519,8 +604,11 @@ En cada push o pull request hacia `main`, `master` o `develop`, ejecuta:
 ```powershell
 dotnet restore GymShop.slnx
 dotnet build GymShop.slnx --configuration Release --no-restore
-dotnet test GymShop.slnx --configuration Release --no-build --verbosity normal
+dotnet test GymShop.slnx --configuration Release --no-build --filter "Category!=Integration" --verbosity normal
+dotnet test GymShop.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults --verbosity normal
 ```
+
+El segundo comando usa el servicio SQL Server de CI, ejecuta la suite completa, publica el XML Cobertura como artefacto y agrega al resumen del job los porcentajes de lineas y ramas por proyecto.
 
 ## Notas de seguridad
 

@@ -116,10 +116,12 @@ public class CreateProductUseCase : ICreateProductUseCase
 public class UpdateProductUseCase : IUpdateProductUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateProductUseCase(IApplicationDbContext db)
+    public UpdateProductUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<ProductResponse>> ExecuteAsync(int id, UpdateProductRequest request, CancellationToken cancellationToken = default)
@@ -136,6 +138,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
         }
 
+        var oldValue = new { product.Name, product.Price, product.Stock, product.IsActive };
         product.Name = request.Name.Trim();
         product.Description = request.Description?.Trim();
         product.Price = request.Price;
@@ -143,6 +146,8 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         product.ImageUrl = request.ImageUrl?.Trim();
         product.IsActive = request.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
+        AuditTrail.Add(_db, _auditContext, "ProductUpdated", "Product", product.Id, oldValue,
+            new { product.Name, product.Price, product.Stock, product.IsActive });
 
         try
         {
@@ -160,10 +165,12 @@ public class UpdateProductUseCase : IUpdateProductUseCase
 public class UpdateProductStockUseCase : IUpdateProductStockUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateProductStockUseCase(IApplicationDbContext db)
+    public UpdateProductStockUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateProductStockRequest request, CancellationToken cancellationToken = default)
@@ -179,8 +186,13 @@ public class UpdateProductStockUseCase : IUpdateProductStockUseCase
             return AppResult.Failure(AppErrorType.NotFound, "Producto no encontrado.");
         }
 
+        if (product.Stock == request.Stock) return AppResult.Success();
+
+        var oldStock = product.Stock;
         product.Stock = request.Stock;
         product.UpdatedAt = DateTime.UtcNow;
+        AuditTrail.Add(_db, _auditContext, "ProductStockChanged", "Product", product.Id,
+            new { stock = oldStock }, new { stock = product.Stock });
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
@@ -197,10 +209,12 @@ public class UpdateProductStockUseCase : IUpdateProductStockUseCase
 public class UpdateProductStatusUseCase : IUpdateProductStatusUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateProductStatusUseCase(IApplicationDbContext db)
+    public UpdateProductStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateProductStatusRequest request, CancellationToken cancellationToken = default)
@@ -211,8 +225,13 @@ public class UpdateProductStatusUseCase : IUpdateProductStatusUseCase
             return AppResult.Failure(AppErrorType.NotFound, "Producto no encontrado.");
         }
 
+        if (product.IsActive == request.IsActive) return AppResult.Success();
+
+        var oldStatus = product.IsActive;
         product.IsActive = request.IsActive;
         product.UpdatedAt = DateTime.UtcNow;
+        AuditTrail.Add(_db, _auditContext, "ProductStatusChanged", "Product", product.Id,
+            new { isActive = oldStatus }, new { isActive = product.IsActive });
         try
         {
             await _db.SaveChangesAsync(cancellationToken);

@@ -21,6 +21,7 @@ public record OrderResponse(
     decimal Total,
     string Status,
     string ShippingAddress,
+    string? CancellationReason,
     List<OrderItemResponse> Items,
     List<OrderPaymentResponse> Payments
 );

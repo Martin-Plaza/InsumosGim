@@ -5,9 +5,11 @@ using GymShop.Application.Abstractions;
 using GymShop.Application.DTOs.Payments;
 using GymShop.Application.UseCases.Payments;
 using GymShop.Infrastructure.Configuration;
+using GymShop.Api.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace GymShop.Api.Controllers;
 
@@ -16,38 +18,50 @@ namespace GymShop.Api.Controllers;
 [Route("api/payments")]
 public class PaymentsController : ApiControllerBase
 {
-    private readonly ICreateCurrentPaymentUseCase _createCurrentPayment;
+    private readonly ICreatePaymentUseCase _createPayment;
     private readonly IGetPaymentByIdUseCase _getPaymentById;
     private readonly IGetOrderPaymentsUseCase _getOrderPayments;
     private readonly IUpdatePaymentStatusUseCase _updatePaymentStatus;
     private readonly IHandlePaymentWebhookUseCase _handlePaymentWebhook;
     private readonly ICurrentUserService _currentUser;
     private readonly MercadoPagoOptions _mercadoPagoOptions;
+    private readonly IGymShopRequestLimiter _requestLimiter;
 
     public PaymentsController(
-        ICreateCurrentPaymentUseCase createCurrentPayment,
+        ICreatePaymentUseCase createPayment,
         IGetPaymentByIdUseCase getPaymentById,
         IGetOrderPaymentsUseCase getOrderPayments,
         IUpdatePaymentStatusUseCase updatePaymentStatus,
         IHandlePaymentWebhookUseCase handlePaymentWebhook,
         ICurrentUserService currentUser,
-        IOptions<MercadoPagoOptions> mercadoPagoOptions)
+        IOptions<MercadoPagoOptions> mercadoPagoOptions,
+        IGymShopRequestLimiter requestLimiter)
     {
-        _createCurrentPayment = createCurrentPayment;
+        _createPayment = createPayment;
         _getPaymentById = getPaymentById;
         _getOrderPayments = getOrderPayments;
         _updatePaymentStatus = updatePaymentStatus;
         _handlePaymentWebhook = handlePaymentWebhook;
         _currentUser = currentUser;
         _mercadoPagoOptions = mercadoPagoOptions.Value;
+        _requestLimiter = requestLimiter;
     }
 
-    [HttpPost("current")]
+    [HttpPost("/api/orders/{orderId:int}/payments")]
     [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status202Accepted)]
-    public async Task<ActionResult<PaymentResponse>> CreateForCurrentOrder(CreatePaymentRequest request, CancellationToken cancellationToken)
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<PaymentResponse>> CreateForOrder(int orderId, CreatePaymentRequest request, CancellationToken cancellationToken)
     {
-        var result = await _createCurrentPayment.ExecuteAsync(_currentUser.UserId, request, cancellationToken);
+        var userId = _currentUser.UserId;
+        var userDecision = _requestLimiter.Acquire(RateLimitPolicies.PaymentUser, userId.ToString());
+        if (!userDecision.IsAllowed) return RateLimitResponse.Create(HttpContext, userDecision);
+
+        var decision = _requestLimiter.Acquire(RateLimitPolicies.PaymentOrder, orderId.ToString());
+        if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
+
+        var canManageAll = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+        var result = await _createPayment.ExecuteAsync(orderId, userId, canManageAll, request, cancellationToken);
         if (result.IsSuccess && string.Equals(result.Value!.Status, "Creating", StringComparison.Ordinal))
         {
             return AcceptedAtAction(nameof(GetById), new { id = result.Value.Id }, result.Value);
@@ -82,6 +96,8 @@ public class PaymentsController : ApiControllerBase
 
     [AllowAnonymous]
     [HttpPost("mercadopago/webhook")]
+    [EnableRateLimiting(RateLimitPolicies.WebhookIp)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult> MercadoPagoWebhook([FromQuery(Name = "data.id")] string? queryDataId, [FromBody] JsonElement body, CancellationToken cancellationToken)
     {
         if (!_mercadoPagoOptions.Enabled)
@@ -100,6 +116,9 @@ public class PaymentsController : ApiControllerBase
         {
             return Unauthorized(new { message = "Firma de Mercado Pago invalida." });
         }
+
+        var decision = _requestLimiter.Acquire(RateLimitPolicies.WebhookGlobal, "all");
+        if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
 
         var result = await _handlePaymentWebhook.ExecuteAsync("MercadoPago", dataId, cancellationToken);
         return result.IsSuccess ? Ok(new { received = true }) : ToErrorResponse(result.Error!);

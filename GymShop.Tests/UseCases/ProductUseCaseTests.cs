@@ -94,4 +94,35 @@ public class ProductUseCaseTests
         Assert.True(lookup.IsSuccess);
         Assert.Equal(inactive.Id, lookup.Value!.Id);
     }
+
+    [Fact]
+    public async Task Stock_and_status_changes_create_safe_audit_entries()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var actor = new User { Name = "Admin", Email = "product-admin@test.com", PasswordHash = "secret-hash", RoleId = 2, IsActive = true };
+        var product = new Product { Name = "Producto", Price = 10, Stock = 5, IsActive = true };
+        db.AddRange(actor, product);
+        await db.SaveChangesAsync();
+        var auditContext = new FakeAuditContext(actor.Id, "corr-product");
+
+        var stock = await new UpdateProductStockUseCase(db, auditContext).ExecuteAsync(product.Id, new UpdateProductStockRequest(8));
+        var status = await new UpdateProductStatusUseCase(db, auditContext).ExecuteAsync(product.Id, new UpdateProductStatusRequest(false));
+
+        Assert.True(stock.IsSuccess);
+        Assert.True(status.IsSuccess);
+        Assert.Equal(["ProductStockChanged", "ProductStatusChanged"], db.AuditEntries.Select(x => x.Action).ToArray());
+        Assert.All(db.AuditEntries, entry => Assert.Equal("corr-product", entry.CorrelationId));
+        Assert.DoesNotContain("secret-hash", string.Join('|', db.AuditEntries.Select(x => x.OldValue + x.NewValue + x.Reason)));
+    }
+
+    [Fact]
+    public async Task Failed_product_change_does_not_create_success_audit()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var result = await new UpdateProductStockUseCase(db, new FakeAuditContext(1, "corr-failed"))
+            .ExecuteAsync(999999, new UpdateProductStockRequest(4));
+
+        Assert.False(result.IsSuccess);
+        Assert.Empty(db.AuditEntries);
+    }
 }

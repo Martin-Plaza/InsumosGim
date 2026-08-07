@@ -18,10 +18,30 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AuditEntry>(entity =>
+        {
+            entity.ToTable("AuditEntries");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Action).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.EntityType).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.EntityId).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.OldValue).HasMaxLength(2000);
+            entity.Property(x => x.NewValue).HasMaxLength(2000);
+            entity.Property(x => x.Reason).HasMaxLength(500);
+            entity.Property(x => x.CorrelationId).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => x.CreatedAtUtc);
+            entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAtUtc });
+            entity.HasIndex(x => new { x.ActorUserId, x.CreatedAtUtc });
+            entity.HasIndex(x => x.CorrelationId);
+            entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict);
+        });
 
         modelBuilder.Entity<Role>(entity =>
         {
@@ -86,6 +106,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .HasMaxLength(30)
                 .IsRequired();
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.CancellationReason).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
             entity.HasIndex(x => x.UserId);

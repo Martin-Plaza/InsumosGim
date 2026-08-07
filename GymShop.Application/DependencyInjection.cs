@@ -1,4 +1,5 @@
 using GymShop.Application.UseCases.Auth;
+using GymShop.Application.UseCases.Audit;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Payments;
@@ -15,6 +16,7 @@ public static class DependencyInjection
         services.AddScoped<IRegisterUserUseCase, RegisterUserUseCase>();
         services.AddScoped<ILoginUserUseCase, LoginUserUseCase>();
         services.AddScoped<IGetCurrentUserUseCase, GetCurrentUserUseCase>();
+        services.AddScoped<IGetAuditEntriesUseCase, GetAuditEntriesUseCase>();
 
         services.AddScoped<IGetProductsUseCase, GetProductsUseCase>();
         services.AddScoped<IGetProductByIdUseCase, GetProductByIdUseCase>();
@@ -31,7 +33,6 @@ public static class DependencyInjection
         services.AddScoped<IExpirePendingOrdersUseCase, ExpirePendingOrdersUseCase>();
 
         services.AddScoped<ICreatePaymentUseCase, CreatePaymentUseCase>();
-        services.AddScoped<ICreateCurrentPaymentUseCase, CreateCurrentPaymentUseCase>();
         services.AddScoped<IGetPaymentByIdUseCase, GetPaymentByIdUseCase>();
         services.AddScoped<IGetOrderPaymentsUseCase, GetOrderPaymentsUseCase>();
         services.AddScoped<IUpdatePaymentStatusUseCase, UpdatePaymentStatusUseCase>();

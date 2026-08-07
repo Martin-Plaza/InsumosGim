@@ -198,6 +198,9 @@ public class PaymentUseCaseTests
         Assert.Equal(OrderStatus.Refunded, order.Status);
         Assert.Equal(5, product.Stock);
         Assert.Contains("Reembolso total", payment.FailureReason);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("PaymentRefundedByProvider", audit.Action);
+        Assert.Null(audit.ActorUserId);
     }
 
     [Fact]
@@ -228,6 +231,7 @@ public class PaymentUseCaseTests
         Assert.Equal(OrderStatus.Refunded, order.Status);
         Assert.Equal(3, product.Stock);
         Assert.Contains("despues del envio", payment.FailureReason);
+        Assert.Equal("PaymentRefundedByProvider", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -257,6 +261,7 @@ public class PaymentUseCaseTests
         Assert.Equal(OrderStatus.Paid, order.Status);
         Assert.Equal(3, product.Stock);
         Assert.Contains("gestion manual", payment.FailureReason);
+        Assert.Equal("PaymentPartialRefundFlagged", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -279,6 +284,7 @@ public class PaymentUseCaseTests
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(PaymentStatus.Approved, payment.Status);
         Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Empty(db.AuditEntries);
     }
 
     [Fact]
@@ -289,13 +295,17 @@ public class PaymentUseCaseTests
         var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
         var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total);
 
-        var useCase = new UpdatePaymentStatusUseCase(db);
+        var useCase = new UpdatePaymentStatusUseCase(db, new FakeAuditContext(user.Id, "corr-manual-payment"));
         var result = await useCase.ExecuteAsync(payment.Id, new UpdatePaymentStatusRequest("Approved", "pay_123", null));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(PaymentStatus.Approved.ToString(), result.Value?.Status);
         Assert.Equal(OrderStatus.Paid, order.Status);
         Assert.NotNull(payment.PaidAt);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("PaymentResolvedManually", audit.Action);
+        Assert.Equal(user.Id, audit.ActorUserId);
+        Assert.Equal("corr-manual-payment", audit.CorrelationId);
     }
 
     [Fact]
@@ -318,6 +328,7 @@ public class PaymentUseCaseTests
         Assert.Equal(OrderStatus.Canceled, order.Status);
         Assert.Equal(PaymentStatus.Rejected, payment.Status);
         Assert.Equal(5, product.Stock);
+        Assert.Equal("PaymentResolvedManually", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -336,31 +347,34 @@ public class PaymentUseCaseTests
     }
 
     [Fact]
-    public async Task CreateCurrentPayment_creates_payment_for_user_pending_order_without_order_id()
+    public async Task CreatePayment_rejects_order_owned_by_another_user()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db);
+        var otherUser = await SeedUserAsync(db);
         var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
 
-        var useCase = new CreateCurrentPaymentUseCase(db, [new MockPaymentGateway()]);
-        var result = await useCase.ExecuteAsync(user.Id, new CreatePaymentRequest("Mock", "current-1"));
+        var useCase = new CreatePaymentUseCase(db, [new MockPaymentGateway()]);
+        var result = await useCase.ExecuteAsync(order.Id, otherUser.Id, false, new CreatePaymentRequest("Mock", "other-user"));
 
-        Assert.True(result.IsSuccess);
-        Assert.Equal(order.Id, result.Value?.OrderId);
-        Assert.Equal("current-1", db.Payments.Single().IdempotencyKey);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Forbidden, result.Error?.Type);
+        Assert.Empty(db.Payments);
     }
 
     [Fact]
-    public async Task CreateCurrentPayment_rejects_when_user_has_no_pending_order()
+    public async Task CreatePayment_allows_admin_to_manage_another_users_order()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db);
+        var admin = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
 
-        var useCase = new CreateCurrentPaymentUseCase(db, [new MockPaymentGateway()]);
-        var result = await useCase.ExecuteAsync(user.Id, new CreatePaymentRequest("Mock", null));
+        var useCase = new CreatePaymentUseCase(db, [new MockPaymentGateway()]);
+        var result = await useCase.ExecuteAsync(order.Id, admin.Id, true, new CreatePaymentRequest("Mock", "admin-order"));
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(AppErrorType.NotFound, result.Error?.Type);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(order.Id, result.Value?.OrderId);
     }
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {

@@ -49,5 +49,18 @@ jobs:
       - name: Build
         run: dotnet build GymShop.slnx --configuration Release --no-restore
 
-      - name: Test
-        run: dotnet test GymShop.slnx --configuration Release --no-build --verbosity normal
+      - name: Unit tests
+        run: dotnet test GymShop.slnx --configuration Release --no-build --filter "Category!=Integration" --verbosity normal
+
+      - name: Full suite with SQL Server and coverage
+        shell: pwsh
+        run: |
+          dotnet test GymShop.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults --verbosity normal
+          ./scripts/Summarize-Coverage.ps1 -ResultsDirectory TestResults
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gymshop-coverage
+          path: TestResults/**/coverage.cobertura.xml
+          if-no-files-found: error

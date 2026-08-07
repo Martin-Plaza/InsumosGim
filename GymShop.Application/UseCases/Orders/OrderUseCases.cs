@@ -125,10 +125,12 @@ public class GetOrdersUseCase : IGetOrdersUseCase
 public class CancelOrderUseCase : ICancelOrderUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public CancelOrderUseCase(IApplicationDbContext db)
+    public CancelOrderUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancelOrderRequest request, CancellationToken cancellationToken = default)
@@ -169,6 +171,8 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             ? "Cancelacion solicitada para el pedido."
             : request.Reason.Trim();
         OrderCompensation.CancelPendingAndRestoreStock(order, reason);
+        AuditTrail.Add(_db, _auditContext, "OrderCanceled", "Order", order.Id,
+            new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() }, reason);
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
@@ -178,10 +182,12 @@ public class CancelOrderUseCase : ICancelOrderUseCase
 public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public ExpirePendingOrdersUseCase(IApplicationDbContext db)
+    public ExpirePendingOrdersUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<ExpirePendingOrdersResponse>> ExecuteAsync(ExpirePendingOrdersRequest request, CancellationToken cancellationToken = default)
@@ -202,6 +208,9 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
         foreach (var order in orders)
         {
             OrderCompensation.CancelPendingAndRestoreStock(order, "Pedido pendiente expirado.");
+            AuditTrail.Add(_db, _auditContext, "OrderExpiredAdministratively", "Order", order.Id,
+                new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() },
+                $"OlderThanMinutes={request.OlderThanMinutes}");
         }
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -219,6 +228,7 @@ internal static class OrderCompensation
         }
 
         order.Status = OrderStatus.Canceled;
+        order.CancellationReason ??= reason;
         order.UpdatedAt = DateTime.UtcNow;
 
         foreach (var payment in order.Payments.Where(x =>
@@ -265,10 +275,12 @@ internal static class OrderCompensation
 public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateOrderStatusUseCase(IApplicationDbContext db)
+    public UpdateOrderStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateOrderStatusRequest request, CancellationToken cancellationToken = default)
@@ -298,6 +310,7 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             return AppResult.Success();
         }
 
+        var oldStatus = order.Status;
         if (status == OrderStatus.Canceled)
         {
             OrderCompensation.CancelPendingAndRestoreStock(order, "Cancelacion administrativa del pedido.");
@@ -307,6 +320,10 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             order.Status = status;
             order.UpdatedAt = DateTime.UtcNow;
         }
+        AuditTrail.Add(_db, _auditContext, "OrderStatusChanged", "Order", order.Id,
+            new { status = oldStatus.ToString() },
+            new { status = order.Status.ToString() },
+            status == OrderStatus.Canceled ? "Cancelacion administrativa del pedido." : null);
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult.Success();
@@ -358,6 +375,7 @@ internal static class OrderMapper
             order.Total,
             order.Status.ToString(),
             order.ShippingAddress,
+            order.CancellationReason,
             order.Items
                 .OrderBy(x => x.Id)
                 .Select(x => new OrderItemResponse(x.ProductId, x.ProductName, x.UnitPrice, x.Quantity, x.Subtotal))

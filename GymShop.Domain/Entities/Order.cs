@@ -10,6 +10,7 @@ public class Order
     public decimal Total { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
     public string ShippingAddress { get; set; } = string.Empty;
+    public string? CancellationReason { get; set; }
     public DateTime? UpdatedAt { get; set; }
 
     public User User { get; set; } = null!;

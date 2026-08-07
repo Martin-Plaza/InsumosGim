@@ -13,11 +13,6 @@ public interface ICreatePaymentUseCase
     Task<AppResult<PaymentResponse>> ExecuteAsync(int orderId, int userId, bool canManageAll, CreatePaymentRequest request, CancellationToken cancellationToken = default);
 }
 
-public interface ICreateCurrentPaymentUseCase
-{
-    Task<AppResult<PaymentResponse>> ExecuteAsync(int userId, CreatePaymentRequest request, CancellationToken cancellationToken = default);
-}
-
 public interface IGetPaymentByIdUseCase
 {
     Task<AppResult<PaymentResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancellationToken cancellationToken = default);
@@ -110,51 +105,6 @@ public class CreatePaymentUseCase : ICreatePaymentUseCase
         }
 
         return await PaymentCreator.CreateAsync(_db, _gateways, order, request, _policy, cancellationToken);
-    }
-}
-
-public class CreateCurrentPaymentUseCase : ICreateCurrentPaymentUseCase
-{
-    private readonly IApplicationDbContext _db;
-    private readonly IEnumerable<IPaymentGateway> _gateways;
-    private readonly PaymentCreationPolicy _policy;
-
-    public CreateCurrentPaymentUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways)
-        : this(db, gateways, PaymentCreationPolicy.Default)
-    {
-    }
-
-    public CreateCurrentPaymentUseCase(
-        IApplicationDbContext db,
-        IEnumerable<IPaymentGateway> gateways,
-        PaymentCreationPolicy policy)
-    {
-        _db = db;
-        _gateways = gateways;
-        _policy = policy;
-    }
-
-    public async Task<AppResult<PaymentResponse>> ExecuteAsync(int userId, CreatePaymentRequest request, CancellationToken cancellationToken = default)
-    {
-        var pendingOrders = await _db.Orders
-            .Include(x => x.User)
-            .Include(x => x.Items)
-            .Include(x => x.Payments)
-            .Where(x => x.UserId == userId && x.Status == OrderStatus.Pending)
-            .OrderByDescending(x => x.Id)
-            .ToListAsync(cancellationToken);
-
-        if (pendingOrders.Count == 0)
-        {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "No tenes una orden pendiente para pagar.");
-        }
-
-        if (pendingOrders.Count > 1)
-        {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Tenes mas de una orden pendiente. Resolve una antes de continuar.");
-        }
-
-        return await PaymentCreator.CreateAsync(_db, _gateways, pendingOrders[0], request, _policy, cancellationToken);
     }
 }
 
@@ -432,10 +382,12 @@ public class GetOrderPaymentsUseCase : IGetOrderPaymentsUseCase
 public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdatePaymentStatusUseCase(IApplicationDbContext db)
+    public UpdatePaymentStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(int id, UpdatePaymentStatusRequest request, CancellationToken cancellationToken = default)
@@ -468,6 +420,7 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             request.ProviderPaymentId,
             request.FailureReason,
             isProviderNotification: false,
+            _auditContext,
             cancellationToken);
     }
 }
@@ -476,11 +429,13 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly IEnumerable<IPaymentGateway> _gateways;
+    private readonly IAuditContext? _auditContext;
 
-    public HandlePaymentWebhookUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways)
+    public HandlePaymentWebhookUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways, IAuditContext? auditContext = null)
     {
         _db = db;
         _gateways = gateways;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(string provider, string providerPaymentId, CancellationToken cancellationToken = default)
@@ -549,6 +504,9 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
 
             payment.FailureReason = "Reembolso parcial informado por el proveedor; requiere gestion manual.";
             payment.UpdatedAt = DateTime.UtcNow;
+            AuditTrail.Add(_db, _auditContext, "PaymentPartialRefundFlagged", "Payment", payment.Id,
+                new { status = payment.Status.ToString(), failureReason = (string?)null },
+                new { status = payment.Status.ToString(), payment.FailureReason }, payment.FailureReason);
             await _db.SaveChangesAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
@@ -568,6 +526,7 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             providerPayment.ProviderPaymentId,
             providerPayment.FailureReason,
             isProviderNotification: true,
+            _auditContext,
             cancellationToken);
     }
 }
@@ -593,6 +552,7 @@ internal static class PaymentStatusApplier
         string? providerPaymentId,
         string? failureReason,
         bool isProviderNotification,
+        IAuditContext? auditContext,
         CancellationToken cancellationToken)
     {
         if (payment.Status == newStatus)
@@ -613,6 +573,8 @@ internal static class PaymentStatusApplier
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pago y el pedido no se encuentran en un estado reembolsable.");
             }
 
+            var oldPaymentStatus = payment.Status;
+            var oldOrderStatus = payment.Order.Status;
             var wasShipped = payment.Order.Status == OrderStatus.Shipped;
             OrderCompensation.RefundAndRestoreStockIfNotShipped(payment.Order);
             payment.Status = PaymentStatus.Refunded;
@@ -623,6 +585,10 @@ internal static class PaymentStatusApplier
                     : "Reembolso total confirmado por el proveedor."
                 : failureReason.Trim();
             payment.UpdatedAt = DateTime.UtcNow;
+            AuditTrail.Add(db, auditContext, "PaymentRefundedByProvider", "Payment", payment.Id,
+                new { paymentStatus = oldPaymentStatus.ToString(), orderStatus = oldOrderStatus.ToString() },
+                new { paymentStatus = payment.Status.ToString(), orderStatus = payment.Order.Status.ToString() },
+                payment.FailureReason);
             await db.SaveChangesAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
@@ -645,6 +611,8 @@ internal static class PaymentStatusApplier
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido ya no esta pendiente de pago.");
         }
 
+        var previousPaymentStatus = payment.Status;
+        var previousOrderStatus = payment.Order.Status;
         payment.Status = newStatus;
         payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
         payment.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
@@ -667,6 +635,13 @@ internal static class PaymentStatusApplier
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "Solo se puede resolver un pago pendiente como Approved, Rejected, Canceled o Expired.");
         }
+
+        AuditTrail.Add(db, auditContext,
+            isProviderNotification ? "PaymentResolvedByProvider" : "PaymentResolvedManually",
+            "Payment", payment.Id,
+            new { paymentStatus = previousPaymentStatus.ToString(), orderStatus = previousOrderStatus.ToString() },
+            new { paymentStatus = payment.Status.ToString(), orderStatus = payment.Order.Status.ToString() },
+            payment.FailureReason);
 
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));

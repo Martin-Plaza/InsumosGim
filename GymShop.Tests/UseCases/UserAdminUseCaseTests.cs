@@ -21,6 +21,7 @@ public class UserAdminUseCaseTests
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.True(user.IsActive);
+        Assert.Empty(db.AuditEntries);
     }
 
     [Fact]
@@ -29,12 +30,19 @@ public class UserAdminUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db, "user@test.com", "User");
 
-        var result = await new UpdateUserStatusUseCase(db)
+        var actor = await SeedUserAsync(db, "superadmin-status@test.com", "SuperAdmin");
+        var result = await new UpdateUserStatusUseCase(db, new FakeAuditContext(actor.Id, "corr-status"))
             .ExecuteAsync(user.Id, new UpdateUserStatusRequest(false), currentUserId: 999);
 
         Assert.True(result.IsSuccess);
         Assert.False(user.IsActive);
         Assert.Equal(1, user.TokenVersion);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal(actor.Id, audit.ActorUserId);
+        Assert.Equal("UserStatusChanged", audit.Action);
+        Assert.Equal("corr-status", audit.CorrelationId);
+        Assert.Contains("true", audit.OldValue);
+        Assert.Contains("false", audit.NewValue);
     }
 
     [Fact]
@@ -42,7 +50,8 @@ public class UserAdminUseCaseTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db, "admin@test.com", "Admin");
-        var useCase = new UpdateUserRoleUseCase(db);
+        var actor = await SeedUserAsync(db, "superadmin-role@test.com", "SuperAdmin");
+        var useCase = new UpdateUserRoleUseCase(db, new FakeAuditContext(actor.Id, "corr-role"));
 
         var unchanged = await useCase.ExecuteAsync(user.Id, new UpdateUserRoleRequest("Admin"));
         var changed = await useCase.ExecuteAsync(user.Id, new UpdateUserRoleRequest("User"));
@@ -51,6 +60,12 @@ public class UserAdminUseCaseTests
         Assert.True(changed.IsSuccess);
         Assert.Equal(1, user.TokenVersion);
         Assert.Equal(db.Roles.Single(x => x.Name == "User").Id, user.RoleId);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("UserRoleChanged", audit.Action);
+        Assert.Equal(user.Id.ToString(), audit.EntityId);
+        Assert.Contains("Admin", audit.OldValue);
+        Assert.Contains("User", audit.NewValue);
+        Assert.DoesNotContain("123456", audit.OldValue + audit.NewValue + audit.Reason);
     }
 
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db, string email, string roleName)

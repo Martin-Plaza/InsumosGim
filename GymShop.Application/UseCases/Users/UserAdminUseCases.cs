@@ -103,15 +103,17 @@ public class CreateUserUseCase : ICreateUserUseCase
 public class UpdateUserRoleUseCase : IUpdateUserRoleUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateUserRoleUseCase(IApplicationDbContext db)
+    public UpdateUserRoleUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateUserRoleRequest request, CancellationToken cancellationToken = default)
     {
-        var user = await _db.Users.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        var user = await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (user is null)
         {
             return AppResult.Failure(AppErrorType.NotFound, "Usuario no encontrado.");
@@ -125,9 +127,12 @@ public class UpdateUserRoleUseCase : IUpdateUserRoleUseCase
 
         if (user.RoleId != role.Id)
         {
+            var oldRole = user.Role.Name;
             user.RoleId = role.Id;
             user.TokenVersion++;
             user.UpdatedAt = DateTime.UtcNow;
+            AuditTrail.Add(_db, _auditContext, "UserRoleChanged", "User", user.Id,
+                new { role = oldRole }, new { role = role.Name });
             await _db.SaveChangesAsync(cancellationToken);
         }
 
@@ -138,10 +143,12 @@ public class UpdateUserRoleUseCase : IUpdateUserRoleUseCase
 public class UpdateUserStatusUseCase : IUpdateUserStatusUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext? _auditContext;
 
-    public UpdateUserStatusUseCase(IApplicationDbContext db)
+    public UpdateUserStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult> ExecuteAsync(int id, UpdateUserStatusRequest request, int? currentUserId = null, CancellationToken cancellationToken = default)
@@ -159,9 +166,12 @@ public class UpdateUserStatusUseCase : IUpdateUserStatusUseCase
 
         if (user.IsActive != request.IsActive)
         {
+            var oldStatus = user.IsActive;
             user.IsActive = request.IsActive;
             user.TokenVersion++;
             user.UpdatedAt = DateTime.UtcNow;
+            AuditTrail.Add(_db, _auditContext, "UserStatusChanged", "User", user.Id,
+                new { isActive = oldStatus }, new { isActive = user.IsActive });
             await _db.SaveChangesAsync(cancellationToken);
         }
 

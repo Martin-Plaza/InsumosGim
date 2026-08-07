@@ -60,7 +60,9 @@ public class AdminOrderUseCaseTests
         Assert.Equal(OrderStatus.Canceled, order.Status);
         Assert.Equal(PaymentStatus.Canceled, payment.Status);
         Assert.Equal("Cliente no pago", payment.FailureReason);
+        Assert.Equal("Cliente no pago", order.CancellationReason);
         Assert.Equal(5, product.Stock);
+        Assert.Equal("OrderCanceled", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -78,6 +80,25 @@ public class AdminOrderUseCaseTests
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
+    public async Task CancelOrder_persists_first_reason_even_without_payment()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "sin-pago@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var useCase = new CancelOrderUseCase(db);
+
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Cambio de decision"));
+        var repeated = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("No reemplazar"));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(repeated.IsSuccess);
+        Assert.Equal("Cambio de decision", order.CancellationReason);
+        Assert.Equal("Cambio de decision", repeated.Value?.CancellationReason);
+        Assert.Empty(order.Payments);
+        Assert.Equal("OrderCanceled", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -102,6 +123,9 @@ public class AdminOrderUseCaseTests
         Assert.Equal(OrderStatus.Canceled, oldPending.Status);
         Assert.Equal(OrderStatus.Pending, recentPending.Status);
         Assert.Equal(OrderStatus.Paid, oldPaid.Status);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("OrderExpiredAdministratively", audit.Action);
+        Assert.Equal(oldPending.Id.ToString(), audit.EntityId);
     }
 
     [Fact]
@@ -135,6 +159,7 @@ public class AdminOrderUseCaseTests
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Empty(db.AuditEntries);
     }
 
     [Fact]
@@ -165,6 +190,7 @@ public class AdminOrderUseCaseTests
         Assert.Equal(PaymentStatus.Canceled, payment.Status);
         Assert.Equal("Cancelacion administrativa del pedido.", payment.FailureReason);
         Assert.Equal(5, product.Stock);
+        Assert.Equal("OrderStatusChanged", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]
@@ -183,6 +209,7 @@ public class AdminOrderUseCaseTests
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
         Assert.Equal(OrderStatus.Paid, order.Status);
         Assert.Equal(4, db.Products.Single().Stock);
+        Assert.Empty(db.AuditEntries);
     }
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db, string email)
     {

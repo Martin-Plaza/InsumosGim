@@ -1,6 +1,10 @@
 using System.Security.Claims;
 using System.Text;
+using System.Net;
+using System.Threading.RateLimiting;
+using GymShop.Api.Configuration;
 using GymShop.Api.Middleware;
+using GymShop.Api.RateLimiting;
 using GymShop.Api.Services;
 using GymShop.Api.Security;
 using GymShop.Application;
@@ -13,12 +17,17 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IGymShopRequestLimiter, GymShopRequestLimiter>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -43,17 +52,68 @@ builder.Services.AddApplication();
 builder.Services.AddSingleton(PaymentCreationPolicy.FromSeconds(
     builder.Configuration.GetValue("Payments:CreatingTimeoutSeconds", 300)));
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+builder.Services.AddScoped<IAuditContext, HttpAuditContext>();
 builder.Services.AddScoped<JwtTokenValidationEvents>();
 builder.Services.AddSingleton<IValidateOptions<JwtOptions>, JwtOptionsValidator>();
 builder.Services.AddSingleton<IValidateOptions<MercadoPagoOptions>>(
     new MercadoPagoOptionsValidator(builder.Environment.EnvironmentName));
+builder.Services.AddSingleton<IValidateOptions<GymShopRateLimitingOptions>>(
+    new GymShopRateLimitingOptionsValidator(builder.Environment.EnvironmentName));
+builder.Services.AddSingleton<IValidateOptions<ReverseProxyOptions>, ReverseProxyOptionsValidator>();
 builder.Services.AddOptions<JwtOptions>()
     .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddOptions<MercadoPagoOptions>()
     .Bind(builder.Configuration.GetSection(MercadoPagoOptions.SectionName))
     .ValidateOnStart();
+builder.Services.AddOptions<GymShopRateLimitingOptions>()
+    .Bind(builder.Configuration.GetSection(GymShopRateLimitingOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddOptions<ReverseProxyOptions>()
+    .Bind(builder.Configuration.GetSection(ReverseProxyOptions.SectionName))
+    .ValidateOnStart();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+var rateLimiting = builder.Configuration.GetSection(GymShopRateLimitingOptions.SectionName).Get<GymShopRateLimitingOptions>() ?? new();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry)
+            ? retry
+            : TimeSpan.FromSeconds(1);
+        context.HttpContext.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        context.HttpContext.Response.ContentType = "application/problem+json";
+        await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Demasiadas solicitudes.",
+            Detail = "Se alcanzo el limite temporal de solicitudes. Intenta nuevamente mas tarde.",
+            Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier }
+        }, cancellationToken);
+    };
+
+    AddIpPolicy(options, RateLimitPolicies.LoginIp, rateLimiting.Enabled, rateLimiting.LoginIp);
+    AddIpPolicy(options, RateLimitPolicies.RegistrationIp, rateLimiting.Enabled, rateLimiting.RegistrationIp);
+    AddIpPolicy(options, RateLimitPolicies.WebhookIp, rateLimiting.Enabled, rateLimiting.WebhookIp);
+});
+
+var reverseProxy = builder.Configuration.GetSection(ReverseProxyOptions.SectionName).Get<ReverseProxyOptions>() ?? new();
+if (reverseProxy.Enabled)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = reverseProxy.ForwardLimit;
+        options.KnownProxies.Clear();
+        options.KnownIPNetworks.Clear();
+        foreach (var proxy in reverseProxy.KnownProxies)
+        {
+            options.KnownProxies.Add(IPAddress.Parse(proxy));
+        }
+    });
+}
 
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
@@ -96,6 +156,9 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+_ = app.Services.GetRequiredService<IOptions<GymShopRateLimitingOptions>>().Value;
+_ = app.Services.GetRequiredService<IOptions<ReverseProxyOptions>>().Value;
+
 var mercadoPagoOptions = app.Services.GetRequiredService<IOptions<MercadoPagoOptions>>().Value;
 if (app.Environment.IsDevelopment() && mercadoPagoOptions.Enabled && string.IsNullOrWhiteSpace(mercadoPagoOptions.WebhookSecret))
 {
@@ -109,12 +172,43 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+if (reverseProxy.Enabled)
+{
+    app.UseForwardedHeaders();
+}
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
+
 app.UseExceptionHandler();
 app.UseStaticFiles();
 app.UseCors("Frontend");
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
 
 app.Run();
+
+static void AddIpPolicy(RateLimiterOptions options, string name, bool enabled, RateLimitRule rule)
+{
+    options.AddPolicy(name, context => enabled
+        ? RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => CreateFixedWindowOptions(rule))
+        : RateLimitPartition.GetNoLimiter("disabled"));
+}
+
+static FixedWindowRateLimiterOptions CreateFixedWindowOptions(RateLimitRule rule) => new()
+{
+    PermitLimit = rule.PermitLimit,
+    Window = TimeSpan.FromSeconds(rule.WindowSeconds),
+    QueueLimit = 0,
+    AutoReplenishment = true
+};
+
+public partial class Program;

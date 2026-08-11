@@ -278,7 +278,51 @@ GymShop.Application     Use cases, DTOs, contratos, reglas de aplicacion
 GymShop.Domain          Entidades y enums del dominio
 GymShop.Infrastructure  EF Core, servicios externos, transacciones y migraciones
 GymShop.Tests           Tests de use cases, pagos, ordenes y autorizacion
+GymShop.Web             SPA React + TypeScript, cliente HTTP, sesion y tests frontend
 ```
+
+## Frontend
+
+El cliente web vive en `GymShop.Web` y usa React, TypeScript, Vite, Vitest y ESLint. La URL de la API se configura de forma central con `VITE_API_URL`; `.env.example` contiene solamente el valor local y no incluye secretos.
+
+La vista inicial es Home tanto para visitantes como para usuarios autenticados. Muestra hasta seis productos activos como destacados según el orden actual de la API; **Ver catalogo** abre la vista independiente con todos los productos activos. Este criterio es temporal para el MVP y no agrega un campo `IsFeatured`. Debajo de los destacados incluye un banner editorial lifestyle asociado por nombre a la Kettlebell; si ese producto no esta activo, la campaña no se muestra para evitar un enlace incorrecto.
+
+Las imagenes locales del frontend se guardan bajo `GymShop.Web/public/images` y se referencian desde productos con rutas publicas que comienzan con `/`, por ejemplo `/images/products/mancuerna-10kg.webp`. Tambien se admiten URLs HTTP/HTTPS. Si una imagen no existe o no puede cargarse, la interfaz muestra el fallback visual `GS`.
+
+El cliente envia el JWT mediante `Authorization: Bearer`, invalida la sesion ante `401` y conserva la sesion ante `403`. Normaliza respuestas `{ message }`, ProblemDetails, ValidationProblemDetails, `409`, `429` con `Retry-After` y errores `500` con `traceId`. La clave de idempotencia del pago se conserva por orden en el almacenamiento local y la creacion usa exclusivamente `POST /api/orders/{orderId}/payments` con el proveedor `Mock`.
+
+Variables frontend:
+
+```text
+VITE_API_URL=http://localhost:5093
+VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
+```
+
+No se deben colocar JWT, credenciales de usuarios ni secretos de Mercado Pago en variables `VITE_*`: Vite las incorpora al bundle publico.
+
+### Registro, verificacion y Google
+
+El registro manual requiere `name`, `lastName`, `email` y `password`. No emite un JWT inmediatamente: crea una cuenta pendiente y envia un codigo de seis digitos que vence a los 60 segundos. El codigo se guarda hasheado, permite hasta cinco intentos y queda consumido al verificar o reenviar. La verificacion correcta marca el email y devuelve la sesion JWT automaticamente.
+
+Endpoints:
+
+- `POST /api/auth/register`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `POST /api/auth/google`
+
+En esta fase `IVerificationEmailSender` usa un proveedor Mock: el codigo se muestra en la respuesta como `developmentCode` y en el log local. Esto sirve para desarrollo y tests, pero no prueba la propiedad de un correo real y debe reemplazarse antes de staging publico.
+
+El frontend conserva en `localStorage` solamente el email y el vencimiento de una verificacion pendiente para poder retomarla tras recargar o cerrar la pagina. El codigo Mock no se persiste: si ya no esta visible, hay que esperar el vencimiento y usar **Reenviar codigo** para obtener uno nuevo.
+
+Google Identity Services requiere el mismo Client ID publico en backend y frontend:
+
+```text
+GoogleAuth__ClientId=<GOOGLE_CLIENT_ID_PUBLICO>
+VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
+```
+
+El backend valida la credencial con Google, exige `email_verified=true` y vincula por el identificador estable `sub`. Si el email ya pertenece a una cuenta manual activa, agrega la identidad externa a ese mismo usuario; no crea un usuario duplicado. No se usa ni se expone un Client Secret en el navegador.
 
 La API no accede directamente a la persistencia. La logica se concentra en casos de uso de Application, con EF Core y servicios externos implementados en Infrastructure.
 
@@ -528,8 +572,13 @@ HSTS puede ser emitido por ASP.NET Core como en esta configuracion o centralizar
 
 ## Ejecutar el proyecto
 
+### Backend local con pagos Mock
+
+Mercado Pago ya esta deshabilitado en Development. Configura solo los secretos locales del backend y ejecuta la API:
+
 ```powershell
-dotnet restore GymShop.slnx
+dotnet user-secrets set "Jwt:Secret" "<CLAVE-ALEATORIA-LOCAL-DE-32-O-MAS-CARACTERES>" --project "GymShop.Api/GymShop.Api.csproj"
+dotnet user-secrets set "SeedSuperAdmin:Password" "<PASSWORD-LOCAL>" --project "GymShop.Api/GymShop.Api.csproj"
 dotnet run --project GymShop.Api/GymShop.Api.csproj
 ```
 
@@ -538,6 +587,78 @@ Swagger queda disponible en:
 ```text
 http://localhost:5093/swagger
 ```
+
+### Frontend local
+
+En otra terminal:
+
+```powershell
+cd GymShop.Web
+Copy-Item .env.example .env.local
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+El cliente queda disponible en `http://localhost:5173`. El archivo `.env.local` esta ignorado por Git.
+
+Comandos de calidad frontend:
+
+```powershell
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Recorrido local esperado con el proveedor Mock:
+
+```text
+Registro -> Login -> Catalogo -> Carrito -> Checkout
+-> Crear pago por orderId -> Consultar pago -> Consultar orden
+```
+
+No hace falta configurar `MercadoPago:AccessToken`, `MercadoPago:WebhookSecret` ni ninguna credencial real mientras `MercadoPago:Enabled=false`.
+
+### Navegación, catálogo y carrito frontend
+
+El frontend usa `react-router-dom` con `BrowserRouter`. Las rutas principales son:
+
+```text
+/                         Home
+/catalogo                 Búsqueda, filtros y ordenamiento
+/catalogo/:productId      Detalle público del producto activo
+/carrito                  Carrito visitante o autenticado
+/login                    Login, registro y retorno al flujo anterior
+/ordenes                  Órdenes del usuario autenticado
+/admin/productos          Admin y SuperAdmin
+/admin/usuarios           SuperAdmin
+/admin/auditoria          SuperAdmin
+```
+
+Se eligió `BrowserRouter` porque genera URLs normales, compartibles y compatibles con el historial del navegador. Frente a un router basado en hash ofrece URLs más limpias; como contrapartida, al publicar se debe configurar el servidor para que las rutas desconocidas devuelvan `index.html`. Esto no requiere configuración adicional con el servidor de desarrollo de Vite.
+
+El catálogo público siempre solicita `GET /api/products` sin `includeInactive=true`. La búsqueda por nombre o descripción, el rango de precio, la disponibilidad y el orden se aplican en el cliente sobre esa respuesta. Esto da respuesta inmediata y evita modificar el contrato del backend para el volumen actual; como contrapartida, si el catálogo crece será preferible incorporar búsqueda, paginación y filtros en la API. `CatalogFilters` deja señalado el punto de extensión para categorías y SKU, pero no inventa esos campos mientras no existan en el contrato.
+
+#### Carrito visitante y fusión al iniciar sesión
+
+El carrito visitante se guarda en `localStorage` bajo una clave versionada. Se eligió este mecanismo porque sobrevive recargas y cierres sin necesitar una identidad anónima ni cambios de base de datos. Sus límites son que pertenece a ese navegador, puede borrarse desde las herramientas del navegador y no debe contener información sensible.
+
+Al iniciar sesión se combina con el carrito existente del usuario:
+
+1. Se obtiene el carrito del backend y se vuelve a validar cada producto visitante contra el catálogo activo.
+2. Para cada producto se calcula `cantidad existente + cantidad visitante`.
+3. La cantidad final se limita al stock vigente y se informa cualquier ajuste.
+4. Se persiste un plan de cantidades objetivo antes de enviar cambios.
+5. Los productos existentes se actualizan con cantidad absoluta; los nuevos se agregan.
+6. Cada elemento visitante se elimina solamente después de confirmar su sincronización.
+
+El plan persistido hace que un reintento converja a la misma cantidad objetivo y evita sumar dos veces si la red se corta después de una respuesta. Es más seguro que encadenar operaciones aditivas sin memoria, aunque agrega lógica local. Una alternativa futura es un endpoint transaccional de fusión en backend, que sería más robusto entre dispositivos pero implica ampliar explícitamente el contrato.
+
+Si un producto ya no existe, está inactivo o no tiene stock, se avisa y su entrada visitante se conserva en el almacenamiento local en lugar de descartarla silenciosamente. Si la API rechaza toda la fusión, el carrito visitante también se conserva para reintentar. El backend continúa siendo la autoridad final para stock, permisos y conflictos.
+
+El estado compartido usa React Context porque el carrito solamente cruza catálogo, detalle, encabezado, popup y checkout. Es una opción pequeña y sin dependencias adicionales; Redux u otra store ofrecerían herramientas más potentes para estados globales muy grandes, pero aumentarían complejidad y tamaño sin una ventaja clara en este MVP.
+
+El checkout permite armar el carrito sin sesión, pero redirige a `/login` antes de crear la orden y vuelve a `/carrito` después de autenticar. La fusión ocurre en ese cambio de sesión. No se agregaron refresh tokens, secretos ni cambios al proveedor Mock.
 
 La aplicacion aplica migraciones automaticamente en ambiente Development.
 

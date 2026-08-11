@@ -98,7 +98,7 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
         var role = await db.Roles.SingleAsync(x => x.Name == roleName);
         var user = new User
         {
-            Email = email.ToLowerInvariant(), Name = roleName + " HTTP", PasswordHash = new PasswordHasher().Hash(password),
+            Email = email.ToLowerInvariant(), Name = roleName + " HTTP", PasswordHash = new PasswordHasher().Hash(password), EmailVerifiedAt = DateTime.UtcNow,
             RoleId = role.Id, IsActive = true
         };
         db.Users.Add(user);

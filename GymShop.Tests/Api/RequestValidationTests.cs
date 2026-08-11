@@ -13,7 +13,7 @@ public class RequestValidationTests
     [Fact]
     public void Invalid_email_is_rejected_by_http_contract()
     {
-        AssertInvalid(new RegisterRequest("Cliente", "email-invalido", "clave123"), nameof(RegisterRequest.Email));
+        AssertInvalid(new RegisterRequest("Cliente", "Apellido", "email-invalido", "clave123"), nameof(RegisterRequest.Email));
     }
 
     [Theory]
@@ -47,13 +47,13 @@ public class RequestValidationTests
     [InlineData("12345678")]
     public void Weak_password_is_rejected(string password)
     {
-        AssertInvalid(new RegisterRequest("Cliente", "cliente@example.com", password), nameof(RegisterRequest.Password));
+        AssertInvalid(new RegisterRequest("Cliente", "Apellido", "cliente@example.com", password), nameof(RegisterRequest.Password));
     }
 
     public static TheoryData<object, string> ValuesOverDatabaseLimits => new()
     {
-        { new RegisterRequest(new string('N', 101), "cliente@example.com", "clave123"), nameof(RegisterRequest.Name) },
-        { new RegisterRequest("Cliente", new string('a', 245) + "@example.com", "clave123"), nameof(RegisterRequest.Email) },
+        { new RegisterRequest(new string('N', 101), "Apellido", "cliente@example.com", "clave123"), nameof(RegisterRequest.Name) },
+        { new RegisterRequest("Cliente", "Apellido", new string('a', 245) + "@example.com", "clave123"), nameof(RegisterRequest.Email) },
         { new CreateProductRequest(new string('N', 151), null, 10, 1, null), nameof(CreateProductRequest.Name) },
         { new CreateProductRequest("Producto", new string('D', 1001), 10, 1, null), nameof(CreateProductRequest.Description) },
         { new CreateProductRequest("Producto", null, 10, 1, "/" + new string('i', 500)), nameof(CreateProductRequest.ImageUrl) },

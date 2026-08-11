@@ -39,6 +39,13 @@ CoverletSourceRootsMapping_*
 !*.example
 appsettings.Local.json
 
+# Frontend
+node_modules/
+dist/
+.vite/
+.pnpm-store/
+*.tsbuildinfo
+
 # OS files
 .DS_Store
 Thumbs.db

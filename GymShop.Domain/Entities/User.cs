@@ -12,12 +12,15 @@ public class User
     public int RoleId { get; set; }
     public bool IsActive { get; set; } = true;
     public int TokenVersion { get; set; }
+    public DateTime? EmailVerifiedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
     public Role Role { get; set; } = null!;
     public ICollection<Order> Orders { get; set; } = new List<Order>();
     public Cart? Cart { get; set; }
+    public ICollection<UserExternalLogin> ExternalLogins { get; set; } = new List<UserExternalLogin>();
+    public ICollection<EmailVerificationCode> EmailVerificationCodes { get; set; } = new List<EmailVerificationCode>();
 }
 
 

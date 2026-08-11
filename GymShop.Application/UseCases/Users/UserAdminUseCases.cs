@@ -90,7 +90,8 @@ public class CreateUserUseCase : ICreateUserUseCase
             PasswordHash = _passwordHasher.Hash(request.Password),
             RoleId = role.Id,
             Role = role,
-            IsActive = true
+            IsActive = true,
+            EmailVerifiedAt = DateTime.UtcNow
         };
 
         _db.Users.Add(user);

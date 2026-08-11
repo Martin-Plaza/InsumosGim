@@ -13,7 +13,11 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IRegisterUserUseCase, RegisterUserUseCase>();
+        services.AddScoped<IVerifyEmailUseCase, VerifyEmailUseCase>();
+        services.AddScoped<IResendVerificationUseCase, ResendVerificationUseCase>();
+        services.AddScoped<IGoogleLoginUseCase, GoogleLoginUseCase>();
         services.AddScoped<ILoginUserUseCase, LoginUserUseCase>();
         services.AddScoped<IGetCurrentUserUseCase, GetCurrentUserUseCase>();
         services.AddScoped<IGetAuditEntriesUseCase, GetAuditEntriesUseCase>();

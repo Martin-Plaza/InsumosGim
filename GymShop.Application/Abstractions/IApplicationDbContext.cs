@@ -14,5 +14,7 @@ public interface IApplicationDbContext
     DbSet<CartItem> CartItems { get; }
     DbSet<Payment> Payments { get; }
     DbSet<AuditEntry> AuditEntries { get; }
+    DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
+    DbSet<UserExternalLogin> UserExternalLogins { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

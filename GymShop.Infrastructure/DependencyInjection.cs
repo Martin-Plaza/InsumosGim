@@ -18,6 +18,8 @@ public static class DependencyInjection
         services.AddScoped<ITransactionManager, EfTransactionManager>();
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IVerificationEmailSender, MockVerificationEmailSender>();
+        services.AddHttpClient<IExternalIdentityVerifier, GoogleIdentityVerifier>(client => client.BaseAddress = new Uri("https://oauth2.googleapis.com/"));
         services.AddScoped<IPaymentGateway, MockPaymentGateway>();
         services.AddHttpClient<IPaymentGateway, MercadoPagoPaymentGateway>(client =>
         {

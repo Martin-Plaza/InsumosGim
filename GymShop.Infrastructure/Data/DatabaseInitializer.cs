@@ -48,7 +48,8 @@ public static class DatabaseInitializer
             Name = name,
             PasswordHash = passwordHasher.Hash(password),
             RoleId = role.Id,
-            IsActive = true
+            IsActive = true,
+            EmailVerifiedAt = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
@@ -56,19 +57,15 @@ public static class DatabaseInitializer
 
     private static async Task SeedSampleProductsAsync(GymShopDbContext db, CancellationToken cancellationToken)
     {
-        if (await db.Products.AnyAsync(cancellationToken))
+        var samples = new Product[]
         {
-            return;
-        }
-
-        db.Products.AddRange(
             new()
             {
                 Name = "Mancuerna 10kg",
                 Description = "Mancuerna hexagonal para entrenamiento funcional.",
                 Price = 25000,
                 Stock = 15,
-                ImageUrl = "/images/mancuerna.jpeg",
+                ImageUrl = "/images/products/mancuerna-10kg.webp",
                 IsActive = true
             },
             new()
@@ -77,10 +74,59 @@ public static class DatabaseInitializer
                 Description = "Colchoneta antideslizante para ejercicios de piso.",
                 Price = 18000,
                 Stock = 20,
-                ImageUrl = "/images/colchoneta.jpeg",
+                ImageUrl = "/images/products/colchoneta-fitness.webp",
+                IsActive = true
+            },
+            new()
+            {
+                Name = "Kettlebell 16kg",
+                Description = "Pesa rusa de hierro con agarre amplio para fuerza y potencia.",
+                Price = 42000,
+                Stock = 12,
+                ImageUrl = "/images/products/kettlebell-16kg.webp",
+                IsActive = true
+            },
+            new()
+            {
+                Name = "Bandas de resistencia",
+                Description = "Set de cinco bandas textiles con distintas intensidades.",
+                Price = 22000,
+                Stock = 25,
+                ImageUrl = "/images/products/bandas-resistencia.webp",
+                IsActive = true
+            },
+            new()
+            {
+                Name = "Banco regulable",
+                Description = "Banco de entrenamiento ajustable para rutinas de fuerza.",
+                Price = 185000,
+                Stock = 8,
+                ImageUrl = "/images/products/banco-regulable.webp",
+                IsActive = true
+            },
+            new()
+            {
+                Name = "Soga de velocidad",
+                Description = "Soga liviana con cable rápido y mangos ergonómicos.",
+                Price = 16000,
+                Stock = 30,
+                ImageUrl = "/images/products/soga-velocidad.webp",
                 IsActive = true
             }
-        );
+        };
+
+        foreach (var sample in samples)
+        {
+            var existing = await db.Products.SingleOrDefaultAsync(x => x.Name == sample.Name, cancellationToken);
+            if (existing is null)
+            {
+                db.Products.Add(sample);
+            }
+            else if (string.IsNullOrWhiteSpace(existing.ImageUrl) || existing.ImageUrl is "/images/mancuerna.jpeg" or "/images/colchoneta.jpeg")
+            {
+                existing.ImageUrl = sample.ImageUrl;
+            }
+        }
 
         await db.SaveChangesAsync(cancellationToken);
     }

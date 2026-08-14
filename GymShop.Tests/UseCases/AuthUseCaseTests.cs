@@ -2,6 +2,7 @@ using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Auth;
 using GymShop.Application.UseCases.Auth;
+using GymShop.Domain.Entities;
 using GymShop.Infrastructure.Services;
 using GymShop.Tests.TestSupport;
 
@@ -102,7 +103,84 @@ public class AuthUseCaseTests
         Assert.False(result.IsSuccess); Assert.Equal(AppErrorType.Unauthorized, result.Error!.Type); Assert.Empty(db.Users);
     }
 
+    [Fact]
+    public async Task Password_reset_request_is_generic_for_existing_and_unknown_email()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakePasswordResetSender(); var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "known@test.com", "clave123");
+        var useCase = new RequestPasswordResetUseCase(db, sender, hasher, TimeProvider.System);
+
+        var known = await useCase.ExecuteAsync(new RequestPasswordResetRequest("KNOWN@TEST.COM"));
+        var knownCode = sender.Code;
+        var unknown = await useCase.ExecuteAsync(new RequestPasswordResetRequest("unknown@test.com"));
+
+        Assert.True(known.IsSuccess); Assert.True(unknown.IsSuccess);
+        Assert.Equal(known.Value!.Message, unknown.Value!.Message);
+        Assert.Equal(600, known.Value.ExpiresInSeconds); Assert.Equal(600, unknown.Value.ExpiresInSeconds);
+        Assert.Matches("^[0-9]{6}$", knownCode!); Assert.Matches("^[0-9]{6}$", sender.Code!);
+        Assert.Single(db.PasswordResetCodes); Assert.Equal(user.Id, db.PasswordResetCodes.Single().UserId);
+        Assert.DoesNotContain(knownCode!, db.PasswordResetCodes.Single().CodeHash);
+    }
+
+    [Fact]
+    public async Task Password_reset_changes_password_consumes_code_and_increments_token_version()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakePasswordResetSender(); var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "reset@test.com", "clave123");
+        await new RequestPasswordResetUseCase(db, sender, hasher, TimeProvider.System).ExecuteAsync(new RequestPasswordResetRequest(user.Email));
+        var tokenVersion = user.TokenVersion;
+
+        var result = await new ConfirmPasswordResetUseCase(db, hasher, TimeProvider.System).ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, sender.Code!, "nuevaClave456"));
+
+        Assert.True(result.IsSuccess); Assert.True(hasher.Verify("nuevaClave456", user.PasswordHash)); Assert.False(hasher.Verify("clave123", user.PasswordHash));
+        Assert.Equal(tokenVersion + 1, user.TokenVersion); Assert.NotNull(db.PasswordResetCodes.Single().ConsumedAtUtc);
+        var oldLogin = await new LoginUserUseCase(db, hasher, new FakeJwtTokenService()).ExecuteAsync(new LoginRequest(user.Email, "clave123"));
+        var newLogin = await new LoginUserUseCase(db, hasher, new FakeJwtTokenService()).ExecuteAsync(new LoginRequest(user.Email, "nuevaClave456"));
+        Assert.False(oldLogin.IsSuccess); Assert.True(newLogin.IsSuccess);
+    }
+
+    [Fact]
+    public async Task Password_reset_code_is_single_use_and_resend_invalidates_previous_code()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakePasswordResetSender(); var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "single@test.com", "clave123");
+        var request = new RequestPasswordResetUseCase(db, sender, hasher, TimeProvider.System);
+        await request.ExecuteAsync(new RequestPasswordResetRequest(user.Email)); var firstCode = sender.Code!;
+        await request.ExecuteAsync(new RequestPasswordResetRequest(user.Email)); var secondCode = sender.Code!;
+        var confirm = new ConfirmPasswordResetUseCase(db, hasher, TimeProvider.System);
+
+        Assert.False((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, firstCode, "nuevaClave456"))).IsSuccess);
+        Assert.True((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, secondCode, "nuevaClave456"))).IsSuccess);
+        Assert.False((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, secondCode, "otraClave789"))).IsSuccess);
+        Assert.Equal(2, db.PasswordResetCodes.Count()); Assert.All(db.PasswordResetCodes, code => Assert.NotNull(code.ConsumedAtUtc));
+    }
+
+    [Fact]
+    public async Task Password_reset_rejects_expired_code_and_limits_failed_attempts()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakePasswordResetSender(); var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "attempts@test.com", "clave123");
+        var request = new RequestPasswordResetUseCase(db, sender, hasher, TimeProvider.System);
+        var confirm = new ConfirmPasswordResetUseCase(db, hasher, TimeProvider.System);
+        await request.ExecuteAsync(new RequestPasswordResetRequest(user.Email));
+        db.PasswordResetCodes.Single().ExpiresAtUtc = DateTime.UtcNow.AddSeconds(-1); await db.SaveChangesAsync();
+        Assert.False((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, sender.Code!, "nuevaClave456"))).IsSuccess);
+
+        await request.ExecuteAsync(new RequestPasswordResetRequest(user.Email)); var validCode = sender.Code!;
+        for (var attempt = 0; attempt < 5; attempt++) Assert.False((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, "999999", "nuevaClave456"))).IsSuccess);
+        Assert.False((await confirm.ExecuteAsync(new ConfirmPasswordResetRequest(user.Email, validCode, "nuevaClave456"))).IsSuccess);
+        Assert.Equal(5, db.PasswordResetCodes.OrderByDescending(x => x.Id).First().FailedAttempts);
+    }
+
+    private static async Task<User> SeedVerifiedUserAsync(IApplicationDbContext db, PasswordHasher hasher, string email, string password)
+    {
+        var role = db.Roles.Single(x => x.Name == "User");
+        var user = new User { Email = email, Name = "Reset", PasswordHash = hasher.Hash(password), RoleId = role.Id, Role = role, IsActive = true, EmailVerifiedAt = DateTime.UtcNow };
+        db.Users.Add(user); await db.SaveChangesAsync(); return user;
+    }
+
     private static RegisterUserUseCase Register(IApplicationDbContext db, FakeSender sender) => new(db, new PasswordHasher(), sender, TimeProvider.System);
     private sealed class FakeSender : IVerificationEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
+    private sealed class FakePasswordResetSender : IPasswordResetEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
     private sealed class FakeExternalVerifier(ExternalIdentity? identity) : IExternalIdentityVerifier { public Task<ExternalIdentity?> VerifyGoogleAsync(string credential, CancellationToken cancellationToken = default) => Task.FromResult(identity); }
 }

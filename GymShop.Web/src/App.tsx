@@ -11,6 +11,8 @@ import { CartDrawer } from './features/cart/CartDrawer'
 import { CartProvider } from './features/cart/CartContext'
 import { CartPage } from './features/cart/CartPage'
 import { useCart } from './features/cart/useCart'
+import { CheckoutPage } from './features/checkout/CheckoutPage'
+import { CheckoutResultPage } from './features/checkout/CheckoutResultPage'
 import { Home } from './features/home/Home'
 
 const money = (value: number, currency = 'ARS') => new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(value)
@@ -67,6 +69,8 @@ function AppShell() {
         <Route path="/catalogo" element={<Catalog />} />
         <Route path="/catalogo/:productId" element={<ProductDetailPage />} />
         <Route path="/carrito" element={<CartPage />} />
+        <Route path="/checkout" element={user ? <CheckoutPage /> : <RequireLogin />} />
+        <Route path="/checkout/orden/:orderId" element={user ? <CheckoutResultPage canRefreshPayment={roleAtLeastAdmin(user)} /> : <RequireLogin />} />
         <Route path="/login" element={<AuthRoute user={user} onDone={auth => { session.save(auth.token, auth.user); setNotice(`Hola, ${auth.user.name}.`) }} />} />
         <Route path="/ordenes" element={user ? <OrdersView admin={roleAtLeastAdmin(user)} run={run} /> : <RequireLogin />} />
         <Route path="/admin/productos" element={roleAtLeastAdmin(user) ? <ProductsAdmin run={run} /> : <ForbiddenOrLogin user={user} />} />
@@ -97,10 +101,10 @@ function OrdersView({ admin, run }: { admin: boolean; run: (a: () => Promise<voi
   const open = (id: number) => run(async () => { const [order, paymentList] = await Promise.all([api.order(id), api.orderPayments(id)]); setDetail(order); setPayments(paymentList) })
   const pay = (id: number) => run(async () => { const payment = await api.createPayment(id, paymentKey(id)); setPayments(await api.orderPayments(id)); if (payment.checkoutUrl) window.location.assign(payment.checkoutUrl) })
   return <section><div className="section-title"><div><p className="eyebrow">SEGUIMIENTO</p><h1>{admin ? 'Órdenes' : 'Mis órdenes'}</h1></div>{admin && <form onSubmit={e => { e.preventDefault(); void load() }}><input placeholder="Filtrar por email" value={email} onChange={e => setEmail(e.target.value)} /><button>Buscar</button></form>}</div>
-    {orders.length === 0 ? <Empty>No hay órdenes para mostrar.</Empty> : <div className="list">{orders.map(order => <button className="order-row" key={order.id} onClick={() => void open(order.id)}><b>#{order.id}</b><span>{date(order.createdAt)}</span>{order.userEmail && <span>{order.userEmail}</span>}<strong>{money(order.total)}</strong><Status value={order.status} /><Status value={order.lastPaymentStatus} /></button>)}</div>}
+    {orders.length === 0 ? <Empty>No hay órdenes para mostrar.</Empty> : <div className="list">{orders.map(order => <button className="order-row" key={order.id} onClick={() => void open(order.id)}><b>#{order.id}</b><span>{date(order.createdAt)}</span>{order.userEmail && <span>{order.userEmail}</span>}<strong>{money(order.total)}</strong><span className="order-state"><small>Orden</small><Status value={order.status} /></span><span className="order-state"><small>Pago</small><Status value={order.lastPaymentStatus} /></span></button>)}</div>}
     {detail && <div className="drawer"><button className="close" onClick={() => setDetail(null)}>×</button><p className="eyebrow">ORDEN #{detail.id}</p><h2>{money(detail.total)}</h2><Status value={detail.status} /><p>{detail.shippingAddress}</p><div className="list">{detail.items.map(i => <div className="list-row" key={i.productId}><span>{i.quantity} × {i.productName}</span><strong>{money(i.subtotal)}</strong></div>)}</div>
       {detail.status === 'Pending' && <div className="actions"><button className="primary" onClick={() => void pay(detail.id)}>Crear / consultar pago Mock</button><button onClick={() => void run(async () => { setDetail(await api.cancelOrder(detail.id, 'Cancelada desde el frontend')); await load() })}>Cancelar orden</button></div>}
-      <h3>Pagos</h3>{payments.length === 0 ? <p>Sin pagos.</p> : payments.map(p => <div className="payment" key={p.id}><span>#{p.id} · {p.provider}</span><Status value={p.status} />{p.status === 'Creating' && !p.checkoutUrl && <small>El pago se está creando. Consultá nuevamente en unos instantes.</small>}{p.failureReason && <small>{p.failureReason}</small>}<button onClick={() => void run(async () => setPayments(await api.orderPayments(detail.id)))}>Actualizar</button></div>)}
+      <h3>Pagos</h3>{payments.length === 0 ? <p>Sin pagos.</p> : payments.map(p => <div className="payment" key={p.id}><span>#{p.id} · {p.provider}</span><Status value={p.status} />{p.status === 'Creating' && !p.checkoutUrl && <small>El pago se está creando. Consultá nuevamente en unos instantes.</small>}{p.failureReason && <small>{p.failureReason}</small>}{admin && <button onClick={() => void run(async () => setPayments(await api.orderPayments(detail.id)))}>Actualizar</button>}</div>)}
     </div>}
   </section>
 }

@@ -16,6 +16,7 @@ public sealed class GymShopRateLimitingOptions
     public RateLimitRule LoginAccount { get; set; } = new();
     public RateLimitRule RegistrationIp { get; set; } = new();
     public RateLimitRule RegistrationGlobal { get; set; } = new();
+    public RateLimitRule PasswordResetAccount { get; set; } = new();
     public RateLimitRule PaymentUser { get; set; } = new();
     public RateLimitRule PaymentOrder { get; set; } = new();
     public RateLimitRule WebhookIp { get; set; } = new();
@@ -51,6 +52,7 @@ public sealed class GymShopRateLimitingOptionsValidator : IValidateOptions<GymSh
             [nameof(options.LoginAccount)] = options.LoginAccount,
             [nameof(options.RegistrationIp)] = options.RegistrationIp,
             [nameof(options.RegistrationGlobal)] = options.RegistrationGlobal,
+            [nameof(options.PasswordResetAccount)] = options.PasswordResetAccount,
             [nameof(options.PaymentUser)] = options.PaymentUser,
             [nameof(options.PaymentOrder)] = options.PaymentOrder,
             [nameof(options.WebhookIp)] = options.WebhookIp,

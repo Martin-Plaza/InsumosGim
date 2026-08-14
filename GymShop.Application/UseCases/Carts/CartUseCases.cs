@@ -72,11 +72,6 @@ public class AddCartItemUseCase : IAddCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Producto y cantidad son obligatorios.");
         }
 
-        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
-        {
-            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
-        }
-
         var product = await _db.Products.SingleOrDefaultAsync(x => x.Id == request.ProductId, cancellationToken);
         if (product is null || !product.IsActive)
         {
@@ -129,11 +124,6 @@ public class UpdateCartItemUseCase : IUpdateCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Producto y cantidad son obligatorios.");
         }
 
-        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
-        {
-            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
-        }
-
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
         {
@@ -171,11 +161,6 @@ public class RemoveCartItemUseCase : IRemoveCartItemUseCase
 
     public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, CancellationToken cancellationToken = default)
     {
-        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
-        {
-            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
-        }
-
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
         {
@@ -207,11 +192,6 @@ public class ClearCartUseCase : IClearCartUseCase
 
     public async Task<AppResult> ExecuteAsync(int userId, CancellationToken cancellationToken = default)
     {
-        if (await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken))
-        {
-            return AppResult<CartResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de modificar el carrito.");
-        }
-
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
         {

@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminUser, AuditPage, AuthResponse, Cart, Order, OrderSummary, Payment, Product, RegistrationPending, Role, User } from './types'
+import type { AdminUser, AuditPage, AuthResponse, Cart, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -7,6 +7,8 @@ export const api = {
   resendVerification: (email: string) => request<RegistrationPending>('/api/auth/resend-verification', json('POST', { email })),
   googleLogin: (credential: string) => request<AuthResponse>('/api/auth/google', json('POST', { credential })),
   login: (data: { email: string; password: string }) => request<AuthResponse>('/api/auth/login', json('POST', data)),
+  forgotPassword: (email: string) => request<PasswordResetPending>('/api/auth/forgot-password', json('POST', { email })),
+  resetPassword: (data: { email: string; code: string; newPassword: string }) => request<PasswordResetCompleted>('/api/auth/reset-password', json('POST', data)),
   me: () => request<User>('/api/auth/me'),
   products: (includeInactive = false) => request<Product[]>(`/api/products${includeInactive ? '?includeInactive=true' : ''}`),
   product: (id: number) => request<Product>(`/api/products/${id}`),
@@ -43,5 +45,12 @@ export function paymentKey(orderId: number) {
     value = crypto.randomUUID()
     localStorage.setItem(key, value)
   }
+  return value
+}
+
+export function rotatePaymentKey(orderId: number) {
+  const key = `gymshop.payment-key.${orderId}`
+  const value = crypto.randomUUID()
+  localStorage.setItem(key, value)
   return value
 }

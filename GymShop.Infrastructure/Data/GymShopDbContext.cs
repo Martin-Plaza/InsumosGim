@@ -20,6 +20,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<EmailVerificationCode> EmailVerificationCodes => Set<EmailVerificationCode>();
+    public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
     public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -89,6 +90,16 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
             entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
             entity.HasOne(x => x.User).WithMany(x => x.EmailVerificationCodes).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PasswordResetCode>(entity =>
+        {
+            entity.ToTable("PasswordResetCodes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CodeHash).HasMaxLength(500).IsRequired();
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
+            entity.HasOne(x => x.User).WithMany(x => x.PasswordResetCodes).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<UserExternalLogin>(entity =>

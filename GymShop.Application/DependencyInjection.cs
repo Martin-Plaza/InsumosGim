@@ -19,6 +19,8 @@ public static class DependencyInjection
         services.AddScoped<IResendVerificationUseCase, ResendVerificationUseCase>();
         services.AddScoped<IGoogleLoginUseCase, GoogleLoginUseCase>();
         services.AddScoped<ILoginUserUseCase, LoginUserUseCase>();
+        services.AddScoped<IRequestPasswordResetUseCase, RequestPasswordResetUseCase>();
+        services.AddScoped<IConfirmPasswordResetUseCase, ConfirmPasswordResetUseCase>();
         services.AddScoped<IGetCurrentUserUseCase, GetCurrentUserUseCase>();
         services.AddScoped<IGetAuditEntriesUseCase, GetAuditEntriesUseCase>();
 

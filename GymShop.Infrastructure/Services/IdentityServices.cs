@@ -15,6 +15,15 @@ public sealed class MockVerificationEmailSender(ILogger<MockVerificationEmailSen
     }
 }
 
+public sealed class MockPasswordResetEmailSender(ILogger<MockPasswordResetEmailSender> logger) : IPasswordResetEmailSender
+{
+    public Task<string?> SendAsync(string email, string code, CancellationToken cancellationToken = default)
+    {
+        logger.LogInformation("Mock password-reset email generated for {Email}. Code: {PasswordResetCode}", email, code);
+        return Task.FromResult<string?>(code);
+    }
+}
+
 public sealed class GoogleIdentityVerifier(HttpClient client, IConfiguration configuration) : IExternalIdentityVerifier
 {
     public async Task<ExternalIdentity?> VerifyGoogleAsync(string credential, CancellationToken cancellationToken = default)

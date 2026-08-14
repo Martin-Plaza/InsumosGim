@@ -55,6 +55,7 @@ public sealed class GymShopRequestLimiter : IGymShopRequestLimiter
     {
         RateLimitPolicies.LoginAccount => _options.LoginAccount,
         RateLimitPolicies.RegistrationGlobal => _options.RegistrationGlobal,
+        RateLimitPolicies.PasswordResetAccount => _options.PasswordResetAccount,
         RateLimitPolicies.PaymentUser => _options.PaymentUser,
         RateLimitPolicies.PaymentOrder => _options.PaymentOrder,
         RateLimitPolicies.WebhookGlobal => _options.WebhookGlobal,
@@ -71,6 +72,8 @@ public static class RateLimitPolicies
     public const string LoginAccount = "login-account";
     public const string RegistrationIp = "registration-ip";
     public const string RegistrationGlobal = "registration-global";
+    public const string PasswordResetAccount = "password-reset-account";
+    public const string PasswordResetIp = "password-reset-ip";
     public const string PaymentUser = "payment-user";
     public const string PaymentOrder = "payment-order";
     public const string WebhookIp = "webhook-ip";

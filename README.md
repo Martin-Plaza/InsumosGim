@@ -315,6 +315,48 @@ En esta fase `IVerificationEmailSender` usa un proveedor Mock: el codigo se mues
 
 El frontend conserva en `localStorage` solamente el email y el vencimiento de una verificacion pendiente para poder retomarla tras recargar o cerrar la pagina. El codigo Mock no se persiste: si ya no esta visible, hay que esperar el vencimiento y usar **Reenviar codigo** para obtener uno nuevo.
 
+### Recuperación de contraseña
+
+La recuperación se implementa completa en desarrollo salvo por el envío real de correo:
+
+```text
+Olvidé mi contraseña
+→ ingresar email
+→ respuesta genérica
+→ código de 6 dígitos válido durante 10 minutos
+→ ingresar código y contraseña nueva
+→ invalidar sesiones anteriores
+→ volver al login
+```
+
+Contrato HTTP:
+
+```text
+POST /api/auth/forgot-password
+{ "email": "usuario@example.com" }
+
+POST /api/auth/reset-password
+{ "email": "usuario@example.com", "code": "123456", "newPassword": "NuevaClave123" }
+```
+
+`forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. En Development el proveedor Mock incluye `developmentCode` y escribe el código en el log; en staging y producción ese campo debe ser `null` y el código debe enviarse por el proveedor real.
+
+Los códigos se guardan en `PasswordResetCodes`, separados de `EmailVerificationCodes`, porque activar un email y cambiar una credencial son propósitos de seguridad distintos. Solo se persiste un hash con sal mediante el servicio de hashing de credenciales, nunca sus seis dígitos. Cada solicitud invalida códigos anteriores, cada código admite como máximo cinco intentos, vence después de 600 segundos y queda consumido tras usarse.
+
+Al confirmar se aplican las mismas reglas de contraseña fuerte que en registro, se actualiza `PasswordHash` y se incrementa `TokenVersion`. Por eso todos los JWT emitidos previamente reciben `401`; el frontend no inicia sesión automáticamente y vuelve al formulario de login. Una cuenta creada inicialmente con Google también puede establecer una contraseña manual mediante este flujo si controla el correo asociado.
+
+La solicitud y la confirmación tienen límites por IP y por hash del email. El hash se utiliza como clave de partición para no conservar el email en memoria dentro del rate limiter.
+
+La nueva migración `AddPasswordResetCodes` crea solamente la tabla, la clave foránea hacia `Users` con eliminación en cascada y el índice `(UserId, ExpiresAtUtc)`. No modifica usuarios ni códigos de verificación existentes.
+
+Para staging quedan pendientes:
+
+- sustituir `MockPasswordResetEmailSender` por un proveedor de correo real;
+- configurar remitente, dominio y secretos fuera del repositorio;
+- diseñar y probar la plantilla del mensaje;
+- validar entregabilidad, spam y tiempos reales;
+- confirmar límites definitivos según tráfico observado.
+
 Google Identity Services requiere el mismo Client ID publico en backend y frontend:
 
 ```text
@@ -660,7 +702,133 @@ El estado compartido usa React Context porque el carrito solamente cruza catálo
 
 El checkout permite armar el carrito sin sesión, pero redirige a `/login` antes de crear la orden y vuelve a `/carrito` después de autenticar. La fusión ocurre en ese cambio de sesión. No se agregaron refresh tokens, secretos ni cambios al proveedor Mock.
 
+Una orden pendiente no bloquea el carrito: el usuario puede agregar, actualizar, quitar o vaciar productos porque ese carrito representa una compra futura distinta de la orden ya creada. El checkout sí evita crear una segunda orden pendiente por ahora. Esta separación permite seguir comprando sin acumular órdenes ni mezclar productos nuevos con una orden cuyo precio y stock ya quedaron congelados.
+
+### Flujo de checkout local
+
+El checkout está separado en tres responsabilidades:
+
+```text
+/carrito
+  edición de productos y cantidades
+       ↓
+/checkout
+  revisión, dirección y confirmación
+       ↓
+/checkout/orden/:orderId
+  resultado, orden, pagos, reconsulta y cancelación
+```
+
+Se eligieron páginas separadas en lugar de mantener todo dentro del carrito porque permiten usar atrás/adelante, recuperar una orden por URL y distinguir claramente entre modificar la compra y confirmarla. La contrapartida es una ruta y componentes adicionales, pero reduce el riesgo de recrear una orden al volver a la pantalla anterior.
+
+El contrato actual solamente admite `shippingAddress`, con un máximo de 300 caracteres. El frontend no agrega costos de envío, cuotas, impuestos, códigos postales estructurados ni datos fiscales porque todavía no existen en el backend. Agregar esos conceptos solamente en la interfaz produciría totales o promesas que la API no puede validar.
+
+Al confirmar, el frontend ejecuta:
+
+```text
+POST /api/cart/checkout
+POST /api/orders/{orderId}/payments
+GET  /api/orders/{orderId}
+GET  /api/payments/orders/{orderId}
+```
+
+El pago siempre envía `provider: "Mock"`. No se utiliza ni se recrea `/api/payments/current`.
+
+El botón de confirmación usa un bloqueo sincrónico además del estado visual de carga. Esto evita dobles envíos dentro de la misma instancia de la interfaz. Sin embargo, `POST /api/cart/checkout` no acepta una clave de idempotencia: un corte de red después de que el servidor creó la orden no permite demostrar desde el cliente si la respuesta se perdió. Ante un error incierto o un `409`, el frontend consulta las órdenes pendientes y ofrece recuperar la encontrada antes de permitir otro intento. Una garantía completa requeriría agregar, con una decisión explícita de contrato, idempotencia para la creación de órdenes en backend.
+
+La creación del pago sí utiliza una clave estable por orden. Actualizar un pago `Pending` solo vuelve a consultar su estado y no crea otro intento. Si un pago `Creating` necesita retomarse se conserva la misma clave. Un nuevo intento después de `CreationFailed`, `Rejected`, `Canceled` o `Expired` genera una clave nueva porque representa otra operación de negocio. Esto evita duplicar un mismo intento sin impedir que el usuario vuelva a pagar después de un resultado terminal.
+
+La pantalla de resultado contempla todos los estados definidos por el backend:
+
+```text
+Creating, Pending, CreationFailed, Approved,
+Rejected, Canceled, Expired y Refunded
+```
+
+`Creating` no presupone la existencia de `CheckoutUrl`. La interfaz presenta `Pending` como una confirmación en curso, no como una compra guardada para pagar después. Ofrece una sola acción **Actualizar estado** para pagos activos, **Intentar pagar nuevamente** para estados terminales recuperables y cancelación para una orden `Pending`. El backend continúa decidiendo si cada transición o cancelación es válida.
+
+La dirección no se persiste en `localStorage`: es información personal y solamente se envía al backend cuando el usuario confirma. Después de crear la orden se conserva en `sessionStorage` únicamente el último `orderId`, no la dirección ni información de pago.
+
+Ventajas del diseño:
+
+- La orden creada no se pierde aunque falle la creación del pago.
+- La URL del resultado puede recargarse y vuelve a consultar la autoridad del backend.
+- Los errores `409`, `429`, `ProblemDetails` y `traceId` se muestran sin inventar estados.
+- No se guardan secretos ni datos financieros en el navegador.
+
+Limitaciones actuales:
+
+- La creación de la orden no tiene idempotencia distribuida.
+- No hay cálculo de envío, promociones, impuestos ni cuotas.
+- El proveedor Mock no representa una aprobación financiera real.
+- Para staging será necesario definir las reglas comerciales de entrega antes de ampliar los campos.
+
 La aplicacion aplica migraciones automaticamente en ambiente Development.
+
+## Docker local
+
+El entorno Docker levanta dos servicios definidos en `compose.yaml`:
+
+```text
+api       -> API ASP.NET Core, publicada en http://localhost:8080
+database  -> SQL Server Express, accesible solo desde la red de Docker
+```
+
+Crear primero el archivo local de variables a partir de la plantilla y reemplazar los valores de ejemplo:
+
+```powershell
+Copy-Item .env.docker.example .env.docker
+```
+
+`.env.docker` contiene credenciales locales y esta ignorado por Git. No debe commitearse ni compartirse.
+
+Comandos habituales, ejecutados desde la raiz del repositorio:
+
+```powershell
+# Construir las imagenes e iniciar los servicios en segundo plano
+docker compose --env-file .env.docker up --build -d
+
+# Ver el estado de los contenedores
+docker compose --env-file .env.docker ps
+
+# Seguir los logs de la API; Ctrl+C deja de seguirlos sin detener el servicio
+docker compose --env-file .env.docker logs -f api
+
+# Detener y eliminar los contenedores y la red, conservando la base
+docker compose --env-file .env.docker down
+
+# Volver a iniciar sin reconstruir las imagenes
+docker compose --env-file .env.docker up -d
+```
+
+La API se puede comprobar en:
+
+```text
+http://localhost:8080/health
+http://localhost:8080/swagger
+```
+
+### Persistencia de SQL Server
+
+El servicio `database` guarda los archivos de SQL Server en el volumen nombrado
+`gymshop-sql-data`. Un volumen es almacenamiento administrado por Docker que existe
+fuera del contenedor. Por eso eliminar y volver a crear el contenedor no elimina
+usuarios, productos, ordenes ni migraciones ya aplicadas.
+
+Este comando conserva el volumen y los datos:
+
+```powershell
+docker compose --env-file .env.docker down
+```
+
+Este comando tambien elimina el volumen y reinicia la base desde cero en el siguiente arranque:
+
+```powershell
+docker compose --env-file .env.docker down --volumes
+```
+
+Usar `--volumes` solamente cuando se quiera borrar deliberadamente toda la base local
+de Docker. No afecta una base LocalDB ni una futura base alojada en RDS.
 
 ## Tests
 

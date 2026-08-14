@@ -4,6 +4,8 @@ export type PaymentStatus = 'Creating' | 'Pending' | 'CreationFailed' | 'Approve
 
 export interface User { id: number; email: string; name: string; lastName?: string | null; role: Role }
 export interface RegistrationPending { email: string; expiresInSeconds: number; developmentCode: string | null }
+export interface PasswordResetPending { message: string; expiresInSeconds: number; developmentCode: string | null }
+export interface PasswordResetCompleted { message: string }
 export interface AdminUser extends User { isActive: boolean; createdAt: string }
 export interface AuthResponse { token: string; user: User }
 export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean }

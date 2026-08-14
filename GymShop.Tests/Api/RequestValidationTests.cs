@@ -48,7 +48,15 @@ public class RequestValidationTests
     public void Weak_password_is_rejected(string password)
     {
         AssertInvalid(new RegisterRequest("Cliente", "Apellido", "cliente@example.com", password), nameof(RegisterRequest.Password));
+        AssertInvalid(new ConfirmPasswordResetRequest("cliente@example.com", "123456", password), nameof(ConfirmPasswordResetRequest.NewPassword));
     }
+
+    [Theory]
+    [InlineData("12345")]
+    [InlineData("1234567")]
+    [InlineData("abcdef")]
+    public void Password_reset_requires_exactly_six_digits(string code) =>
+        AssertInvalid(new ConfirmPasswordResetRequest("cliente@example.com", code, "NuevaClave123"), nameof(ConfirmPasswordResetRequest.Code));
 
     public static TheoryData<object, string> ValuesOverDatabaseLimits => new()
     {

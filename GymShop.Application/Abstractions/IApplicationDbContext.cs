@@ -15,6 +15,7 @@ public interface IApplicationDbContext
     DbSet<Payment> Payments { get; }
     DbSet<AuditEntry> AuditEntries { get; }
     DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
+    DbSet<PasswordResetCode> PasswordResetCodes { get; }
     DbSet<UserExternalLogin> UserExternalLogins { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -181,6 +181,40 @@ public class CartUseCaseTests
         Assert.Single(db.Orders);
     }
 
+    [Fact]
+    public async Task Pending_order_does_not_block_cart_mutations()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var firstProduct = SeedProduct(db, stock: 8, price: 100);
+        var secondProduct = SeedProduct(db, stock: 6, price: 50);
+        await db.SaveChangesAsync();
+
+        var add = new AddCartItemUseCase(db);
+        Assert.True((await add.ExecuteAsync(user.Id, new AddCartItemRequest(firstProduct.Id, 1))).IsSuccess);
+        db.Orders.Add(new Order
+        {
+            UserId = user.Id,
+            ShippingAddress = "Compra anterior 123",
+            Status = OrderStatus.Pending,
+            Total = 100
+        });
+        await db.SaveChangesAsync();
+
+        var added = await add.ExecuteAsync(user.Id, new AddCartItemRequest(secondProduct.Id, 2));
+        var updated = await new UpdateCartItemUseCase(db).ExecuteAsync(user.Id, firstProduct.Id, new UpdateCartItemRequest(3));
+        var removed = await new RemoveCartItemUseCase(db).ExecuteAsync(user.Id, secondProduct.Id);
+        var cleared = await new ClearCartUseCase(db).ExecuteAsync(user.Id);
+
+        Assert.True(added.IsSuccess);
+        Assert.True(updated.IsSuccess);
+        Assert.True(removed.IsSuccess);
+        Assert.True(cleared.IsSuccess);
+        Assert.Empty(db.CartItems);
+        Assert.Single(db.Orders);
+        Assert.Equal(OrderStatus.Pending, db.Orders.Single().Status);
+    }
+
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var role = db.Roles.Single(x => x.Name == "User");

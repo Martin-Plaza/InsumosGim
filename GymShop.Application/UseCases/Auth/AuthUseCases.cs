@@ -14,6 +14,8 @@ public interface IVerifyEmailUseCase { Task<AppResult<AuthResponse>> ExecuteAsyn
 public interface IResendVerificationUseCase { Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default); }
 public interface IGoogleLoginUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(GoogleLoginRequest request, CancellationToken cancellationToken = default); }
 public interface ILoginUserUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(LoginRequest request, CancellationToken cancellationToken = default); }
+public interface IRequestPasswordResetUseCase { Task<AppResult<PasswordResetPendingResponse>> ExecuteAsync(RequestPasswordResetRequest request, CancellationToken cancellationToken = default); }
+public interface IConfirmPasswordResetUseCase { Task<AppResult<PasswordResetCompletedResponse>> ExecuteAsync(ConfirmPasswordResetRequest request, CancellationToken cancellationToken = default); }
 public interface IGetCurrentUserUseCase { Task<AppResult<UserResponse>> ExecuteAsync(int userId, CancellationToken cancellationToken = default); }
 
 internal static class AuthMapping
@@ -131,6 +133,88 @@ public sealed class LoginUserUseCase : ILoginUserUseCase
         var email = request.Email.Trim().ToLowerInvariant(); var user = await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
         if (user is null || !user.IsActive || user.EmailVerifiedAt is null || !_hasher.Verify(request.Password, user.PasswordHash)) return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "Credenciales invalidas o email sin verificar.");
         return AppResult<AuthResponse>.Success(AuthMapping.Auth(user, _jwt));
+    }
+}
+
+internal static class PasswordReset
+{
+    public const int LifetimeSeconds = 600;
+    public const int MaximumAttempts = 5;
+    public const string GenericRequestMessage = "Si el email corresponde a una cuenta, enviamos un codigo para restablecer la password.";
+    public const string GenericInvalidCodeMessage = "El codigo no es valido, vencio o ya fue utilizado.";
+}
+
+public sealed class RequestPasswordResetUseCase : IRequestPasswordResetUseCase
+{
+    private readonly IApplicationDbContext _db;
+    private readonly IPasswordResetEmailSender _sender;
+    private readonly IPasswordHasher _hasher;
+    private readonly TimeProvider _time;
+
+    public RequestPasswordResetUseCase(IApplicationDbContext db, IPasswordResetEmailSender sender, IPasswordHasher hasher, TimeProvider time) =>
+        (_db, _sender, _hasher, _time) = (db, sender, hasher, time);
+
+    public async Task<AppResult<PasswordResetPendingResponse>> ExecuteAsync(RequestPasswordResetRequest request, CancellationToken cancellationToken = default)
+    {
+        var email = request.Email.Trim().ToLowerInvariant();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        var user = await _db.Users.SingleOrDefaultAsync(x => x.Email == email && x.IsActive, cancellationToken);
+
+        if (user is not null)
+        {
+            var active = await _db.PasswordResetCodes.Where(x => x.UserId == user.Id && x.ConsumedAtUtc == null).ToListAsync(cancellationToken);
+            foreach (var item in active) item.ConsumedAtUtc = now;
+            _db.PasswordResetCodes.Add(new PasswordResetCode
+            {
+                User = user,
+                UserId = user.Id,
+                CodeHash = _hasher.Hash(code),
+                CreatedAtUtc = now,
+                ExpiresAtUtc = now.AddSeconds(PasswordReset.LifetimeSeconds)
+            });
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        var developmentCode = await _sender.SendAsync(email, code, cancellationToken);
+        return AppResult<PasswordResetPendingResponse>.Success(new(PasswordReset.GenericRequestMessage, PasswordReset.LifetimeSeconds, developmentCode));
+    }
+}
+
+public sealed class ConfirmPasswordResetUseCase : IConfirmPasswordResetUseCase
+{
+    private readonly IApplicationDbContext _db;
+    private readonly IPasswordHasher _hasher;
+    private readonly TimeProvider _time;
+
+    public ConfirmPasswordResetUseCase(IApplicationDbContext db, IPasswordHasher hasher, TimeProvider time) =>
+        (_db, _hasher, _time) = (db, hasher, time);
+
+    public async Task<AppResult<PasswordResetCompletedResponse>> ExecuteAsync(ConfirmPasswordResetRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!new StrongPasswordAttribute().IsValid(request.NewPassword))
+            return AppResult<PasswordResetCompletedResponse>.Failure(AppErrorType.Validation, "La password debe tener entre 8 y 128 caracteres e incluir al menos una letra y un numero.");
+
+        var email = request.Email.Trim().ToLowerInvariant();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var user = await _db.Users.Include(x => x.PasswordResetCodes).SingleOrDefaultAsync(x => x.Email == email && x.IsActive, cancellationToken);
+        var reset = user?.PasswordResetCodes.Where(x => x.ConsumedAtUtc == null).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
+        if (reset is null || reset.ExpiresAtUtc <= now || reset.FailedAttempts >= PasswordReset.MaximumAttempts)
+            return AppResult<PasswordResetCompletedResponse>.Failure(AppErrorType.Validation, PasswordReset.GenericInvalidCodeMessage);
+
+        if (!_hasher.Verify(request.Code, reset.CodeHash))
+        {
+            reset.FailedAttempts++;
+            await _db.SaveChangesAsync(cancellationToken);
+            return AppResult<PasswordResetCompletedResponse>.Failure(AppErrorType.Validation, PasswordReset.GenericInvalidCodeMessage);
+        }
+
+        foreach (var item in user!.PasswordResetCodes.Where(x => x.ConsumedAtUtc == null)) item.ConsumedAtUtc = now;
+        user.PasswordHash = _hasher.Hash(request.NewPassword);
+        user.TokenVersion++;
+        user.UpdatedAt = now;
+        await _db.SaveChangesAsync(cancellationToken);
+        return AppResult<PasswordResetCompletedResponse>.Success(new("La password fue actualizada. Ya podes iniciar sesion."));
     }
 }
 

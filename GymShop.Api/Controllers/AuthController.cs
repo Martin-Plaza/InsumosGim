@@ -17,6 +17,8 @@ public class AuthController : ApiControllerBase
     private readonly IVerifyEmailUseCase _verifyEmail;
     private readonly IResendVerificationUseCase _resendVerification;
     private readonly IGoogleLoginUseCase _googleLogin;
+    private readonly IRequestPasswordResetUseCase _requestPasswordReset;
+    private readonly IConfirmPasswordResetUseCase _confirmPasswordReset;
     private readonly IGetCurrentUserUseCase _getCurrentUser;
     private readonly IGymShopRequestLimiter _requestLimiter;
 
@@ -26,6 +28,8 @@ public class AuthController : ApiControllerBase
         IVerifyEmailUseCase verifyEmail,
         IResendVerificationUseCase resendVerification,
         IGoogleLoginUseCase googleLogin,
+        IRequestPasswordResetUseCase requestPasswordReset,
+        IConfirmPasswordResetUseCase confirmPasswordReset,
         IGetCurrentUserUseCase getCurrentUser,
         IGymShopRequestLimiter requestLimiter)
     {
@@ -34,6 +38,8 @@ public class AuthController : ApiControllerBase
         _verifyEmail = verifyEmail;
         _resendVerification = resendVerification;
         _googleLogin = googleLogin;
+        _requestPasswordReset = requestPasswordReset;
+        _confirmPasswordReset = confirmPasswordReset;
         _getCurrentUser = getCurrentUser;
         _requestLimiter = requestLimiter;
     }
@@ -72,6 +78,28 @@ public class AuthController : ApiControllerBase
         var decision = _requestLimiter.Acquire(RateLimitPolicies.LoginAccount, accountKey);
         if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
         return FromResult(await _loginUser.ExecuteAsync(request, cancellationToken));
+    }
+
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting(RateLimitPolicies.PasswordResetIp)]
+    [ProducesResponseType(typeof(PasswordResetPendingResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<PasswordResetPendingResponse>> ForgotPassword(RequestPasswordResetRequest request, CancellationToken cancellationToken)
+    {
+        var decision = _requestLimiter.Acquire(RateLimitPolicies.PasswordResetAccount, GymShopRequestLimiter.HashAccount(request.Email));
+        if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
+        return FromResult(await _requestPasswordReset.ExecuteAsync(request, cancellationToken));
+    }
+
+    [HttpPost("reset-password")]
+    [EnableRateLimiting(RateLimitPolicies.PasswordResetIp)]
+    [ProducesResponseType(typeof(PasswordResetCompletedResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<PasswordResetCompletedResponse>> ResetPassword(ConfirmPasswordResetRequest request, CancellationToken cancellationToken)
+    {
+        var decision = _requestLimiter.Acquire(RateLimitPolicies.PasswordResetAccount, GymShopRequestLimiter.HashAccount(request.Email));
+        if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
+        return FromResult(await _confirmPasswordReset.ExecuteAsync(request, cancellationToken));
     }
 
     [Authorize]

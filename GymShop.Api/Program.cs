@@ -24,6 +24,7 @@ using Microsoft.AspNetCore.Mvc;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddHealthChecks();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -96,6 +97,7 @@ builder.Services.AddRateLimiter(options =>
 
     AddIpPolicy(options, RateLimitPolicies.LoginIp, rateLimiting.Enabled, rateLimiting.LoginIp);
     AddIpPolicy(options, RateLimitPolicies.RegistrationIp, rateLimiting.Enabled, rateLimiting.RegistrationIp);
+    AddIpPolicy(options, RateLimitPolicies.PasswordResetIp, rateLimiting.Enabled, rateLimiting.LoginIp);
     AddIpPolicy(options, RateLimitPolicies.WebhookIp, rateLimiting.Enabled, rateLimiting.WebhookIp);
 });
 
@@ -165,9 +167,17 @@ if (app.Environment.IsDevelopment() && mercadoPagoOptions.Enabled && string.IsNu
     app.Logger.LogWarning("Mercado Pago is enabled without webhook HMAC verification in Development. Configure MercadoPago:WebhookSecret before using real notifications.");
 }
 
-if (app.Environment.IsDevelopment())
+var initializeDatabase = builder.Configuration.GetValue(
+    "DatabaseInitialization:Enabled",
+    app.Environment.IsDevelopment());
+
+if (initializeDatabase)
 {
     await DatabaseInitializer.InitializeAsync(app.Services);
+}
+
+if (app.Environment.IsDevelopment())
+{
     app.UseSwagger();
     app.UseSwaggerUI();
 }
@@ -180,7 +190,10 @@ if (reverseProxy.Enabled)
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
-    app.UseHttpsRedirection();
+    if (builder.Configuration.GetValue("Https:RedirectEnabled", true))
+    {
+        app.UseHttpsRedirection();
+    }
 }
 
 app.UseExceptionHandler();
@@ -191,6 +204,7 @@ app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.Run();
 

@@ -14,7 +14,7 @@ on:
 
 jobs:
   build-and-test:
-    name: Build and test
+    name: Backend build and tests
     runs-on: ubuntu-latest
     env:
       GYMSHOP_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=GymShop_CI_Test_2026!;TrustServerCertificate=True"
@@ -64,3 +64,108 @@ jobs:
           name: gymshop-coverage
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: GymShop.Web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: GymShop.Web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  deploy-staging:
+    name: Deploy backend to staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - build-and-test
+      - frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "998038918614"
+      ECR_REPOSITORY: gymshop-api
+      EC2_INSTANCE_ID: i-0ddb2b9ab191e8de5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate with AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::998038918614:role/GymShopGitHubStagingDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push API image
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Deploy image on EC2 through SSM
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          command_id=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy GymShop $IMAGE_TAG" \
+            --parameters "commands=sudo /opt/gymshop/deploy.sh $IMAGE_TAG" \
+            --query "Command.CommandId" \
+            --output text)
+
+          set +e
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$EC2_INSTANCE_ID"
+          wait_status=$?
+          set -e
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,StandardOutput:StandardOutputContent,StandardError:StandardErrorContent}'
+
+          exit "$wait_status"

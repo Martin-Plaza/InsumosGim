@@ -9,6 +9,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Application.UseCases.Auth;
 
+//task: asincronico
+//AppResult: puede terminar con exito o error controlado.
+
 public interface IRegisterUserUseCase { Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(RegisterRequest request, CancellationToken cancellationToken = default); }
 public interface IVerifyEmailUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default); }
 public interface IResendVerificationUseCase { Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default); }
@@ -18,6 +21,7 @@ public interface IRequestPasswordResetUseCase { Task<AppResult<PasswordResetPend
 public interface IConfirmPasswordResetUseCase { Task<AppResult<PasswordResetCompletedResponse>> ExecuteAsync(ConfirmPasswordResetRequest request, CancellationToken cancellationToken = default); }
 public interface IGetCurrentUserUseCase { Task<AppResult<UserResponse>> ExecuteAsync(int userId, CancellationToken cancellationToken = default); }
 
+//clase para crear un user en DTO
 internal static class AuthMapping
 {
     public static UserResponse User(User user) => new(user.Id, user.Email, user.Name, user.LastName, user.Role.Name);
@@ -26,12 +30,21 @@ internal static class AuthMapping
 
 public sealed class RegisterUserUseCase : IRegisterUserUseCase
 {
-    private readonly IApplicationDbContext _db; private readonly IPasswordHasher _hasher; private readonly IVerificationEmailSender _sender; private readonly TimeProvider _time;
-    public RegisterUserUseCase(IApplicationDbContext db, IPasswordHasher hasher, IVerificationEmailSender sender, TimeProvider time) => (_db, _hasher, _sender, _time) = (db, hasher, sender, time);
 
-    public async Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(RegisterRequest request, CancellationToken cancellationToken = default)
+    private readonly IApplicationDbContext _db;
+    private readonly IPasswordHasher _hasher;
+    private readonly IVerificationEmailSender _sender;
+    private readonly TimeProvider _time;
+
+    public RegisterUserUseCase(IApplicationDbContext db, IPasswordHasher hasher, IVerificationEmailSender sender, TimeProvider time) => (_db, _hasher, _sender, _time) = (db, hasher, sender, time);
+    //recibe: registerRequest - name, lastname, email y passoword, como variable request
+    //devuelve?: registrationPendingResponse - nuevo usuario, llamado de la db, tiempo y sender
+        public async Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
-        var email = request.Email.Trim().ToLowerInvariant(); var name = request.Name.Trim(); var lastName = request.LastName.Trim();
+        var email = request.Email.Trim().ToLowerInvariant();
+        var name = request.Name.Trim();
+        var lastName = request.LastName.Trim();
+
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(lastName) || email.Length > ValidationLimits.Email || !new EmailAddressAttribute().IsValid(email))
             return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Validation, "Nombre, apellido y email valido son obligatorios.");
         if (!new StrongPasswordAttribute().IsValid(request.Password))
@@ -40,8 +53,16 @@ public sealed class RegisterUserUseCase : IRegisterUserUseCase
             return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Conflict, "El email ya esta registrado.");
 
         var role = await _db.Roles.SingleAsync(x => x.Name == "User", cancellationToken);
-        var user = new User { Email = email, Name = name, LastName = lastName, PasswordHash = _hasher.Hash(request.Password), RoleId = role.Id, Role = role, IsActive = true };
+        var user = new User {
+            Email = email,
+            Name = name,
+            LastName = lastName,
+            PasswordHash = _hasher.Hash(request.Password),
+            RoleId = role.Id,
+            Role = role,
+            IsActive = true };
         _db.Users.Add(user);
+
         return await Verification.CreateAsync(_db, _sender, _time, user, cancellationToken);
     }
 }

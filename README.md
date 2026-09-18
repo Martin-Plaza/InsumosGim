@@ -193,63 +193,873 @@ Estas reglas justifican decisiones tecnicas como transacciones, idempotencia, co
 
 ## Casos de uso
 
-### Autenticacion y usuarios
+Los casos siguientes describen el contrato funcional implementado actualmente. Una regla interna no se presenta como un caso independiente si no puede ser iniciada por un actor; por ejemplo, la idempotencia forma parte de crear un pago y la validacion de firma forma parte de procesar el webhook.
 
-- RegistrarUsuario
-- IniciarSesion
-- ObtenerUsuarioActual
-- CrearUsuarioAdministrativo
-- ListarUsuarios
-- CambiarRolUsuario
-- CambiarEstadoUsuario
+
+
+### Autenticacion
+
+
+#### Registrar un usuario
+
+**Objetivo:** crear una cuenta local e iniciar la verificacion de su email.
+
+**Actor y permisos:** visitante no autenticado.
+
+**Datos de entrada:** nombre, apellido, email y password.
+
+**Precondiciones:** el email no debe estar registrado y debe existir el rol `User`.
+
+**Flujo esperado:** se normaliza el email, se validan los datos, se crea un usuario activo con rol `User`, se genera un codigo de seis digitos y se envia al email informado.
+
+**Reglas de negocio:** la password debe tener entre 8 y 128 caracteres, con al menos una letra y un numero; el codigo vence a los 60 segundos; la cuenta no puede iniciar sesion hasta verificar el email.
+
+**Resultado:** devuelve el email y el tiempo de vigencia del codigo; en desarrollo puede incluir el codigo generado.
+
+**Errores esperados:** `400 Bad Request` por datos invalidos, `409 Conflict` si el email ya existe y `429 Too Many Requests` al exceder el limite de solicitudes.
+
+**Que queda explicitamente fuera:** no inicia sesion, no permite elegir rol y no crea cuentas administrativas.
+
+
+
+#### Verificar el email
+
+**Objetivo:** confirmar la propiedad del email y habilitar el inicio de sesion.
+
+**Actor y permisos:** usuario con registro local pendiente de verificacion.
+
+**Datos de entrada:** email y codigo numerico de seis digitos.
+
+**Precondiciones:** debe existir una cuenta sin verificar y un codigo vigente no consumido.
+
+**Flujo esperado:** se localiza el ultimo codigo activo, se compara de forma segura, se marca como consumido, se verifica la cuenta y se emite un JWT.
+
+**Reglas de negocio:** el codigo vence a los 60 segundos, admite como maximo cinco intentos fallidos y sólo puede consumirse una vez.
+
+**Resultado:** devuelve el JWT y los datos del usuario autenticado.
+
+**Errores esperados:** `400 Bad Request` si no hay verificacion pendiente, el codigo es incorrecto, vencio o supero los intentos permitidos.
+
+**Que queda explicitamente fuera:** no cambia el email, la password ni el rol del usuario.
+
+
+
+#### Reenviar el codigo de verificacion
+
+**Objetivo:** emitir un nuevo codigo cuando el anterior ya no esta vigente.
+
+**Actor y permisos:** usuario no autenticado con verificacion pendiente.
+
+**Datos de entrada:** email.
+
+**Precondiciones:** la cuenta debe existir, no estar verificada y no tener un codigo todavia vigente.
+
+**Flujo esperado:** se invalidan codigos anteriores no consumidos, se genera uno nuevo y se envia al email de la cuenta.
+
+**Reglas de negocio:** no se genera otro codigo mientras el actual siga vigente; el nuevo codigo vence a los 60 segundos.
+
+**Resultado:** devuelve el email y el nuevo tiempo de vigencia; en desarrollo puede incluir el codigo.
+
+**Errores esperados:** `400 Bad Request` si no puede reenviarse y `409 Conflict` si el codigo actual sigue vigente.
+
+**Que queda explicitamente fuera:** no verifica automaticamente la cuenta ni revela si un email ajeno esta registrado con otros estados.
+
+
+
+#### Iniciar sesion con email y password
+
+**Objetivo:** autenticar una cuenta local y obtener una sesion JWT.
+
+**Actor y permisos:** usuario no autenticado.
+
+**Datos de entrada:** email y password.
+
+**Precondiciones:** la cuenta debe existir, estar activa y tener el email verificado.
+
+**Flujo esperado:** se normaliza el email, se verifica la password almacenada y se genera un token con la identidad y el rol actuales.
+
+**Reglas de negocio:** cuentas inexistentes, inactivas, no verificadas o con password incorrecta producen la misma respuesta; el rate limiting se aplica por IP.
+
+**Resultado:** devuelve el JWT y los datos del usuario.
+
+**Errores esperados:** `400 Bad Request` por formato invalido, `401 Unauthorized` por credenciales no validas y `429 Too Many Requests` por exceso de intentos.
+
+**Que queda explicitamente fuera:** no registra usuarios, no verifica emails y no renueva tokens.
+
+
+
+#### Iniciar sesion con Google
+
+**Objetivo:** autenticar o registrar un usuario a partir de una identidad verificada por Google.
+
+**Actor y permisos:** visitante no autenticado con una credencial de Google.
+
+**Datos de entrada:** credencial emitida por Google.
+
+**Precondiciones:** la credencial debe ser valida y el email informado por Google debe estar verificado.
+
+**Flujo esperado:** se verifica la identidad externa; se reutiliza el vinculo existente o se vincula por email; si no existe usuario se crea uno activo con rol `User`; finalmente se emite un JWT.
+
+**Reglas de negocio:** una cuenta inactiva no puede ingresar; una cuenta local con el mismo email se vincula a la identidad externa; el email se considera verificado por Google.
+
+**Resultado:** devuelve el JWT y los datos del usuario.
+
+**Errores esperados:** `400 Bad Request` si falta la credencial y `401 Unauthorized` si es invalida, el email no esta verificado o la cuenta esta inactiva.
+
+**Que queda explicitamente fuera:** no permite elegir rol, no almacena una password de Google y no gestiona la cuenta en Google.
+
+
+
+#### Solicitar recuperacion de password
+
+**Objetivo:** iniciar de forma segura el restablecimiento de una password local.
+
+**Actor y permisos:** visitante no autenticado.
+
+**Datos de entrada:** email.
+
+**Precondiciones:** ninguna precondicion visible; si existe, la cuenta debe estar activa para recibir un codigo utilizable.
+
+**Flujo esperado:** se invalida cualquier codigo anterior, se crea un codigo de seis digitos con vigencia de diez minutos y se envia el email.
+
+**Reglas de negocio:** la respuesta es deliberadamente generica para no revelar si la cuenta existe; el rate limiting se aplica por IP.
+
+**Resultado:** devuelve un mensaje generico y el tiempo de vigencia; en desarrollo puede incluir el codigo.
+
+**Errores esperados:** `400 Bad Request` por email invalido y `429 Too Many Requests` por exceso de solicitudes; un email inexistente no produce `404`.
+
+**Que queda explicitamente fuera:** no cambia la password ni autentica al usuario.
+
+
+
+#### Confirmar recuperacion de password
+
+**Objetivo:** establecer una nueva password mediante un codigo de recuperacion valido.
+
+**Actor y permisos:** visitante que posee el codigo enviado al email de una cuenta activa.
+
+**Datos de entrada:** email, codigo numerico de seis digitos y nueva password.
+
+**Precondiciones:** debe existir un codigo no consumido, vigente y con menos de cinco intentos fallidos.
+
+**Flujo esperado:** se valida el codigo, se consumen los codigos activos, se reemplaza el hash de password y se incrementa la version de token.
+
+**Reglas de negocio:** la nueva password debe cumplir la politica fuerte; el cambio invalida sesiones JWT anteriores; los errores del codigo usan un mensaje generico.
+
+**Resultado:** confirma que la password fue actualizada.
+
+**Errores esperados:** `400 Bad Request` por password debil o codigo invalido, vencido, consumido o bloqueado; `429 Too Many Requests` por exceso de intentos.
+
+**Que queda explicitamente fuera:** no inicia sesion automaticamente ni reactiva una cuenta inactiva.
+
+
+
+#### Obtener el usuario actual
+
+**Objetivo:** recuperar la identidad asociada a la sesion vigente.
+
+**Actor y permisos:** cualquier usuario autenticado y activo.
+
+**Datos de entrada:** no recibe datos de negocio; usa el identificador contenido en la sesion.
+
+**Precondiciones:** el JWT debe ser valido y corresponder a una sesion vigente.
+
+**Flujo esperado:** se obtiene el usuario activo con su rol y se proyectan sus datos publicos de sesion.
+
+**Reglas de negocio:** la validacion JWT comprueba la version de token y el estado de la cuenta.
+
+**Resultado:** devuelve ID, email, nombre, apellido y rol.
+
+**Errores esperados:** `401 Unauthorized` por sesion invalida y `404 Not Found` si el usuario ya no puede localizarse como activo.
+
+**Que queda explicitamente fuera:** no modifica el perfil ni devuelve password, hashes o datos administrativos.
+
+
+
+
+### Administracion de usuarios
+
+#### Listar usuarios
+
+**Objetivo:** consultar las cuentas administrables del sistema.
+
+**Actor y permisos:** `SuperAdmin` autenticado.
+
+**Datos de entrada:** ninguno.
+
+**Precondiciones:** la sesion debe tener el rol `SuperAdmin`.
+
+**Flujo esperado:** se consultan los usuarios con su rol y se ordenan del mas reciente al mas antiguo.
+
+**Reglas de negocio:** la operacion incluye cuentas activas e inactivas.
+
+**Resultado:** devuelve ID, email, nombre, rol, estado y fecha de creacion de cada usuario.
+
+**Errores esperados:** `401 Unauthorized` sin autenticacion y `403 Forbidden` sin el rol requerido.
+
+**Que queda explicitamente fuera:** no devuelve credenciales, codigos de verificacion ni historial de sesiones.
+
+
+
+#### Crear un usuario administrativo
+
+**Objetivo:** crear directamente una cuenta con un rol definido.
+
+**Actor y permisos:** `SuperAdmin` autenticado.
+
+**Datos de entrada:** nombre, email, password y rol (`User`, `Admin` o `SuperAdmin`).
+
+**Precondiciones:** el email no debe existir y el rol solicitado debe estar configurado.
+
+**Flujo esperado:** se normalizan los datos, se valida el rol, se hashea la password y se crea una cuenta activa con email ya verificado.
+
+**Reglas de negocio:** nombre, email y password son obligatorios; actualmente esta operacion exige una password de al menos seis caracteres.
+
+**Resultado:** devuelve el usuario creado y responde `201 Created`.
+
+**Errores esperados:** `400 Bad Request` por datos o rol invalidos, `409 Conflict` por email duplicado, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no envia verificacion de email y no inicia sesion como el usuario creado.
+
+
+
+#### Cambiar el rol de un usuario
+
+**Objetivo:** asignar a una cuenta un rol diferente.
+
+**Actor y permisos:** `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID de usuario y rol (`User`, `Admin` o `SuperAdmin`).
+
+**Precondiciones:** el usuario y el rol deben existir.
+
+**Flujo esperado:** se actualiza el rol, se incrementa la version de token y se registra la accion en auditoria.
+
+**Reglas de negocio:** los nombres de rol no distinguen mayusculas; si el rol no cambia la operacion es idempotente; un cambio invalida sesiones anteriores.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `400 Bad Request` por rol invalido, `404 Not Found` por usuario inexistente, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no cambia el estado, email ni password del usuario.
+
+
+
+#### Cambiar el estado de un usuario
+
+**Objetivo:** activar o desactivar una cuenta.
+
+**Actor y permisos:** `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID de usuario y valor booleano `isActive`.
+
+**Precondiciones:** el usuario debe existir.
+
+**Flujo esperado:** se actualiza el estado, se incrementa la version de token y se registra el cambio en auditoria.
+
+**Reglas de negocio:** el actor no puede desactivar su propia cuenta; repetir el estado actual es idempotente; cualquier cambio invalida sesiones anteriores.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `404 Not Found` por usuario inexistente, `409 Conflict` al intentar desactivarse a si mismo, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no elimina la cuenta ni modifica su rol.
+
+
+
 
 ### Productos
 
-- ListarProductos
-- ObtenerProductoPorId
-- CrearProducto
-- ActualizarProducto
-- ActualizarStock
-- ActivarODesactivarProducto
+#### Listar productos
 
-### Carrito
+**Objetivo:** obtener el catalogo visible.
 
-- ObtenerCarrito
-- AgregarItemAlCarrito
-- ActualizarItemDelCarrito
-- QuitarItemDelCarrito
-- VaciarCarrito
-- ConfirmarCheckout
+**Actor y permisos:** visitante para productos activos; `Admin` o `SuperAdmin` para incluir inactivos.
+
+**Datos de entrada:** parametro opcional `includeInactive`.
+
+**Precondiciones:** sólo se requiere autenticacion cuando se solicitan productos inactivos.
+
+**Flujo esperado:** se consultan los productos y se ordenan del ID mas reciente al mas antiguo.
+
+**Reglas de negocio:** un visitante o usuario sin rol administrativo siempre recibe sólo activos, aunque solicite incluir inactivos.
+
+**Resultado:** devuelve la lista de productos con precio, stock, imagen y estado.
+
+**Errores esperados:** `401 Unauthorized` o `403 Forbidden` al solicitar inactivos sin permisos suficientes.
+
+**Que queda explicitamente fuera:** no pagina, no reserva stock y no modifica productos.
+
+
+
+#### Obtener un producto por ID
+
+**Objetivo:** consultar el detalle de un producto.
+
+**Actor y permisos:** cualquier visitante para activos; `Admin` o `SuperAdmin` también para inactivos.
+
+**Datos de entrada:** ID del producto.
+
+**Precondiciones:** el producto debe existir y ser visible para el actor.
+
+**Flujo esperado:** se busca el producto y se proyecta su informacion publica.
+
+**Reglas de negocio:** un producto inactivo se comporta como inexistente para actores no administrativos.
+
+**Resultado:** devuelve el producto solicitado.
+
+**Errores esperados:** `404 Not Found` si no existe o no es visible.
+
+**Que queda explicitamente fuera:** no modifica ni reserva stock.
+
+
+
+#### Crear un producto
+
+**Objetivo:** incorporar un producto activo al catalogo.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** nombre, descripcion opcional, precio, stock inicial e imagen opcional.
+
+**Precondiciones:** los datos deben respetar limites de longitud y formato.
+
+**Flujo esperado:** se validan y normalizan los campos, se crea el producto activo y se persiste.
+
+**Reglas de negocio:** el precio debe ser mayor que cero y compatible con `decimal(18,2)`; el stock no puede ser negativo; la imagen debe ser HTTP/HTTPS o una ruta web local valida.
+
+**Resultado:** devuelve el producto creado y responde `201 Created`.
+
+**Errores esperados:** `400 Bad Request` por datos invalidos, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no crea categorias, no registra movimientos de inventario y no admite crear el producto inactivo.
+
+
+
+#### Actualizar un producto
+
+**Objetivo:** reemplazar los datos editables de un producto existente.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID, nombre, descripcion, precio, stock, imagen y estado completo del producto.
+
+**Precondiciones:** el producto debe existir y los datos deben ser validos.
+
+**Flujo esperado:** se reemplazan los campos, se actualiza la fecha de modificacion y se registra la accion en auditoria.
+
+**Reglas de negocio:** aplica las mismas validaciones que la creacion; el contrato es de reemplazo completo y puede modificar stock y estado.
+
+**Resultado:** devuelve el producto actualizado.
+
+**Errores esperados:** `400 Bad Request`, `404 Not Found`, `409 Conflict` por modificacion concurrente, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no elimina el producto y no conserva automaticamente campos omitidos.
+
+
+
+#### Actualizar el stock de un producto
+
+**Objetivo:** establecer el stock disponible de un producto existente.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID del producto y valor final entero `stock`; no recibe una variacion.
+
+**Precondiciones:** el producto debe existir.
+
+**Flujo esperado:** se sustituye el stock actual por el valor recibido, se actualiza la fecha y se registra el cambio en auditoria.
+
+**Reglas de negocio:** el stock no puede ser negativo; repetir el mismo valor es idempotente; se aplica control de concurrencia optimista.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `400 Bad Request` por cantidad invalida, `404 Not Found`, `409 Conflict` por modificacion concurrente, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no modifica otros datos, no exige que el producto este activo y no registra movimientos individuales de inventario.
+
+
+
+#### Activar o desactivar un producto
+
+**Objetivo:** controlar la visibilidad y disponibilidad comercial de un producto.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID del producto y valor booleano `isActive`.
+
+**Precondiciones:** el producto debe existir.
+
+**Flujo esperado:** se cambia el estado, se actualiza la fecha y se registra la accion en auditoria.
+
+**Reglas de negocio:** repetir el estado actual es idempotente; un producto inactivo no puede agregarse al carrito ni verse publicamente.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `404 Not Found`, `409 Conflict` por modificacion concurrente, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no elimina el producto, no cambia su stock y no retira automaticamente items ya presentes en carritos.
+
+
+
+
+### Carrito y checkout
+
+#### Obtener el carrito
+
+**Objetivo:** consultar el carrito persistente del usuario.
+
+**Actor y permisos:** cualquier usuario autenticado.
+
+**Datos de entrada:** ninguno; se usa el usuario de la sesion.
+
+**Precondiciones:** la sesion debe ser valida.
+
+**Flujo esperado:** se localiza el carrito o se crea uno vacio y se calculan subtotales y total con los precios actuales.
+
+**Reglas de negocio:** existe como maximo un carrito por usuario; consultar por primera vez puede crear el carrito.
+
+**Resultado:** devuelve carrito, items, stock visible y total.
+
+**Errores esperados:** `401 Unauthorized` por sesion ausente o invalida.
+
+**Que queda explicitamente fuera:** no reserva stock y no devuelve un carrito visitante del navegador.
+
+
+
+#### Agregar un item al carrito
+
+**Objetivo:** incorporar unidades de un producto al carrito autenticado.
+
+**Actor y permisos:** cualquier usuario autenticado.
+
+**Datos de entrada:** ID de producto y cantidad positiva.
+
+**Precondiciones:** el producto debe existir, estar activo y tener stock suficiente para la cantidad total resultante.
+
+**Flujo esperado:** se crea el carrito si no existe; se agrega el item o se suma la cantidad a la ya existente.
+
+**Reglas de negocio:** no puede haber dos lineas del mismo producto; la cantidad acumulada no puede superar el stock actual.
+
+**Resultado:** devuelve el carrito actualizado.
+
+**Errores esperados:** `400 Bad Request` por cantidad invalida o stock insuficiente, `404 Not Found` si el producto no existe o esta inactivo y `401 Unauthorized`.
+
+**Que queda explicitamente fuera:** no descuenta ni reserva stock y no crea una orden.
+
+
+
+#### Actualizar un item del carrito
+
+**Objetivo:** establecer la cantidad final de un producto ya agregado.
+
+**Actor y permisos:** cualquier usuario autenticado propietario del carrito.
+
+**Datos de entrada:** ID del producto y cantidad final positiva.
+
+**Precondiciones:** deben existir el carrito y el item; el producto debe continuar activo y con stock suficiente.
+
+**Flujo esperado:** se reemplaza la cantidad y se recalculan subtotales y total.
+
+**Reglas de negocio:** la cantidad recibida no es una variacion y debe ser mayor que cero.
+
+**Resultado:** devuelve el carrito actualizado.
+
+**Errores esperados:** `400 Bad Request` por cantidad, producto inactivo o stock insuficiente, `404 Not Found` por carrito o item inexistente y `401 Unauthorized`.
+
+**Que queda explicitamente fuera:** una cantidad cero no elimina el item; debe usarse la operacion de quitar.
+
+
+
+#### Quitar un item del carrito
+
+**Objetivo:** eliminar por completo un producto del carrito.
+
+**Actor y permisos:** cualquier usuario autenticado propietario del carrito.
+
+**Datos de entrada:** ID del producto.
+
+**Precondiciones:** deben existir el carrito y el item indicado.
+
+**Flujo esperado:** se elimina la linea y se devuelve el carrito recalculado.
+
+**Reglas de negocio:** sólo se modifica el carrito del usuario de la sesion.
+
+**Resultado:** devuelve el carrito actualizado.
+
+**Errores esperados:** `404 Not Found` por carrito o item inexistente y `401 Unauthorized`.
+
+**Que queda explicitamente fuera:** no modifica el producto ni el stock.
+
+
+
+#### Vaciar el carrito
+
+**Objetivo:** eliminar todos los items del carrito autenticado.
+
+**Actor y permisos:** cualquier usuario autenticado.
+
+**Datos de entrada:** ninguno.
+
+**Precondiciones:** sólo se requiere una sesion valida.
+
+**Flujo esperado:** se eliminan todos los items si el carrito existe.
+
+**Reglas de negocio:** la operacion es idempotente; un carrito inexistente o ya vacio tambien se considera exito.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `401 Unauthorized` por sesion ausente o invalida.
+
+**Que queda explicitamente fuera:** no elimina el carrito, no cancela ordenes y no modifica stock.
+
+
+
+#### Confirmar checkout y crear la orden
+
+**Objetivo:** convertir el carrito en una orden pendiente y reservar sus unidades mediante descuento de stock.
+
+**Actor y permisos:** cualquier usuario autenticado.
+
+**Datos de entrada:** direccion de envio.
+
+**Precondiciones:** el carrito debe tener items; todos los productos deben existir, estar activos y tener stock; el usuario no debe poseer otra orden `Pending`.
+
+**Flujo esperado:** se validan nuevamente productos, precio y stock; se copian nombre y precio a las lineas de orden, se descuenta stock, se crea la orden `Pending` y se vacia el carrito dentro de una transaccion.
+
+**Reglas de negocio:** la direccion es obligatoria y admite hasta 300 caracteres; sólo puede existir una orden pendiente por usuario; el total usa precios actuales al confirmar, no precios historicos del carrito.
+
+**Resultado:** devuelve la orden creada con items, total y estado `Pending`.
+
+**Errores esperados:** `400 Bad Request` por direccion, carrito, productos o stock invalidos; `409 Conflict` si ya existe una orden pendiente; `401 Unauthorized`.
+
+**Que queda explicitamente fuera:** no crea el pago, no garantiza entrega y no mantiene los items en el carrito despues del exito.
+
+
+
 
 ### Ordenes
 
-- CrearOrdenDesdeCarrito
-- ConsultarMisOrdenes
-- ConsultarOrdenPorId
-- ConsultarTodasLasOrdenes
-- FiltrarOrdenesPorEmail
-- CancelarOrden
-- ExpirarOrdenesPendientes
-- ActualizarEstadoDeOrden
+#### Consultar mis ordenes
+
+**Objetivo:** listar el historial de ordenes del usuario autenticado.
+
+**Actor y permisos:** cualquier usuario autenticado.
+
+**Datos de entrada:** ninguno.
+
+**Precondiciones:** sesion valida.
+
+**Flujo esperado:** se filtran las ordenes por el usuario de la sesion y se ordenan de la mas reciente a la mas antigua.
+
+**Reglas de negocio:** cada resumen incluye el estado del pago mas reciente cuando existe.
+
+**Resultado:** devuelve una lista de resumenes de orden.
+
+**Errores esperados:** `401 Unauthorized`.
+
+**Que queda explicitamente fuera:** no incluye el detalle completo de items ni ordenes de otros usuarios.
+
+
+
+#### Consultar una orden por ID
+
+**Objetivo:** obtener el detalle completo de una orden.
+
+**Actor y permisos:** el propietario; `Admin` y `SuperAdmin` pueden consultar cualquier orden.
+
+**Datos de entrada:** ID de orden.
+
+**Precondiciones:** la orden debe existir.
+
+**Flujo esperado:** se carga la orden con usuario, items y pagos y se verifica su pertenencia.
+
+**Reglas de negocio:** un usuario comun sólo accede a sus propias ordenes.
+
+**Resultado:** devuelve datos de envio, estado, cancelacion, items y pagos.
+
+**Errores esperados:** `401 Unauthorized`, `403 Forbidden` si no es propietario y `404 Not Found` si no existe.
+
+**Que queda explicitamente fuera:** no actualiza el estado ni consulta informacion interna del proveedor de pagos.
+
+
+
+#### Consultar y filtrar todas las ordenes
+
+**Objetivo:** brindar una vista administrativa de las ordenes.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** email de usuario opcional como filtro.
+
+**Precondiciones:** sesion con rol administrativo.
+
+**Flujo esperado:** se consultan todas las ordenes o sólo las asociadas al email normalizado y se ordenan de la mas reciente a la mas antigua.
+
+**Reglas de negocio:** un email sin coincidencias produce una lista vacia, no un error.
+
+**Resultado:** devuelve resumenes con usuario, estado de orden y ultimo pago.
+
+**Errores esperados:** `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no pagina, no modifica ordenes y no realiza busqueda parcial por email.
+
+
+
+#### Cancelar una orden
+
+**Objetivo:** cancelar una orden pendiente y compensar sus efectos locales.
+
+**Actor y permisos:** el propietario; `Admin` y `SuperAdmin` pueden cancelar cualquier orden.
+
+**Datos de entrada:** ID de orden y motivo opcional de hasta 500 caracteres.
+
+**Precondiciones:** la orden debe existir y estar `Pending`, salvo que ya este `Canceled`.
+
+**Flujo esperado:** se marca `Canceled`, se cancelan pagos `Creating` o `Pending`, se repone el stock y se audita la accion.
+
+**Reglas de negocio:** repetir la cancelacion es idempotente; este flujo no cancela ordenes pagadas, enviadas o reembolsadas.
+
+**Resultado:** devuelve la orden cancelada.
+
+**Errores esperados:** `400 Bad Request` por motivo invalido, `401 Unauthorized`, `403 Forbidden`, `404 Not Found` y `409 Conflict` por estado incompatible.
+
+**Que queda explicitamente fuera:** no solicita reembolsos al proveedor ni cancela una orden ya pagada.
+
+
+
+#### Expirar ordenes pendientes
+
+**Objetivo:** cancelar administrativamente ordenes pendientes antiguas.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** antiguedad minima `olderThanMinutes`.
+
+**Precondiciones:** el umbral debe ser mayor que cero.
+
+**Flujo esperado:** se seleccionan ordenes `Pending` anteriores al corte, se cancelan, se cancelan pagos activos, se repone stock y se audita cada orden.
+
+**Reglas de negocio:** sólo afecta ordenes pendientes; el corte se calcula en UTC desde la fecha de creacion.
+
+**Resultado:** devuelve la cantidad de ordenes canceladas.
+
+**Errores esperados:** `400 Bad Request` por umbral invalido, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no se ejecuta automaticamente y no expira pagos u ordenes con otros estados.
+
+
+
+#### Actualizar el estado de una orden
+
+**Objetivo:** ejecutar las transiciones administrativas permitidas.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID de orden y estado destino.
+
+**Precondiciones:** la orden debe existir y la transicion debe ser valida.
+
+**Flujo esperado:** se valida el estado; para cancelar se compensa stock y pagos; para enviar se cambia el estado; finalmente se audita.
+
+**Reglas de negocio:** sólo se permiten `Pending -> Canceled` y `Paid -> Shipped`; repetir el estado actual es idempotente; pago y reembolso pertenecen al flujo de pagos.
+
+**Resultado:** responde `204 No Content`.
+
+**Errores esperados:** `400 Bad Request` por estado invalido, `404 Not Found`, `409 Conflict` por transicion invalida, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no puede marcar manualmente una orden como `Paid` o `Refunded`.
+
+
+
 
 ### Pagos
 
-- CrearPagoParaOrdenPendienteActual
-- CrearPreferenciaMercadoPago
-- ConsultarPago
-- ConsultarPagosDeOrden
-- ProcesarWebhookMercadoPago
-- ValidarFirmaWebhook
-- AplicarEstadoDePago
-- ReutilizarPagoPorIdempotencia
+#### Crear un pago para una orden
 
-### Infraestructura y calidad
+**Objetivo:** crear o reutilizar el intento de pago activo de una orden pendiente.
 
-- AplicarMigraciones
-- InicializarDatosBase
-- EjecutarTestsAutomatizados
-- EjecutarBuildYTestsEnCI
+**Actor y permisos:** propietario de la orden; `Admin` y `SuperAdmin` pueden operar cualquier orden.
+
+**Datos de entrada:** ID de orden, proveedor opcional y clave de idempotencia opcional.
+
+**Precondiciones:** la orden debe existir y admitir pagos; el proveedor debe estar configurado.
+
+**Flujo esperado:** se valida pertenencia y estado, se reutiliza un pago idempotente o activo, o se reserva uno en estado `Creating`; luego el gateway crea la preferencia y el pago pasa a `Pending` con su URL de checkout.
+
+**Reglas de negocio:** el importe y moneda se toman de la orden (`ARS`); sólo existe un pago `Creating` o `Pending` por orden; una clave no puede reutilizarse entre ordenes; reservas `Creating` estancadas pueden retomarse; sin proveedor se usa `Mock`.
+
+**Resultado:** devuelve el pago; puede responder `202 Accepted` mientras siga `Creating` o `200 OK` cuando haya un estado reutilizable o preferencia creada.
+
+**Errores esperados:** `400 Bad Request` por proveedor, clave o gateway invalidos; `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` por orden o clave incompatibles y `429 Too Many Requests`.
+
+**Que queda explicitamente fuera:** no aprueba el pago por si mismo y no permite pagar ordenes canceladas, enviadas o ya pagadas.
+
+
+
+#### Consultar un pago
+
+**Objetivo:** obtener el estado y los identificadores de un pago.
+
+**Actor y permisos:** propietario de la orden; `Admin` o `SuperAdmin` pueden consultar cualquiera.
+
+**Datos de entrada:** ID de pago.
+
+**Precondiciones:** el pago debe existir.
+
+**Flujo esperado:** se carga el pago con su orden y se verifica pertenencia.
+
+**Reglas de negocio:** la visibilidad se determina por el propietario de la orden.
+
+**Resultado:** devuelve proveedor, referencias, importe, estado, URL y fechas.
+
+**Errores esperados:** `401 Unauthorized`, `403 Forbidden` y `404 Not Found`.
+
+**Que queda explicitamente fuera:** no consulta en tiempo real al proveedor ni cambia el estado.
+
+
+
+#### Consultar los pagos de una orden
+
+**Objetivo:** listar todos los intentos de pago asociados a una orden.
+
+**Actor y permisos:** propietario de la orden; `Admin` o `SuperAdmin` pueden consultar cualquiera.
+
+**Datos de entrada:** ID de orden.
+
+**Precondiciones:** la orden debe existir.
+
+**Flujo esperado:** se verifica pertenencia y se devuelven los pagos del mas reciente al mas antiguo.
+
+**Reglas de negocio:** una orden sin pagos devuelve una lista vacia.
+
+**Resultado:** devuelve la lista de pagos.
+
+**Errores esperados:** `401 Unauthorized`, `403 Forbidden` y `404 Not Found`.
+
+**Que queda explicitamente fuera:** no consolida intentos ni crea un nuevo pago.
+
+
+
+#### Actualizar administrativamente el estado de un pago
+
+**Objetivo:** aplicar manualmente una transicion permitida de pago para soporte o pruebas operativas.
+
+**Actor y permisos:** `Admin` o `SuperAdmin` autenticado.
+
+**Datos de entrada:** ID, estado, ID del proveedor opcional y motivo de fallo opcional.
+
+**Precondiciones:** el pago debe existir y la transicion debe ser compatible con el pago y la orden.
+
+**Flujo esperado:** se valida el estado, se aplican los efectos sobre la orden y se registra la accion en auditoria.
+
+**Reglas de negocio:** aprobar marca la orden como `Paid`; rechazar, cancelar o expirar mantiene la coherencia definida por el aplicador; un reembolso sólo puede confirmarse desde una notificacion del proveedor.
+
+**Resultado:** devuelve el pago actualizado.
+
+**Errores esperados:** `400 Bad Request` por datos invalidos, `404 Not Found`, `409 Conflict` por transicion incompatible, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no ejecuta un cobro ni un reembolso remoto y no permite simular manualmente la confirmacion de un reembolso.
+
+
+
+#### Procesar un webhook de Mercado Pago
+
+**Objetivo:** sincronizar el pago y la orden con el estado confirmado por Mercado Pago.
+
+**Actor y permisos:** Mercado Pago como sistema externo; endpoint anonimo protegido por firma cuando existe un secreto configurado y por rate limiting.
+
+**Datos de entrada:** `data.id` en query o cuerpo, `x-signature` y `x-request-id` cuando la firma esta habilitada.
+
+**Precondiciones:** la integracion debe estar habilitada, el ID debe existir y debe haber un pago local correlacionable por proveedor, referencia externa y orden.
+
+**Flujo esperado:** se extrae el ID, se valida HMAC-SHA256, se consulta el pago al gateway, se valida referencia, importe y moneda, y se aplica idempotentemente el estado informado.
+
+**Reglas de negocio:** nunca se confia sólo en el cuerpo del webhook; la informacion se vuelve a consultar al proveedor; un reembolso total restaura stock sólo si la orden no fue enviada; un reembolso parcial se marca para gestion manual.
+
+**Resultado:** responde `200 OK` con `received: true` y actualiza pago, orden, stock y auditoria cuando corresponda.
+
+**Errores esperados:** `400 Bad Request` por ID o datos del proveedor invalidos, `401 Unauthorized` por firma invalida, `404 Not Found` si la integracion o pago local no existe, `409 Conflict` por importe, moneda o estados incompatibles y `429 Too Many Requests`.
+
+**Que queda explicitamente fuera:** no inicia pagos, no confia en estados enviados sin verificacion y no resuelve automaticamente reembolsos parciales.
+
+
+
+
+### Auditoria
+
+#### Consultar el registro de auditoria
+
+**Objetivo:** revisar cambios administrativos sensibles y su contexto.
+
+**Actor y permisos:** `SuperAdmin` autenticado.
+
+**Datos de entrada:** pagina, tamaño de pagina y filtros opcionales por accion, entidad, ID, actor y rango UTC.
+
+**Precondiciones:** pagina mayor o igual a uno, tamaño entre 1 y 100 y rango de fechas coherente.
+
+**Flujo esperado:** se aplican filtros exactos, se ordena por fecha e ID descendentes y se pagina el resultado.
+
+**Reglas de negocio:** las fechas se interpretan en UTC; la consulta es de solo lectura.
+
+**Resultado:** devuelve items, pagina, tamaño, total de registros y total de paginas.
+
+**Errores esperados:** `400 Bad Request` por paginacion o fechas invalidas, `401 Unauthorized` y `403 Forbidden`.
+
+**Que queda explicitamente fuera:** no modifica ni elimina eventos y no reemplaza los logs tecnicos de aplicacion.
+
+
+
+### Capacidades operativas y de calidad
+
+Estas operaciones sostienen el sistema, pero no son casos de uso iniciados por un cliente de la API.
+
+
+
+#### Aplicar migraciones e inicializar datos base
+
+**Objetivo:** llevar la base al esquema esperado y asegurar los datos minimos de operacion.
+
+**Actor y permisos:** proceso de arranque con credenciales de base de datos y configuracion que habilite la inicializacion.
+
+**Datos de entrada:** cadena de conexion, migraciones compiladas y opciones de inicializacion.
+
+**Precondiciones:** SQL Server disponible y permisos suficientes sobre la base.
+
+**Flujo esperado:** se aplican migraciones pendientes y se crean roles y datos iniciales requeridos de forma controlada.
+
+**Reglas de negocio:** la inicializacion depende del ambiente y de `DatabaseInitialization:Enabled`; los secretos no deben almacenarse en el repositorio.
+
+**Resultado:** la aplicacion inicia sobre un esquema compatible o falla explicitamente.
+
+**Errores esperados:** error de arranque por conexion, permisos, configuracion o migracion incompatible.
+
+**Que queda explicitamente fuera:** no reemplaza backups, restauraciones ni una estrategia de despliegue sin interrupciones.
+
+
+
+#### Ejecutar validaciones automatizadas
+
+**Objetivo:** detectar regresiones del backend y frontend antes de integrar cambios.
+
+**Actor y permisos:** desarrollador local o agente de CI con acceso al codigo y dependencias.
+
+**Datos de entrada:** codigo fuente, configuracion de pruebas y servicios externos requeridos por tests de integracion.
+
+**Precondiciones:** SDK de .NET, Node.js, pnpm y dependencias instaladas; SQL Server cuando la suite lo requiera.
+
+**Flujo esperado:** se compila y prueba la solucion; en frontend se ejecutan lint, typecheck, tests y build; CI repite los controles configurados.
+
+**Reglas de negocio:** un control fallido debe bloquear la integracion; los tests no deben depender de secretos productivos.
+
+**Resultado:** evidencia reproducible de controles aprobados o detalle del fallo.
+
+**Errores esperados:** compilacion fallida, test fallido, lint o typecheck fallido, dependencia ausente o servicio de integracion no disponible.
+
+**Que queda explicitamente fuera:** no demuestra ausencia total de defectos y no sustituye pruebas exploratorias, revision de seguridad ni observabilidad en produccion.
 Backend para un e-commerce de productos de gimnasio construido con .NET, ASP.NET Core, Entity Framework Core y SQL Server. El proyecto aplica una arquitectura por capas con separacion entre API, Application, Domain, Infrastructure y Tests.
+
+
 
 ## Caracteristicas principales
 
@@ -491,7 +1301,7 @@ La consulta de auditoria es de solo lectura y exclusiva para SuperAdmin. Admite 
 ## Requisitos
 
 - .NET 10 SDK
-- SQL Server LocalDB o SQL Server
+- PostgreSQL 17 local, en Docker o una base alojada en Neon
 - Cuenta de Mercado Pago Developers para probar Checkout Pro
 
 ## Configuracion local
@@ -828,7 +1638,7 @@ docker compose --env-file .env.docker down --volumes
 ```
 
 Usar `--volumes` solamente cuando se quiera borrar deliberadamente toda la base local
-de Docker. No afecta una base LocalDB ni una futura base alojada en RDS.
+de Docker. No afecta las bases alojadas en Neon.
 
 ## Tests
 
@@ -836,12 +1646,12 @@ de Docker. No afecta una base LocalDB ni una futura base alojada en RDS.
 dotnet test GymShop.slnx
 ```
 
-Los tests con `Category=Integration` levantan el pipeline HTTP real y/o verifican comportamiento propio de SQL Server. En Windows usan LocalDB por defecto. En Linux, CI o cuando se prefiera una instancia completa, definir una conexion administrativa en `GYMSHOP_TEST_SQLSERVER`; cada test crea una base aislada, aplica todas las migraciones desde cero y la elimina al terminar.
+Los tests con `Category=Integration` levantan el pipeline HTTP real y verifican el comportamiento de PostgreSQL, incluidas las restricciones, transacciones y actualizaciones concurrentes mediante `xmin`. Por defecto se conectan a PostgreSQL en `localhost:5432`. Tambien se puede definir una conexion administrativa mediante `GYMSHOP_TEST_POSTGRES`; cada test crea una base aislada, aplica todas las migraciones desde cero y la elimina al terminar. La cuenta utilizada debe tener permiso para crear y eliminar bases de datos.
 
 Ejemplo sin credenciales reales:
 
 ```powershell
-$env:GYMSHOP_TEST_SQLSERVER="Server=<HOST>,1433;Database=master;User Id=<USUARIO>;Password=<PASSWORD>;TrustServerCertificate=True"
+$env:GYMSHOP_TEST_POSTGRES="Host=<HOST>;Port=5432;Database=postgres;Username=<USUARIO>;Password=<PASSWORD>"
 dotnet test GymShop.slnx --configuration Release --filter "Category=Integration"
 ```
 

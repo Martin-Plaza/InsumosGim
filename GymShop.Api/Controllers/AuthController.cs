@@ -44,6 +44,15 @@ public class AuthController : ApiControllerBase
         _requestLimiter = requestLimiter;
     }
 
+    /*
+        * EnableRateLimiting es un atributo de .net para aplicar politicas, en este caso por IP, que esta declarado en program.cs
+        * producesResponseType describe el contrato del endpoint, es decir, que respuestas podria devolver.
+        * el DTO RegistrationPendingResponse devolverá (string Email, int ExpiresInSeconds, string? DevelopmentCode)
+        * la funcion register espera registerRequest (name, lastname, email y password)
+        * decision le pasa la politica a acquire, y valida si puede seguir, en el caso de que no, devuelve el ratelimitResponse (declarado en gymshopRequestLimiter.cs)
+        * si pasa va paea AuthUseCases.cs
+
+     */
     [HttpPost("register")]
     [EnableRateLimiting(RateLimitPolicies.RegistrationIp)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
@@ -54,20 +63,28 @@ public class AuthController : ApiControllerBase
         return FromResult(await _registerUser.ExecuteAsync(request, cancellationToken));
     }
 
+
+
     [HttpPost("verify-email")]
     [EnableRateLimiting(RateLimitPolicies.RegistrationIp)]
     public async Task<ActionResult<AuthResponse>> VerifyEmail(VerifyEmailRequest request, CancellationToken cancellationToken) =>
         FromResult(await _verifyEmail.ExecuteAsync(request, cancellationToken));
+
+
 
     [HttpPost("resend-verification")]
     [EnableRateLimiting(RateLimitPolicies.RegistrationIp)]
     public async Task<ActionResult<RegistrationPendingResponse>> ResendVerification(ResendVerificationRequest request, CancellationToken cancellationToken) =>
         FromResult(await _resendVerification.ExecuteAsync(request, cancellationToken));
 
+
+
     [HttpPost("google")]
     [EnableRateLimiting(RateLimitPolicies.LoginIp)]
     public async Task<ActionResult<AuthResponse>> Google(GoogleLoginRequest request, CancellationToken cancellationToken) =>
         FromResult(await _googleLogin.ExecuteAsync(request, cancellationToken));
+
+
 
     [HttpPost("login")]
     [EnableRateLimiting(RateLimitPolicies.LoginIp)]
@@ -80,6 +97,8 @@ public class AuthController : ApiControllerBase
         return FromResult(await _loginUser.ExecuteAsync(request, cancellationToken));
     }
 
+
+
     [HttpPost("forgot-password")]
     [EnableRateLimiting(RateLimitPolicies.PasswordResetIp)]
     [ProducesResponseType(typeof(PasswordResetPendingResponse), StatusCodes.Status200OK)]
@@ -91,6 +110,8 @@ public class AuthController : ApiControllerBase
         return FromResult(await _requestPasswordReset.ExecuteAsync(request, cancellationToken));
     }
 
+
+
     [HttpPost("reset-password")]
     [EnableRateLimiting(RateLimitPolicies.PasswordResetIp)]
     [ProducesResponseType(typeof(PasswordResetCompletedResponse), StatusCodes.Status200OK)]
@@ -101,6 +122,7 @@ public class AuthController : ApiControllerBase
         if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
         return FromResult(await _confirmPasswordReset.ExecuteAsync(request, cancellationToken));
     }
+
 
     [Authorize]
     [HttpGet("me")]

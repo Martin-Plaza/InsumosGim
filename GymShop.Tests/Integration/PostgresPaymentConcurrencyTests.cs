@@ -4,18 +4,16 @@ using GymShop.Application.UseCases.Payments;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using GymShop.Infrastructure.Data;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Npgsql;
 
 namespace GymShop.Tests.Integration;
 
 [Trait("Category", "Integration")]
-[Trait("Category", "SqlServer")]
+[Trait("Category", "Postgres")]
 [Trait("Category", "Concurrency")]
-public sealed class SqlServerPaymentConcurrencyTests
+public sealed class PostgresPaymentConcurrencyTests
 {
     [Fact]
     public async Task Concurrent_requests_with_same_key_create_one_payment_and_call_gateway_once()
@@ -157,45 +155,6 @@ public sealed class SqlServerPaymentConcurrencyTests
         Assert.Single(await verification.Payments.ToListAsync());
     }
 
-    [Fact]
-    public async Task Migration_stops_when_duplicate_pending_payments_exist_without_changing_them()
-    {
-        await using var database = await SqlTestDatabase.CreateAtPreviousMigrationAsync();
-        var seed = await database.SeedPendingOrderUsingPreviousSchemaAsync();
-        await using (var seedContext = database.CreateContext())
-        {
-            seedContext.Payments.AddRange(
-                CreatePayment(seed.OrderId, "duplicate-1", PaymentStatus.Pending),
-                CreatePayment(seed.OrderId, "duplicate-2", PaymentStatus.Pending));
-            await seedContext.SaveChangesAsync();
-        }
-
-        await using (var migrationContext = database.CreateContext())
-        {
-            var migrator = migrationContext.GetService<IMigrator>();
-            var exception = await Assert.ThrowsAnyAsync<Exception>(() => migrator.MigrateAsync());
-            Assert.Contains("duplicate active payments", exception.ToString(), StringComparison.OrdinalIgnoreCase);
-        }
-
-        await using var verification = database.CreateContext();
-        Assert.Equal(2, await verification.Payments.CountAsync(x => x.Status == PaymentStatus.Pending));
-        Assert.Contains("20260805170009_EnforceSingleActivePaymentPerOrder", await verification.Database.GetPendingMigrationsAsync());
-    }
-
-    [Fact]
-    public async Task Migration_down_removes_active_index_and_can_be_applied_again()
-    {
-        await using var database = await SqlTestDatabase.CreateMigratedAsync();
-        await using var db = database.CreateContext();
-        var migrator = db.GetService<IMigrator>();
-
-        await migrator.MigrateAsync("20260804190221_AddUserTokenVersion");
-        Assert.Contains("20260805170009_EnforceSingleActivePaymentPerOrder", await db.Database.GetPendingMigrationsAsync());
-
-        await migrator.MigrateAsync();
-        Assert.DoesNotContain("20260805170009_EnforceSingleActivePaymentPerOrder", await db.Database.GetPendingMigrationsAsync());
-    }
-
     private static async Task<(GymShop.Application.Common.AppResult<PaymentResponse> Winner, GymShop.Application.Common.AppResult<PaymentResponse> Loser)>
         RunOverlappingRequestsAsync(
             SqlTestDatabase database,
@@ -319,7 +278,6 @@ public sealed class SqlServerPaymentConcurrencyTests
 
 internal sealed class SqlTestDatabase : IAsyncDisposable
 {
-    private const string PreviousMigration = "20260804190221_AddUserTokenVersion";
     private readonly string _connectionString;
 
     private SqlTestDatabase(string connectionString)
@@ -327,13 +285,12 @@ internal sealed class SqlTestDatabase : IAsyncDisposable
         _connectionString = connectionString;
     }
 
-    public static Task<SqlTestDatabase> CreateMigratedAsync() => CreateAsync(null);
-    public static Task<SqlTestDatabase> CreateAtPreviousMigrationAsync() => CreateAsync(PreviousMigration);
+    public static Task<SqlTestDatabase> CreateMigratedAsync() => CreateAsync();
 
     public GymShopDbContext CreateContext(params IInterceptor[] interceptors)
     {
         var builder = new DbContextOptionsBuilder<GymShopDbContext>()
-            .UseSqlServer(_connectionString);
+            .UseNpgsql(_connectionString);
         if (interceptors.Length > 0)
         {
             builder.AddInterceptors(interceptors);
@@ -349,15 +306,15 @@ internal sealed class SqlTestDatabase : IAsyncDisposable
         var role = await db.Roles.SingleAsync(x => x.Name == "User");
         var user = new User
         {
-            Email = $"sql-{Guid.NewGuid():N}@test.com",
-            Name = "SQL Test",
+            Email = $"postgres-{Guid.NewGuid():N}@test.com",
+            Name = "Postgres Test",
             PasswordHash = "not-used",
             RoleId = role.Id,
             IsActive = true
         };
         var product = new Product
         {
-            Name = $"SQL Product {Guid.NewGuid():N}",
+            Name = $"Postgres Product {Guid.NewGuid():N}",
             Price = 100,
             Stock = 4,
             IsActive = true
@@ -370,7 +327,7 @@ internal sealed class SqlTestDatabase : IAsyncDisposable
             User = user,
             Status = OrderStatus.Pending,
             Total = 100,
-            ShippingAddress = "SQL Test Address"
+            ShippingAddress = "Postgres Test Address"
         };
         order.Items.Add(new OrderItem
         {
@@ -386,50 +343,23 @@ internal sealed class SqlTestDatabase : IAsyncDisposable
         return new SeedResult(user.Id, order.Id);
     }
 
-    public async Task<SeedResult> SeedPendingOrderUsingPreviousSchemaAsync()
-    {
-        await using var db = CreateContext();
-        var email = $"legacy-{Guid.NewGuid():N}@test.com";
-        await db.Database.ExecuteSqlInterpolatedAsync($$"""
-            INSERT INTO Users (Email, PasswordHash, Name, IsActive, RoleId, TokenVersion)
-            VALUES ({{email}}, 'not-used', 'Legacy SQL Test', 1, 1, 0);
-            DECLARE @UserId int = SCOPE_IDENTITY();
-
-            INSERT INTO Products (Name, Price, Stock, IsActive)
-            VALUES ('Legacy SQL Product', 100, 4, 1);
-            DECLARE @ProductId int = SCOPE_IDENTITY();
-
-            INSERT INTO Orders (UserId, Total, Status, ShippingAddress)
-            VALUES (@UserId, 100, 'Pending', 'Legacy SQL Test Address');
-            DECLARE @OrderId int = SCOPE_IDENTITY();
-
-            INSERT INTO OrderItems (OrderId, ProductId, ProductName, UnitPrice, Quantity, Subtotal)
-            VALUES (@OrderId, @ProductId, 'Legacy SQL Product', 100, 1, 100);
-            """);
-
-        var userId = await db.Users.AsNoTracking().Where(x => x.Email == email).Select(x => x.Id).SingleAsync();
-        var orderId = await db.Orders.AsNoTracking().Where(x => x.UserId == userId).Select(x => x.Id).SingleAsync();
-        return new SeedResult(userId, orderId);
-    }
-
     public async ValueTask DisposeAsync()
     {
         await using var db = CreateContext();
         await db.Database.EnsureDeletedAsync();
     }
 
-    private static async Task<SqlTestDatabase> CreateAsync(string? targetMigration)
+    private static async Task<SqlTestDatabase> CreateAsync()
     {
-        var baseConnection = Environment.GetEnvironmentVariable("GYMSHOP_TEST_SQLSERVER") ??
-            "Server=(localdb)\\MSSQLLocalDB;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
-        var builder = new SqlConnectionStringBuilder(baseConnection)
+        var baseConnection = Environment.GetEnvironmentVariable("GYMSHOP_TEST_POSTGRES") ??
+            "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+        var builder = new NpgsqlConnectionStringBuilder(baseConnection)
         {
-            InitialCatalog = $"GymShopPhase4Tests_{Guid.NewGuid():N}"
+            Database = $"gymshop_tests_{Guid.NewGuid():N}"
         };
         var database = new SqlTestDatabase(builder.ConnectionString);
         await using var db = database.CreateContext();
-        var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(targetMigration);
+        await db.Database.MigrateAsync();
         return database;
     }
 }

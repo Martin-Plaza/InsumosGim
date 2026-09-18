@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace GymShop.Tests.Integration;
 
 [Trait("Category", "Integration")]
-[Trait("Category", "SqlServer")]
-public sealed class SqlServerBehaviorTests
+[Trait("Category", "Postgres")]
+public sealed class PostgresBehaviorTests
 {
     [Fact]
     public async Task Empty_database_applies_all_migrations_and_translates_audit_query()
@@ -34,7 +34,7 @@ public sealed class SqlServerBehaviorTests
     }
 
     [Fact]
-    public async Task Sql_server_enforces_single_pending_order_and_product_checks_and_lengths()
+    public async Task Postgres_enforces_single_pending_order_and_product_checks_and_lengths()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         var seed = await database.SeedPendingOrderAsync();

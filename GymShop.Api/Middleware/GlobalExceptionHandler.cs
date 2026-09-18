@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Api.Middleware;
 
+//este handler maneja las excepciones, viene de common.aplication
+
 public sealed class GlobalExceptionHandler : IExceptionHandler
 {
     private readonly IProblemDetailsService _problemDetailsService;

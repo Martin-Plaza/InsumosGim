@@ -3,6 +3,7 @@ using System;
 using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace GymShop.Infrastructure.Data.PostgresMigrations
 {
     [DbContext(typeof(GymShopDbContext))]
-    partial class GymShopDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260910144849_InitialPostgreSql")]
+    partial class InitialPostgreSql
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

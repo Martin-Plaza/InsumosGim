@@ -38,7 +38,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.NewValue).HasMaxLength(2000);
             entity.Property(x => x.Reason).HasMaxLength(500);
             entity.Property(x => x.CorrelationId).HasMaxLength(100).IsRequired();
-            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.CreatedAtUtc);
             entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.ActorUserId, x.CreatedAtUtc });
@@ -72,7 +72,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.Phone).HasMaxLength(50);
             entity.Property(x => x.Address).HasMaxLength(300);
             entity.Property(x => x.TokenVersion).HasDefaultValue(0);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.Email).IsUnique();
 
             entity
@@ -87,7 +87,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.ToTable("EmailVerificationCodes");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.CodeHash).HasMaxLength(64).IsRequired();
-            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
             entity.HasOne(x => x.User).WithMany(x => x.EmailVerificationCodes).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -97,7 +97,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.ToTable("PasswordResetCodes");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.CodeHash).HasMaxLength(500).IsRequired();
-            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
             entity.HasOne(x => x.User).WithMany(x => x.PasswordResetCodes).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -108,7 +108,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Provider).HasMaxLength(50).IsRequired();
             entity.Property(x => x.ProviderSubject).HasMaxLength(255).IsRequired();
-            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => new { x.Provider, x.ProviderSubject }).IsUnique();
             entity.HasIndex(x => new { x.UserId, x.Provider }).IsUnique();
             entity.HasOne(x => x.User).WithMany(x => x.ExternalLogins).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -118,15 +118,15 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         {
             entity.ToTable("Products", table =>
             {
-                table.HasCheckConstraint("CK_Products_Price_Positive", "[Price] > 0");
-                table.HasCheckConstraint("CK_Products_Stock_NonNegative", "[Stock] >= 0");
+                table.HasCheckConstraint("CK_Products_Price_Positive", "\"Price\" > 0");
+                table.HasCheckConstraint("CK_Products_Stock_NonNegative", "\"Stock\" >= 0");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(150).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(1000);
             entity.Property(x => x.Price).HasPrecision(18, 2);
             entity.Property(x => x.ImageUrl).HasMaxLength(500);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.Property(x => x.RowVersion).IsRowVersion();
         });
@@ -142,13 +142,13 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .IsRequired();
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
             entity.Property(x => x.CancellationReason).HasMaxLength(500);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(x => x.UserId);
             entity.HasIndex(x => x.UserId)
                 .IsUnique()
                 .HasDatabaseName("UX_Orders_UserId_Pending")
-                .HasFilter("[Status] = 'Pending'");
+                .HasFilter("\"Status\" = 'Pending'");
 
             entity
                 .HasOne(x => x.User)
@@ -161,7 +161,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         {
             entity.ToTable("Carts");
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.UserId).IsUnique();
 
             entity
@@ -175,10 +175,10 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         {
             entity.ToTable("CartItems", table =>
             {
-                table.HasCheckConstraint("CK_CartItems_Quantity_Positive", "[Quantity] > 0");
+                table.HasCheckConstraint("CK_CartItems_Quantity_Positive", "\"Quantity\" > 0");
             });
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => new { x.CartId, x.ProductId }).IsUnique();
 
             entity
@@ -212,18 +212,18 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .IsRequired();
             entity.Property(x => x.CheckoutUrl).HasMaxLength(500);
             entity.Property(x => x.FailureReason).HasMaxLength(500);
-            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.ExternalReference);
-            entity.HasIndex(x => new { x.Provider, x.ProviderPreferenceId }).HasFilter("[ProviderPreferenceId] IS NOT NULL");
-            entity.HasIndex(x => new { x.Provider, x.ProviderPaymentId }).HasFilter("[ProviderPaymentId] IS NOT NULL");
+            entity.HasIndex(x => new { x.Provider, x.ProviderPreferenceId }).HasFilter("\"ProviderPreferenceId\" IS NOT NULL");
+            entity.HasIndex(x => new { x.Provider, x.ProviderPaymentId }).HasFilter("\"ProviderPaymentId\" IS NOT NULL");
             entity.HasIndex(x => x.IdempotencyKey)
                 .IsUnique()
                 .HasDatabaseName("UX_Payments_IdempotencyKey")
-                .HasFilter("[IdempotencyKey] IS NOT NULL");
+                .HasFilter("\"IdempotencyKey\" IS NOT NULL");
             entity.HasIndex(x => x.OrderId)
                 .IsUnique()
                 .HasDatabaseName("UX_Payments_OrderId_Active")
-                .HasFilter("[Status] IN ('Creating', 'Pending')");
+                .HasFilter("\"Status\" IN ('Creating', 'Pending')");
 
             entity
                 .HasOne(x => x.Order)
@@ -235,7 +235,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         {
             entity.ToTable("OrderItems", table =>
             {
-                table.HasCheckConstraint("CK_OrderItems_Quantity_Positive", "[Quantity] > 0");
+                table.HasCheckConstraint("CK_OrderItems_Quantity_Positive", "\"Quantity\" > 0");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.ProductName).HasMaxLength(150).IsRequired();

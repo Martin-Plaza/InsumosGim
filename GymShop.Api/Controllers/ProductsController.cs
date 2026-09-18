@@ -32,22 +32,31 @@ public class ProductsController : ApiControllerBase
         _updateProductStatus = updateProductStatus;
     }
 
+
     [HttpGet]
     [ProducesResponseType(typeof(List<ProductResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+
+    //get de todos los productos, y que no esten activos
     public async Task<ActionResult<List<ProductResponse>>> GetAll(
         [FromQuery] bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
+        //variable para que admin y superadmin puedan ver los inactivos
         var canViewInactive = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+
+        //si el usuario quiere quiere ver los inactivos pero no es admin ni superadmin este if valida si esta autenticado
+        //si es verdadero usa forbid (que es sin autorizacion), si no esta autenticado avisa que necesita autenticacion.
         if (includeInactive && !canViewInactive)
         {
             return User.Identity?.IsAuthenticated == true ? Forbid() : Challenge();
         }
 
+        //retorna los productos
         return Ok(await _getProducts.ExecuteAsync(includeInactive, canViewInactive, cancellationToken));
     }
+
 
     [HttpGet("{id:int}")]
     [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status200OK)]
@@ -55,8 +64,11 @@ public class ProductsController : ApiControllerBase
     public async Task<ActionResult<ProductResponse>> GetById(int id, CancellationToken cancellationToken)
     {
         var canViewInactive = User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+        //llamada FromResult de ApiControllerBase
         return FromResult(await _getProductById.ExecuteAsync(id, canViewInactive, cancellationToken));
     }
+
+
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPost]
@@ -70,6 +82,7 @@ public class ProductsController : ApiControllerBase
             : ToErrorResponse(result.Error!);
     }
 
+
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPut("{id:int}")]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -78,12 +91,14 @@ public class ProductsController : ApiControllerBase
         return FromResult(await _updateProduct.ExecuteAsync(id, request, cancellationToken));
     }
 
+
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPatch("{id:int}/stock")]
     public async Task<ActionResult> UpdateStock(int id, UpdateProductStockRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _updateProductStock.ExecuteAsync(id, request, cancellationToken));
     }
+
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPatch("{id:int}/status")]

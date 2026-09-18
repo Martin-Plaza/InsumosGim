@@ -17,19 +17,19 @@ jobs:
     name: Backend build and tests
     runs-on: ubuntu-latest
     env:
-      GYMSHOP_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=GymShop_CI_Test_2026!;TrustServerCertificate=True"
+      GYMSHOP_TEST_POSTGRES: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
 
     services:
-      sqlserver:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+      postgres:
+        image: postgres:17
         env:
-          ACCEPT_EULA: "Y"
-          MSSQL_PID: "Developer"
-          MSSQL_SA_PASSWORD: "GymShop_CI_Test_2026!"
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
         ports:
-          - 1433:1433
+          - 5432:5432
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'GymShop_CI_Test_2026!' -C -Q 'SELECT 1' || exit 1"
+          --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 12
@@ -52,7 +52,7 @@ jobs:
       - name: Unit tests
         run: dotnet test GymShop.slnx --configuration Release --no-build --filter "Category!=Integration" --verbosity normal
 
-      - name: Full suite with SQL Server and coverage
+      - name: Full suite with PostgreSQL and coverage
         shell: pwsh
         run: |
           dotnet test GymShop.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults --verbosity normal
@@ -102,70 +102,3 @@ jobs:
 
       - name: Build
         run: pnpm build
-
-  deploy-staging:
-    name: Deploy backend to staging
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs:
-      - build-and-test
-      - frontend
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      AWS_REGION: us-east-1
-      AWS_ACCOUNT_ID: "998038918614"
-      ECR_REPOSITORY: gymshop-api
-      EC2_INSTANCE_ID: i-0ddb2b9ab191e8de5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate with AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::998038918614:role/GymShopGitHubStagingDeployRole
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push API image
-        env:
-          IMAGE_TAG: sha-${{ github.sha }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          docker build --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-      - name: Deploy image on EC2 through SSM
-        env:
-          IMAGE_TAG: sha-${{ github.sha }}
-        run: |
-          command_id=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --instance-ids "$EC2_INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy GymShop $IMAGE_TAG" \
-            --parameters "commands=sudo /opt/gymshop/deploy.sh $IMAGE_TAG" \
-            --query "Command.CommandId" \
-            --output text)
-
-          set +e
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --command-id "$command_id" \
-            --instance-id "$EC2_INSTANCE_ID"
-          wait_status=$?
-          set -e
-
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$command_id" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --query '{Status:Status,StandardOutput:StandardOutputContent,StandardError:StandardErrorContent}'
-
-          exit "$wait_status"

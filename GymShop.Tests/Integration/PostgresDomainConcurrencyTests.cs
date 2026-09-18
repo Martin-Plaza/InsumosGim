@@ -11,9 +11,9 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace GymShop.Tests.Integration;
 
 [Trait("Category", "Integration")]
-[Trait("Category", "SqlServer")]
+[Trait("Category", "Postgres")]
 [Trait("Category", "Concurrency")]
-public sealed class SqlServerDomainConcurrencyTests
+public sealed class PostgresDomainConcurrencyTests
 {
     [Fact]
     public async Task Concurrent_checkouts_cannot_sell_the_same_last_stock_twice()

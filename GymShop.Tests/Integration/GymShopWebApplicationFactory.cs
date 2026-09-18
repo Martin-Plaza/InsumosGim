@@ -6,7 +6,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Data.SqlClient;
+using Npgsql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,11 +26,11 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
     {
         _overrides = overrides ?? new Dictionary<string, string?>();
         _configureServices = configureServices;
-        var baseConnection = Environment.GetEnvironmentVariable("GYMSHOP_TEST_SQLSERVER") ??
-            "Server=(localdb)\\MSSQLLocalDB;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
-        var builder = new SqlConnectionStringBuilder(baseConnection)
+        var baseConnection = Environment.GetEnvironmentVariable("GYMSHOP_TEST_POSTGRES") ??
+            "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+        var builder = new NpgsqlConnectionStringBuilder(baseConnection)
         {
-            InitialCatalog = $"GymShopHttp_{Guid.NewGuid():N}"
+            Database = $"GymShopHttp_{Guid.NewGuid():N}"
         };
         ConnectionString = builder.ConnectionString;
     }
@@ -60,7 +60,7 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
         {
             services.RemoveAll<DbContextOptions<GymShopDbContext>>();
             services.RemoveAll<GymShopDbContext>();
-            services.AddDbContext<GymShopDbContext>(options => options.UseSqlServer(ConnectionString));
+            services.AddDbContext<GymShopDbContext>(options => options.UseNpgsql(ConnectionString));
             _configureServices?.Invoke(services);
         });
     }

@@ -28,8 +28,19 @@ export const storefront = {
     cartGuestExplanation: 'Podés armar tu carrito como visitante. Te pediremos iniciar sesión antes de comprar.',
     localCodeLabel: 'Código Mock local',
     footer: 'GymShop · Integración local con proveedor de pagos Mock',
+    categoriesEyebrow: 'ENTRENÁ A TU MANERA', categoriesTitle: 'Explorá por categoría',
+    categoriesDescription: 'Encontrá el equipo indicado para cada objetivo.', categoryAction: 'Ver productos',
+    searchPlaceholder: '¿Qué necesitás para entrenar?', filtersTitle: 'Filtrar productos',
+    filtersAction: 'Filtros', clearFilters: 'Limpiar filtros', relatedTitle: 'También te puede interesar',
+    relatedEyebrow: 'SEGUÍ ENTRENANDO', resultsLabel: 'resultados', addToCart: 'Agregar al carrito',
   },
   assets: { hero: '/images/home/hero-training.webp', campaign: '/images/home/lifestyle-kettlebell.webp' },
+  categoryVisuals: {
+    fuerza: { symbol: '01', color: '#d7ff45' },
+    'entrenamiento-funcional': { symbol: '02', color: '#ff8a5b' },
+    'yoga-movilidad': { symbol: '03', color: '#9f8cff' },
+    cardio: { symbol: '04', color: '#57d7ff' },
+  } as Record<string, { symbol: string; color: string }>,
 } as const
 
 export const money = (value: number, currency: string = storefront.market.currency) =>

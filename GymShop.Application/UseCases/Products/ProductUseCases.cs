@@ -180,7 +180,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         }
 
         var category = request.CategoryId.HasValue
-            ? await _db.Categories.SingleOrDefaultAsync(x => x.Id == request.CategoryId && x.IsActive, cancellationToken)
+            ? await _db.Categories.SingleOrDefaultAsync(x => x.Id == request.CategoryId && (x.IsActive || x.Id == product.CategoryId), cancellationToken)
             : null;
         if (request.CategoryId.HasValue && category is null)
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "La categoría indicada no existe o está inactiva.");

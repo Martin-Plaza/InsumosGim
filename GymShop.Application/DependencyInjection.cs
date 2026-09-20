@@ -1,6 +1,7 @@
 using GymShop.Application.UseCases.Auth;
 using GymShop.Application.UseCases.Audit;
 using GymShop.Application.UseCases.Carts;
+using GymShop.Application.UseCases.Categories;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Payments;
 using GymShop.Application.UseCases.Products;
@@ -26,6 +27,11 @@ public static class DependencyInjection
 
         services.AddScoped<IGetProductsUseCase, GetProductsUseCase>();
         services.AddScoped<IGetCategoriesUseCase, GetCategoriesUseCase>();
+        services.AddScoped<IGetAdminCategoriesUseCase, GetAdminCategoriesUseCase>();
+        services.AddScoped<IGetAdminCategoryByIdUseCase, GetAdminCategoryByIdUseCase>();
+        services.AddScoped<ICreateCategoryUseCase, CreateCategoryUseCase>();
+        services.AddScoped<IUpdateCategoryUseCase, UpdateCategoryUseCase>();
+        services.AddScoped<IUpdateCategoryStatusUseCase, UpdateCategoryStatusUseCase>();
         services.AddScoped<IGetProductByIdUseCase, GetProductByIdUseCase>();
         services.AddScoped<ICreateProductUseCase, CreateProductUseCase>();
         services.AddScoped<IUpdateProductUseCase, UpdateProductUseCase>();

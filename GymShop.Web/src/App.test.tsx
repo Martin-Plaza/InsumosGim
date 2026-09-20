@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -155,9 +155,10 @@ describe('flujos y permisos de la aplicación', () => {
     expect(screen.queryByText('Usuarios')).not.toBeInTheDocument()
     rendered.unmount()
     localStorage.setItem('gymshop.user', JSON.stringify({ id: 3, email: 's@gym.com', name: 'S', role: 'SuperAdmin' }))
+    window.history.replaceState(null, '', '/admin')
     render(<App />)
-    expect(screen.getByText('Administración')).toBeInTheDocument()
-    expect(screen.getByText('Usuarios')).toBeInTheDocument()
-    expect(screen.getByText('Auditoría')).toBeInTheDocument()
+    const navigation = screen.getByRole('navigation', { name: 'Navegación administrativa' })
+    expect(within(navigation).getByText('Usuarios')).toBeInTheDocument()
+    expect(within(navigation).getByText('Auditoría')).toBeInTheDocument()
   })
 })

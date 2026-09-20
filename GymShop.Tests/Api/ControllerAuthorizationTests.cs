@@ -66,4 +66,12 @@ public class ControllerAuthorizationTests
     {
         return roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
     }
+
+    [Fact]
+    public void Category_administration_is_restricted_to_admins()
+    {
+        var methods = new[] { nameof(CategoriesController.GetAdmin), nameof(CategoriesController.GetById), nameof(CategoriesController.Create), nameof(CategoriesController.Update), nameof(CategoriesController.UpdateStatus) };
+        foreach (var name in methods) Assert.Equal("Admin,SuperAdmin", typeof(CategoriesController).GetMethod(name)!.GetCustomAttribute<AuthorizeAttribute>()!.Roles);
+        Assert.Null(typeof(CategoriesController).GetMethod(nameof(CategoriesController.GetAll))!.GetCustomAttribute<AuthorizeAttribute>());
+    }
 }

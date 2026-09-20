@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminUser, AuditPage, AuthResponse, Cart, Category, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -12,6 +12,11 @@ export const api = {
   me: () => request<User>('/api/auth/me'),
   products: (includeInactive = false) => request<Product[]>(`/api/products${includeInactive ? '?includeInactive=true' : ''}`),
   categories: () => request<Category[]>('/api/categories'),
+  adminCategories: () => request<AdminCategory[]>('/api/categories/admin'),
+  adminCategory: (id: number) => request<AdminCategory>(`/api/categories/${id}`),
+  createCategory: (data: CategoryInput) => request<AdminCategory>('/api/categories', json('POST', data)),
+  updateCategory: (id: number, data: CategoryInput) => request<AdminCategory>(`/api/categories/${id}`, json('PUT', data)),
+  setCategoryStatus: (id: number, isActive: boolean) => request<void>(`/api/categories/${id}/status`, json('PATCH', { isActive })),
   product: (id: number) => request<Product>(`/api/products/${id}`),
   createProduct: (data: CreateProductInput) => request<Product>('/api/products', json('POST', data)),
   updateProduct: (id: number, data: UpdateProductInput) => request<Product>(`/api/products/${id}`, json('PUT', data)),

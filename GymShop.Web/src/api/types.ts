@@ -10,6 +10,8 @@ export interface AdminUser extends User { isActive: boolean; createdAt: string }
 export interface AuthResponse { token: string; user: User }
 export interface CategorySummary { id: number; name: string; slug: string }
 export interface Category extends CategorySummary { description: string | null; displayOrder: number }
+export interface AdminCategory extends Category { isActive: boolean; productCount: number }
+export interface CategoryInput { name: string; slug: string; description: string | null; displayOrder: number }
 export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null }
 export interface ProductWrite { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
 export type CreateProductInput = ProductWrite

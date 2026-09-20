@@ -14,9 +14,9 @@ import { useCart } from './features/cart/useCart'
 import { CheckoutPage } from './features/checkout/CheckoutPage'
 import { CheckoutResultPage } from './features/checkout/CheckoutResultPage'
 import { Home } from './features/home/Home'
+import { money, storefront } from './config/storefront'
 
-const money = (value: number, currency = 'ARS') => new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(value)
-const date = (value: string) => new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+const date = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const roleAtLeastAdmin = (user: User | null) => user?.role === 'Admin' || user?.role === 'SuperAdmin'
 const stateLabel: Record<string, string> = { Pending: 'Pendiente', Paid: 'Pagada', Shipped: 'Enviada', Canceled: 'Cancelada', Refunded: 'Reembolsada', Creating: 'Creando pago', CreationFailed: 'Falló la creación', Approved: 'Aprobado', Rejected: 'Rechazado', Expired: 'Vencido' }
 
@@ -47,9 +47,9 @@ function AppShell() {
 
   return <div className="app">
     <header>
-      <Link className="brand" to="/"><span>G</span> GymShop</Link>
+      <Link className="brand" to="/">{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</Link>
       <nav aria-label="Navegación principal">
-        <NavLink to="/catalogo">Catálogo</NavLink>
+        <NavLink to="/catalogo">{storefront.copy.catalogNav}</NavLink>
         {user && <NavLink to="/ordenes">Órdenes</NavLink>}
         {roleAtLeastAdmin(user) && <NavLink to="/admin/productos">Administración</NavLink>}
         {user?.role === 'SuperAdmin' && <NavLink to="/admin/usuarios">Usuarios</NavLink>}
@@ -79,7 +79,7 @@ function AppShell() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </main>
-    <footer>GymShop · Integración local con proveedor de pagos Mock</footer>
+    <footer>{storefront.copy.footer}</footer>
   </div>
 }
 
@@ -103,7 +103,7 @@ function OrdersView({ admin, run }: { admin: boolean; run: (a: () => Promise<voi
   return <section><div className="section-title"><div><p className="eyebrow">SEGUIMIENTO</p><h1>{admin ? 'Órdenes' : 'Mis órdenes'}</h1></div>{admin && <form onSubmit={e => { e.preventDefault(); void load() }}><input placeholder="Filtrar por email" value={email} onChange={e => setEmail(e.target.value)} /><button>Buscar</button></form>}</div>
     {orders.length === 0 ? <Empty>No hay órdenes para mostrar.</Empty> : <div className="list">{orders.map(order => <button className="order-row" key={order.id} onClick={() => void open(order.id)}><b>#{order.id}</b><span>{date(order.createdAt)}</span>{order.userEmail && <span>{order.userEmail}</span>}<strong>{money(order.total)}</strong><span className="order-state"><small>Orden</small><Status value={order.status} /></span><span className="order-state"><small>Pago</small><Status value={order.lastPaymentStatus} /></span></button>)}</div>}
     {detail && <div className="drawer"><button className="close" onClick={() => setDetail(null)}>×</button><p className="eyebrow">ORDEN #{detail.id}</p><h2>{money(detail.total)}</h2><Status value={detail.status} /><p>{detail.shippingAddress}</p><div className="list">{detail.items.map(i => <div className="list-row" key={i.productId}><span>{i.quantity} × {i.productName}</span><strong>{money(i.subtotal)}</strong></div>)}</div>
-      {detail.status === 'Pending' && <div className="actions"><button className="primary" onClick={() => void pay(detail.id)}>Crear / consultar pago Mock</button><button onClick={() => void run(async () => { setDetail(await api.cancelOrder(detail.id, 'Cancelada desde el frontend')); await load() })}>Cancelar orden</button></div>}
+      {detail.status === 'Pending' && <div className="actions"><button className="primary" onClick={() => void pay(detail.id)}>{storefront.copy.orderPaymentAction}</button><button onClick={() => void run(async () => { setDetail(await api.cancelOrder(detail.id, 'Cancelada desde el frontend')); await load() })}>Cancelar orden</button></div>}
       <h3>Pagos</h3>{payments.length === 0 ? <p>Sin pagos.</p> : payments.map(p => <div className="payment" key={p.id}><span>#{p.id} · {p.provider}</span><Status value={p.status} />{p.status === 'Creating' && !p.checkoutUrl && <small>El pago se está creando. Consultá nuevamente en unos instantes.</small>}{p.failureReason && <small>{p.failureReason}</small>}{admin && <button onClick={() => void run(async () => setPayments(await api.orderPayments(detail.id)))}>Actualizar</button>}</div>)}
     </div>}
   </section>

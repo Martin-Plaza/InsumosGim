@@ -8,7 +8,12 @@ export interface PasswordResetPending { message: string; expiresInSeconds: numbe
 export interface PasswordResetCompleted { message: string }
 export interface AdminUser extends User { isActive: boolean; createdAt: string }
 export interface AuthResponse { token: string; user: User }
-export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean }
+export interface CategorySummary { id: number; name: string; slug: string }
+export interface Category extends CategorySummary { description: string | null; displayOrder: number }
+export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null }
+export interface ProductWrite { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
+export type CreateProductInput = ProductWrite
+export interface UpdateProductInput extends ProductWrite { isActive: boolean }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null }
 export interface Cart { id: number; userId: number; total: number; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }

@@ -10,15 +10,29 @@ public record ProductResponse(
     decimal Price,
     int Stock,
     string? ImageUrl,
-    bool IsActive
+    bool IsActive,
+    CategorySummaryResponse? Category
 );
+
+public record CategorySummaryResponse(int Id, string Name, string Slug);
+
+public record CategoryResponse(int Id, string Name, string Slug, string? Description, int DisplayOrder);
+
+public record ProductQuery(
+    string? Search = null,
+    string? Category = null,
+    bool? InStock = null,
+    decimal? MinPrice = null,
+    decimal? MaxPrice = null,
+    bool IncludeInactive = false);
 
 public record CreateProductRequest(
     [Required, StringLength(ValidationLimits.ProductName)] string Name,
     [StringLength(ValidationLimits.ProductDescription)] string? Description,
     [SqlDecimal] decimal Price,
     [Range(0, int.MaxValue)] int Stock,
-    [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl
+    [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
+    int? CategoryId = null
 );
 
 public record UpdateProductRequest(
@@ -27,7 +41,8 @@ public record UpdateProductRequest(
     [SqlDecimal] decimal Price,
     [Range(0, int.MaxValue)] int Stock,
     [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
-    bool IsActive
+    bool IsActive,
+    int? CategoryId = null
 );
 
 public record UpdateProductStockRequest([Range(0, int.MaxValue)] int Stock);

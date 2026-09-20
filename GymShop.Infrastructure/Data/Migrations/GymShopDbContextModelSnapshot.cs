@@ -148,6 +148,44 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         });
                 });
 
+            modelBuilder.Entity("GymShop.Domain.Entities.Category", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.HasIndex("IsActive", "DisplayOrder");
+
+                    b.ToTable("Categories", (string)null);
+                });
+
             modelBuilder.Entity("GymShop.Domain.Entities.EmailVerificationCode", b =>
                 {
                     b.Property<int>("Id")
@@ -408,6 +446,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -446,6 +487,8 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CategoryId");
 
                     b.ToTable("Products", null, t =>
                         {
@@ -707,6 +750,16 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                     b.Navigation("Order");
                 });
 
+            modelBuilder.Entity("GymShop.Domain.Entities.Product", b =>
+                {
+                    b.HasOne("GymShop.Domain.Entities.Category", "Category")
+                        .WithMany("Products")
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Category");
+                });
+
             modelBuilder.Entity("GymShop.Domain.Entities.User", b =>
                 {
                     b.HasOne("GymShop.Domain.Entities.Role", "Role")
@@ -732,6 +785,11 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
             modelBuilder.Entity("GymShop.Domain.Entities.Cart", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.Category", b =>
+                {
+                    b.Navigation("Products");
                 });
 
             modelBuilder.Entity("GymShop.Domain.Entities.Order", b =>

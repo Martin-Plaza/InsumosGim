@@ -139,7 +139,7 @@ public sealed class HttpPipelineTests : IAsyncLifetime
 
     private sealed class ThrowingProductsUseCase : IGetProductsUseCase
     {
-        public Task<List<ProductResponse>> ExecuteAsync(bool includeInactive, bool canViewInactive, CancellationToken cancellationToken = default) =>
+        public Task<List<ProductResponse>> ExecuteAsync(ProductQuery query, bool canViewInactive, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("internal-http-secret");
     }
 }

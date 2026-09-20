@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api/gymshop'
 import type { AuthResponse } from '../../api/types'
+import { storefront } from '../../config/storefront'
 import { authErrorMessage } from './authMessages'
 import {
   clearPendingRegistration,
@@ -114,7 +115,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
         <h1>Ingresá los 6 números</h1>
         <p>Generamos un código de verificación para <strong>{pending.email}</strong>.</p>
         <p>{seconds > 0 ? `Vence en ${seconds} segundos.` : 'El código venció. Ya podés solicitar uno nuevo.'}</p>
-        {developmentCode && <p className="mock-code">Código Mock local: <strong>{developmentCode}</strong></p>}
+        {developmentCode && <p className="mock-code">{storefront.copy.localCodeLabel}: <strong>{developmentCode}</strong></p>}
       </div>
       <form onSubmit={event => {
         event.preventDefault()
@@ -146,7 +147,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
 
   if (resetEmail) {
     return <section className="auth-card">
-      <div><p className="eyebrow">RECUPERÁ TU CUENTA</p><h1>Creá una contraseña nueva</h1><p>Ingresá el código de 6 dígitos enviado a <strong>{resetEmail}</strong>.</p><p>{resetSeconds > 0 ? `El código vence en ${Math.ceil(resetSeconds / 60)} minutos.` : 'El código puede haber vencido. Podés solicitar uno nuevo.'}</p>{developmentCode && <p className="mock-code">Código Mock local: <strong>{developmentCode}</strong></p>}</div>
+      <div><p className="eyebrow">RECUPERÁ TU CUENTA</p><h1>Creá una contraseña nueva</h1><p>Ingresá el código de 6 dígitos enviado a <strong>{resetEmail}</strong>.</p><p>{resetSeconds > 0 ? `El código vence en ${Math.ceil(resetSeconds / 60)} minutos.` : 'El código puede haber vencido. Podés solicitar uno nuevo.'}</p>{developmentCode && <p className="mock-code">{storefront.copy.localCodeLabel}: <strong>{developmentCode}</strong></p>}</div>
       <form onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void execute(async () => {
         const result = await api.resetPassword({ email: resetEmail, code: String(data.get('code')), newPassword: String(data.get('newPassword')) })
         setResetEmail(null); setForgot(false); setDevelopmentCode(null); setResetSeconds(0); setNotice(result.message)
@@ -177,7 +178,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
   return <section className="auth-card">
     <div>
       <p className="eyebrow">TU CUENTA</p>
-      <h1>{register ? 'Empezá a entrenar' : 'Bienvenido de nuevo'}</h1>
+      <h1>{register ? storefront.copy.registrationTitle : 'Bienvenido de nuevo'}</h1>
       <p>Accedé a tu carrito, pagos y seguimiento de órdenes.</p>
     </div>
     <form onSubmit={event => {

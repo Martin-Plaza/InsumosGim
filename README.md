@@ -1024,7 +1024,7 @@ Estas operaciones sostienen el sistema, pero no son casos de uso iniciados por u
 
 **Datos de entrada:** cadena de conexion, migraciones compiladas y opciones de inicializacion.
 
-**Precondiciones:** SQL Server disponible y permisos suficientes sobre la base.
+**Precondiciones:** PostgreSQL disponible y permisos suficientes sobre la base.
 
 **Flujo esperado:** se aplican migraciones pendientes y se crean roles y datos iniciales requeridos de forma controlada.
 
@@ -1046,7 +1046,7 @@ Estas operaciones sostienen el sistema, pero no son casos de uso iniciados por u
 
 **Datos de entrada:** codigo fuente, configuracion de pruebas y servicios externos requeridos por tests de integracion.
 
-**Precondiciones:** SDK de .NET, Node.js, pnpm y dependencias instaladas; SQL Server cuando la suite lo requiera.
+**Precondiciones:** SDK de .NET, Node.js, pnpm y dependencias instaladas; PostgreSQL cuando la suite lo requiera.
 
 **Flujo esperado:** se compila y prueba la solucion; en frontend se ejecutan lint, typecheck, tests y build; CI repite los controles configurados.
 
@@ -1057,7 +1057,7 @@ Estas operaciones sostienen el sistema, pero no son casos de uso iniciados por u
 **Errores esperados:** compilacion fallida, test fallido, lint o typecheck fallido, dependencia ausente o servicio de integracion no disponible.
 
 **Que queda explicitamente fuera:** no demuestra ausencia total de defectos y no sustituye pruebas exploratorias, revision de seguridad ni observabilidad en produccion.
-Backend para un e-commerce de productos de gimnasio construido con .NET, ASP.NET Core, Entity Framework Core y SQL Server. El proyecto aplica una arquitectura por capas con separacion entre API, Application, Domain, Infrastructure y Tests.
+Backend para un e-commerce de productos de gimnasio construido con .NET, ASP.NET Core, Entity Framework Core y PostgreSQL mediante Npgsql. El proyecto aplica una arquitectura por capas con separacion entre API, Application, Domain, Infrastructure y Tests.
 
 
 
@@ -1227,7 +1227,7 @@ Las transiciones incompatibles con el estado actual responden `409 Conflict`. Lo
 
 ## Concurrencia al crear pagos
 
-La creacion de pagos reserva primero un registro local con estado `Creating`. Esa reserva se guarda antes de llamar al gateway y el indice SQL Server `UX_Payments_OrderId_Active` permite solamente un pago `Creating` o `Pending` por orden. Los intentos `CreationFailed`, `Rejected`, `Canceled`, `Expired` y `Refunded` permanecen como historial y no bloquean un nuevo intento.
+La creacion de pagos reserva primero un registro local con estado `Creating`. Esa reserva se guarda antes de llamar al gateway y el indice parcial PostgreSQL `UX_Payments_OrderId_Active` permite solamente un pago `Creating` o `Pending` por orden. Los intentos `CreationFailed`, `Rejected`, `Canceled`, `Expired` y `Refunded` permanecen como historial y no bloquean un nuevo intento.
 
 `IdempotencyKey` puede ser enviada por el cliente. Si se omite, el servidor genera una clave con prefijo `server-`; `PaymentResponse` siempre expone la clave efectiva. Repetir una clave reutiliza el mismo intento. Para reintentar un `CreationFailed` se debe usar una clave nueva.
 
@@ -1573,7 +1573,14 @@ Limitaciones actuales:
 - El proveedor Mock no representa una aprobación financiera real.
 - Para staging será necesario definir las reglas comerciales de entrega antes de ampliar los campos.
 
-La aplicacion aplica migraciones automaticamente en ambiente Development.
+La aplicacion aplica migraciones y datos demo cuando `DatabaseInitialization:Enabled=true`.
+Compose establece ese valor explicitamente; fuera de Compose permanece deshabilitado por defecto.
+
+El historial valido para Npgsql contiene un unico baseline, `20260910144849_InitialPostgreSql`,
+en `GymShop.Infrastructure/Data/PostgresMigrations`. El snapshot asociado se mantiene en
+`GymShop.Infrastructure/Data/Migrations/GymShopDbContextModelSnapshot.cs` por compatibilidad con
+las herramientas de EF; los historiales anteriores de SQL Server fueron retirados y no deben
+reintroducirse al crear migraciones nuevas.
 
 ## Docker local
 
@@ -1581,7 +1588,7 @@ El entorno Docker levanta dos servicios definidos en `compose.yaml`:
 
 ```text
 api       -> API ASP.NET Core, publicada en http://localhost:8080
-database  -> SQL Server Express, accesible solo desde la red de Docker
+database  -> PostgreSQL 17, accesible solo desde la red de Docker
 ```
 
 Crear primero el archivo local de variables a partir de la plantilla y reemplazar los valores de ejemplo:
@@ -1618,10 +1625,15 @@ http://localhost:8080/health
 http://localhost:8080/swagger
 ```
 
-### Persistencia de SQL Server
+### Inicializacion y persistencia de PostgreSQL
 
-El servicio `database` guarda los archivos de SQL Server en el volumen nombrado
-`gymshop-sql-data`. Un volumen es almacenamiento administrado por Docker que existe
+El servicio `database` crea `GymShopDb` y guarda los archivos de PostgreSQL en el volumen nombrado
+`gymshop-postgres-data`. Cuando el healthcheck confirma que PostgreSQL esta listo, la API inicia con
+`DatabaseInitialization__Enabled=true`, aplica la unica historia de migraciones Npgsql y carga los roles,
+el superadmin configurado y el catalogo demo. La carga es idempotente, por lo que reiniciar los contenedores
+no duplica esos datos.
+
+Un volumen es almacenamiento administrado por Docker que existe
 fuera del contenedor. Por eso eliminar y volver a crear el contenedor no elimina
 usuarios, productos, ordenes ni migraciones ya aplicadas.
 
@@ -1643,8 +1655,12 @@ de Docker. No afecta las bases alojadas en Neon.
 ## Tests
 
 ```powershell
+dotnet tool restore
 dotnet test GymShop.slnx
 ```
+
+El manifiesto local fija `dotnet-ef` en la misma version que el runtime de Entity Framework Core.
+Ejecutar los comandos `dotnet ef` desde la raiz del repositorio usa esa herramienta local reproducible.
 
 Los tests con `Category=Integration` levantan el pipeline HTTP real y verifican el comportamiento de PostgreSQL, incluidas las restricciones, transacciones y actualizaciones concurrentes mediante `xmin`. Por defecto se conectan a PostgreSQL en `localhost:5432`. Tambien se puede definir una conexion administrativa mediante `GYMSHOP_TEST_POSTGRES`; cada test crea una base aislada, aplica todas las migraciones desde cero y la elimina al terminar. La cuenta utilizada debe tener permiso para crear y eliminar bases de datos.
 
@@ -1688,9 +1704,9 @@ La suite cubre, entre otros puntos:
 - Cancelaciones idempotentes con cierre de pagos pendientes y restitucion unica de stock.
 - Refund total antes y despues del envio, webhooks repetidos y reembolsos parciales manuales.
 - Reservas `Creating`, recuperacion de intentos atascados e historial `CreationFailed`.
-- Carreras de pago e indices filtrados verificados sobre SQL Server real.
+- Carreras de pago e indices filtrados verificados sobre PostgreSQL real.
 - Pipeline HTTP real: login, JWT, 401/403, roles, serializacion, ProblemDetails, errores 500, productos inactivos, rate limiting y webhook HMAC.
-- Migraciones desde una base vacia, restricciones, indices filtrados, RowVersion, rollback de checkout y consultas traducidas por SQL Server.
+- Migraciones desde una base vacia, restricciones, indices filtrados, concurrencia con `xmin`, rollback de checkout y consultas traducidas por PostgreSQL.
 - Concurrencia sobre ultimo stock, actualizacion de stock y creacion de pagos activos.
 - Gateway HTTP de Mercado Pago ante exito, timeout, JSON invalido, 4xx/5xx, reintento idempotente y estado refunded.
 
@@ -1707,7 +1723,7 @@ dotnet test GymShop.slnx --configuration Release --no-build --filter "Category!=
 dotnet test GymShop.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults --verbosity normal
 ```
 
-El segundo comando usa el servicio SQL Server de CI, ejecuta la suite completa, publica el XML Cobertura como artefacto y agrega al resumen del job los porcentajes de lineas y ramas por proyecto.
+El segundo comando usa el servicio PostgreSQL de CI, ejecuta la suite completa, publica el XML Cobertura como artefacto y agrega al resumen del job los porcentajes de lineas y ramas por proyecto.
 
 ## Notas de seguridad
 

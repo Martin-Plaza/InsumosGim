@@ -13,6 +13,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<Category> Categories => Set<Category>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Cart> Carts => Set<Cart>();
@@ -114,6 +115,17 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasOne(x => x.User).WithMany(x => x.ExternalLogins).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Category>(entity =>
+        {
+            entity.ToTable("Categories");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Slug).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+            entity.HasIndex(x => x.Slug).IsUnique();
+            entity.HasIndex(x => new { x.IsActive, x.DisplayOrder });
+        });
+
         modelBuilder.Entity<Product>(entity =>
         {
             entity.ToTable("Products", table =>
@@ -129,6 +141,11 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => x.CategoryId);
+            entity.HasOne(x => x.Category)
+                .WithMany(x => x.Products)
+                .HasForeignKey(x => x.CategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<Order>(entity =>

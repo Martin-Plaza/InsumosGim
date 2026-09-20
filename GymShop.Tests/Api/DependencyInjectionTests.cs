@@ -15,7 +15,7 @@ public class DependencyInjectionTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DefaultConnection"] = "Server=(localdb)\\MSSQLLocalDB;Database=GymShopDiTest;Trusted_Connection=True;TrustServerCertificate=True"
+                ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Port=5432;Database=GymShopDiTest;Username=postgres;Password=postgres"
             })
             .Build();
         var services = new ServiceCollection();

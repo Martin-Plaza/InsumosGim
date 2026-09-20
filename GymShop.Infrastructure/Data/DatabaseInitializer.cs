@@ -17,7 +17,24 @@ public static class DatabaseInitializer
 
         await db.Database.MigrateAsync(cancellationToken);
         await SeedSuperAdminAsync(db, configuration, passwordHasher, cancellationToken);
+        await SeedCategoriesAsync(db, cancellationToken);
         await SeedSampleProductsAsync(db, cancellationToken);
+    }
+
+    private static async Task SeedCategoriesAsync(GymShopDbContext db, CancellationToken cancellationToken)
+    {
+        var categories = new[]
+        {
+            new Category { Name = "Fuerza", Slug = "fuerza", Description = "Pesas y equipamiento para desarrollar fuerza.", DisplayOrder = 10 },
+            new Category { Name = "Entrenamiento funcional", Slug = "entrenamiento-funcional", Description = "Accesorios versátiles para movilidad y potencia.", DisplayOrder = 20 },
+            new Category { Name = "Yoga y movilidad", Slug = "yoga-movilidad", Description = "Productos para movilidad, recuperación y ejercicios de piso.", DisplayOrder = 30 },
+            new Category { Name = "Cardio", Slug = "cardio", Description = "Equipamiento para acondicionamiento cardiovascular.", DisplayOrder = 40 }
+        };
+
+        foreach (var category in categories)
+            if (!await db.Categories.AnyAsync(x => x.Slug == category.Slug, cancellationToken)) db.Categories.Add(category);
+
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task SeedSuperAdminAsync(
@@ -57,6 +74,7 @@ public static class DatabaseInitializer
 
     private static async Task SeedSampleProductsAsync(GymShopDbContext db, CancellationToken cancellationToken)
     {
+        var categoryIds = await db.Categories.ToDictionaryAsync(x => x.Slug, x => x.Id, cancellationToken);
         var samples = new Product[]
         {
             new()
@@ -66,7 +84,8 @@ public static class DatabaseInitializer
                 Price = 25000,
                 Stock = 15,
                 ImageUrl = "/images/products/mancuerna-10kg.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["fuerza"]
             },
             new()
             {
@@ -75,7 +94,8 @@ public static class DatabaseInitializer
                 Price = 18000,
                 Stock = 20,
                 ImageUrl = "/images/products/colchoneta-fitness.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["yoga-movilidad"]
             },
             new()
             {
@@ -84,7 +104,8 @@ public static class DatabaseInitializer
                 Price = 42000,
                 Stock = 12,
                 ImageUrl = "/images/products/kettlebell-16kg.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["fuerza"]
             },
             new()
             {
@@ -93,7 +114,8 @@ public static class DatabaseInitializer
                 Price = 22000,
                 Stock = 25,
                 ImageUrl = "/images/products/bandas-resistencia.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["entrenamiento-funcional"]
             },
             new()
             {
@@ -102,7 +124,8 @@ public static class DatabaseInitializer
                 Price = 185000,
                 Stock = 8,
                 ImageUrl = "/images/products/banco-regulable.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["fuerza"]
             },
             new()
             {
@@ -111,7 +134,8 @@ public static class DatabaseInitializer
                 Price = 16000,
                 Stock = 30,
                 ImageUrl = "/images/products/soga-velocidad.webp",
-                IsActive = true
+                IsActive = true,
+                CategoryId = categoryIds["cardio"]
             }
         };
 
@@ -126,6 +150,7 @@ public static class DatabaseInitializer
             {
                 existing.ImageUrl = sample.ImageUrl;
             }
+            if (existing is not null && existing.CategoryId is null) existing.CategoryId = sample.CategoryId;
         }
 
         await db.SaveChangesAsync(cancellationToken);

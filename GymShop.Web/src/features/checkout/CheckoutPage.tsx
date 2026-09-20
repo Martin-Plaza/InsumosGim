@@ -4,10 +4,10 @@ import { ApiError } from '../../api/client'
 import { api, paymentKey } from '../../api/gymshop'
 import type { OrderSummary } from '../../api/types'
 import { ProductImage } from '../catalog/ProductImage'
+import { money } from '../../config/storefront'
 import { useCart } from '../cart/useCart'
 import { checkoutErrorMessage } from './checkoutPresentation'
 
-const money = (value: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)
 
 export function CheckoutPage() {
   const cart = useCart()

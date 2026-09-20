@@ -5,8 +5,8 @@ import { api } from '../../api/gymshop'
 import type { Product } from '../../api/types'
 import { useCart } from '../cart/useCart'
 import { ProductImage } from './ProductImage'
+import { money, storefront } from '../../config/storefront'
 
-const money = (value: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)
 
 export function ProductDetailPage() {
   const { productId } = useParams()
@@ -28,7 +28,7 @@ export function ProductDetailPage() {
   return <section className="product-detail-page">
     <Link className="back-link" to="/catalogo">← Volver al catálogo</Link>
     <div className="product-detail-layout"><div className="product-detail-image"><ProductImage src={product.imageUrl} alt={product.name} /></div><div className="product-detail-copy">
-      <p className="eyebrow">PRODUCTO</p><h1>{product.name}</h1><p className="product-description">{product.description || 'Equipamiento GymShop.'}</p><strong className="product-detail-price">{money(product.price)}</strong>
+      <p className="eyebrow">PRODUCTO</p><h1>{product.name}</h1><p className="product-description">{product.description || storefront.copy.productFallback}</p><strong className="product-detail-price">{money(product.price)}</strong>
       <p className={product.stock > 0 ? 'in-stock' : 'no-stock'}>{product.stock > 0 ? `${product.stock} unidades disponibles` : 'Producto sin stock'}</p>
       {product.stock > 0 && <div className="product-buy"><label>Cantidad<input type="number" min="1" max={product.stock} value={quantity} onChange={event => setQuantity(Math.min(product.stock, Math.max(1, Number(event.target.value))))} /></label><button className="primary" onClick={() => void cart.add(product, quantity)}>Agregar al carrito</button></div>}
     </div></div>

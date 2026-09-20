@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom'
 import { ProductImage } from '../catalog/ProductImage'
+import { money } from '../../config/storefront'
 import { useCart } from './useCart'
 
-const money = (value: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)
 
 export function CartDrawer() {
   const cart = useCart()

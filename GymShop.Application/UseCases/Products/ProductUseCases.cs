@@ -8,7 +8,12 @@ namespace GymShop.Application.UseCases.Products;
 
 public interface IGetProductsUseCase
 {
-    Task<List<ProductResponse>> ExecuteAsync(bool includeInactive, bool canViewInactive, CancellationToken cancellationToken = default);
+    Task<List<ProductResponse>> ExecuteAsync(ProductQuery query, bool canViewInactive, CancellationToken cancellationToken = default);
+}
+
+public interface IGetCategoriesUseCase
+{
+    Task<List<CategoryResponse>> ExecuteAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IGetProductByIdUseCase
@@ -45,19 +50,48 @@ public class GetProductsUseCase : IGetProductsUseCase
         _db = db;
     }
 
-    public async Task<List<ProductResponse>> ExecuteAsync(bool includeInactive, bool canViewInactive, CancellationToken cancellationToken = default)
+    public async Task<List<ProductResponse>> ExecuteAsync(ProductQuery request, bool canViewInactive, CancellationToken cancellationToken = default)
     {
-        var query = _db.Products.AsNoTracking();
-        if (!includeInactive || !canViewInactive)
+        IQueryable<Product> query = _db.Products.AsNoTracking().Include(x => x.Category);
+        if (!request.IncludeInactive || !canViewInactive)
         {
             query = query.Where(x => x.IsActive);
         }
+
+        if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var search = request.Search.Trim().ToLower();
+            query = query.Where(x => x.Name.ToLower().Contains(search) ||
+                                     (x.Description != null && x.Description.ToLower().Contains(search)));
+        }
+        if (!string.IsNullOrWhiteSpace(request.Category))
+        {
+            var category = request.Category.Trim().ToLower();
+            query = query.Where(x => x.Category != null && x.Category.Slug == category);
+        }
+        if (request.InStock.HasValue)
+            query = request.InStock.Value ? query.Where(x => x.Stock > 0) : query.Where(x => x.Stock == 0);
+        if (request.MinPrice.HasValue) query = query.Where(x => x.Price >= request.MinPrice.Value);
+        if (request.MaxPrice.HasValue) query = query.Where(x => x.Price <= request.MaxPrice.Value);
 
         return await query
             .OrderByDescending(x => x.Id)
             .Select(x => ProductMapper.ToResponse(x))
             .ToListAsync(cancellationToken);
     }
+}
+
+public class GetCategoriesUseCase : IGetCategoriesUseCase
+{
+    private readonly IApplicationDbContext _db;
+    public GetCategoriesUseCase(IApplicationDbContext db) => _db = db;
+
+    public Task<List<CategoryResponse>> ExecuteAsync(CancellationToken cancellationToken = default) =>
+        _db.Categories.AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.DisplayOrder).ThenBy(x => x.Name)
+            .Select(x => new CategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder))
+            .ToListAsync(cancellationToken);
 }
 
 public class GetProductByIdUseCase : IGetProductByIdUseCase
@@ -71,7 +105,7 @@ public class GetProductByIdUseCase : IGetProductByIdUseCase
 
     public async Task<AppResult<ProductResponse>> ExecuteAsync(int id, bool canViewInactive, CancellationToken cancellationToken = default)
     {
-        var product = await _db.Products.AsNoTracking()
+        var product = await _db.Products.AsNoTracking().Include(x => x.Category)
             .SingleOrDefaultAsync(x => x.Id == id && (x.IsActive || canViewInactive), cancellationToken);
         return product is null
             ? AppResult<ProductResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado.")
@@ -96,6 +130,12 @@ public class CreateProductUseCase : ICreateProductUseCase
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
         }
 
+        var category = request.CategoryId.HasValue
+            ? await _db.Categories.SingleOrDefaultAsync(x => x.Id == request.CategoryId && x.IsActive, cancellationToken)
+            : null;
+        if (request.CategoryId.HasValue && category is null)
+            return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "La categoría indicada no existe o está inactiva.");
+
         var product = new Product
         {
             Name = request.Name.Trim(),
@@ -103,7 +143,8 @@ public class CreateProductUseCase : ICreateProductUseCase
             Price = request.Price,
             Stock = request.Stock,
             ImageUrl = request.ImageUrl?.Trim(),
-            IsActive = true
+            IsActive = true,
+            Category = category
         };
 
         _db.Products.Add(product);
@@ -126,7 +167,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
 
     public async Task<AppResult<ProductResponse>> ExecuteAsync(int id, UpdateProductRequest request, CancellationToken cancellationToken = default)
     {
-        var product = await _db.Products.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        var product = await _db.Products.Include(x => x.Category).SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (product is null)
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado.");
@@ -138,6 +179,12 @@ public class UpdateProductUseCase : IUpdateProductUseCase
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
         }
 
+        var category = request.CategoryId.HasValue
+            ? await _db.Categories.SingleOrDefaultAsync(x => x.Id == request.CategoryId && x.IsActive, cancellationToken)
+            : null;
+        if (request.CategoryId.HasValue && category is null)
+            return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "La categoría indicada no existe o está inactiva.");
+
         var oldValue = new { product.Name, product.Price, product.Stock, product.IsActive };
         product.Name = request.Name.Trim();
         product.Description = request.Description?.Trim();
@@ -145,6 +192,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         product.Stock = request.Stock;
         product.ImageUrl = request.ImageUrl?.Trim();
         product.IsActive = request.IsActive;
+        product.Category = category;
         product.UpdatedAt = DateTime.UtcNow;
         AuditTrail.Add(_db, _auditContext, "ProductUpdated", "Product", product.Id, oldValue,
             new { product.Name, product.Price, product.Stock, product.IsActive });
@@ -294,7 +342,8 @@ internal static class ProductMapper
             product.Price,
             product.Stock,
             product.ImageUrl,
-            product.IsActive
+            product.IsActive,
+            product.Category is null ? null : new CategorySummaryResponse(product.Category.Id, product.Category.Name, product.Category.Slug)
         );
     }
 }

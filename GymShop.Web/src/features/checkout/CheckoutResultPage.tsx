@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { api, paymentKey, rotatePaymentKey } from '../../api/gymshop'
+import { money } from '../../config/storefront'
 import type { Order, Payment } from '../../api/types'
 import { checkoutErrorMessage, paymentExplanation, paymentLabels, terminalRetryablePayments } from './checkoutPresentation'
 
-const money = (value: number, currency = 'ARS') => new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(value)
 
 export function CheckoutResultPage({ canRefreshPayment }: { canRefreshPayment: boolean }) {
   const { orderId } = useParams()

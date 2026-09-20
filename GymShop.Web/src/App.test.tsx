@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
-const product = { id: 1, name: 'Mancuerna', description: 'Fuerza', price: 1000, stock: 4, imageUrl: '/images/mancuerna.jpg', isActive: true }
+const product = { id: 1, name: 'Mancuerna', description: 'Fuerza', price: 1000, stock: 4, imageUrl: '/images/mancuerna.jpg', isActive: true, category: null }
 const products = Array.from({ length: 7 }, (_, index) => ({ ...product, id: index + 1, name: index === 0 ? 'Kettlebell 16kg' : `Producto ${index + 1}` }))
 
 describe('flujos y permisos de la aplicación', () => {
   beforeEach(() => { localStorage.clear(); window.history.replaceState(null, '', '/'); vi.restoreAllMocks() })
 
   it('muestra seis destacados y navega a un catálogo separado', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(() => json(products))
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/categories') ? json([]) : json(products))
     render(<App />)
     expect(await screen.findByText('Productos destacados')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Inicio' })).not.toBeInTheDocument()
@@ -27,7 +27,7 @@ describe('flujos y permisos de la aplicación', () => {
 
   it('prioriza productos con imágenes válidas en los destacados', async () => {
     const invalid = { ...product, id: 99, name: 'Producto sin imagen', imageUrl: 'string' }
-    vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([invalid, ...products]))
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/categories') ? json([]) : json([invalid, ...products]))
     render(<App />)
     expect(await screen.findByText('Productos destacados')).toBeInTheDocument()
     expect(screen.queryByText('Producto sin imagen')).not.toBeInTheDocument()
@@ -79,8 +79,8 @@ describe('flujos y permisos de la aplicación', () => {
     expect(await screen.findByText(/Código Mock local/)).toHaveTextContent('123456')
     await userEvent.type(screen.getByLabelText('Código de verificación'), '123456')
     await userEvent.click(screen.getByRole('button', { name: 'Verificar e ingresar' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('Nueva')
-    expect(localStorage.getItem('gymshop.token')).toBe('verified-jwt')
+    await waitFor(() => expect(localStorage.getItem('gymshop.token')).toBe('verified-jwt'))
+    expect(screen.getByRole('status')).toHaveTextContent('Nueva')
   })
 
   it('retoma una verificación pendiente después de volver a abrir el frontend', async () => {

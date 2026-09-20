@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminUser, AuditPage, AuthResponse, Cart, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, User } from './types'
+import type { AdminUser, AuditPage, AuthResponse, Cart, Category, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -11,9 +11,10 @@ export const api = {
   resetPassword: (data: { email: string; code: string; newPassword: string }) => request<PasswordResetCompleted>('/api/auth/reset-password', json('POST', data)),
   me: () => request<User>('/api/auth/me'),
   products: (includeInactive = false) => request<Product[]>(`/api/products${includeInactive ? '?includeInactive=true' : ''}`),
+  categories: () => request<Category[]>('/api/categories'),
   product: (id: number) => request<Product>(`/api/products/${id}`),
-  createProduct: (data: Omit<Product, 'id'>) => request<Product>('/api/products', json('POST', data)),
-  updateProduct: (product: Product) => request<Product>(`/api/products/${product.id}`, json('PUT', product)),
+  createProduct: (data: CreateProductInput) => request<Product>('/api/products', json('POST', data)),
+  updateProduct: (id: number, data: UpdateProductInput) => request<Product>(`/api/products/${id}`, json('PUT', data)),
   setProductStock: (id: number, stock: number) => request<void>(`/api/products/${id}/stock`, json('PATCH', { stock })),
   setProductStatus: (id: number, isActive: boolean) => request<void>(`/api/products/${id}/status`, json('PATCH', { isActive })),
   cart: () => request<Cart>('/api/cart'),

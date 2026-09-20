@@ -8,6 +8,7 @@ public interface IApplicationDbContext
     DbSet<Role> Roles { get; }
     DbSet<User> Users { get; }
     DbSet<Product> Products { get; }
+    DbSet<Category> Categories { get; }
     DbSet<Order> Orders { get; }
     DbSet<OrderItem> OrderItems { get; }
     DbSet<Cart> Carts { get; }

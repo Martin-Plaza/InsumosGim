@@ -21,8 +21,12 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: Host=database;Port=5432;Database=GymShopDb;Username=postgres;Password=${GYMSHOP_DB_PASSWORD}
+      DatabaseInitialization__Enabled: "true"
       Jwt__Secret: ${GYMSHOP_JWT_SECRET}
       GoogleAuth__ClientId: ${GYMSHOP_GOOGLE_CLIENT_ID:-}
+      SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
+      SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
+      SeedSuperAdmin__Password: ${GYMSHOP_SEED_ADMIN_PASSWORD}
     ports:
       - "8080:8080"
     depends_on:

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
 
-const product = { id: 42, name: 'Mancuerna Pro', description: 'Acero', price: 1000, stock: 5, imageUrl: '/product.webp', isActive: true }
+const product = { id: 42, name: 'Mancuerna Pro', description: 'Acero', price: 1000, stock: 5, imageUrl: '/product.webp', isActive: true, category: null }
 const cartItem = (quantity: number) => ({ productId: 42, productName: product.name, unitPrice: product.price, quantity, subtotal: product.price * quantity, stock: product.stock, imageUrl: product.imageUrl })
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 

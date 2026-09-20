@@ -21,6 +21,7 @@ x86/
 *.snupkg
 project.lock.json
 artifacts/
+.artifacts/
 TestResults/
 coverage/
 *.coverage

@@ -15,7 +15,7 @@ public sealed class GlobalExceptionHandlerTests
     {
         var logger = new CapturingLogger<GlobalExceptionHandler>();
         var (handler, context, body) = CreateHandler(logger, "trace-test-123");
-        var exception = new InvalidOperationException("SQL Server failed at C:\\internal\\secret-path");
+        var exception = new InvalidOperationException("PostgreSQL failed at C:\\internal\\secret-path");
 
         var handled = await handler.TryHandleAsync(context, exception, CancellationToken.None);
         var json = await ReadJsonAsync(body);

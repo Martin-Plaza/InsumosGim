@@ -40,6 +40,30 @@ public class ProductUseCaseTests
         Assert.Equal(AppErrorType.Validation, result.Error?.Type);
     }
 
+    [Fact]
+    public async Task Create_and_update_responses_include_selected_category()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var strength = new Category { Name = "Fuerza", Slug = "fuerza", DisplayOrder = 1 };
+        var cardio = new Category { Name = "Cardio", Slug = "cardio", DisplayOrder = 2 };
+        db.Categories.AddRange(strength, cardio);
+        await db.SaveChangesAsync();
+
+        var created = await new CreateProductUseCase(db).ExecuteAsync(
+            new CreateProductRequest("Producto", "Descripción", 100, 5, null, strength.Id));
+
+        Assert.True(created.IsSuccess);
+        Assert.Equal("fuerza", created.Value?.Category?.Slug);
+
+        var updated = await new UpdateProductUseCase(db).ExecuteAsync(
+            created.Value!.Id,
+            new UpdateProductRequest("Producto", "Descripción", 100, 5, null, true, cardio.Id));
+
+        Assert.True(updated.IsSuccess);
+        Assert.Equal("cardio", updated.Value?.Category?.Slug);
+        Assert.Equal(cardio.Id, db.Products.Single().CategoryId);
+    }
+
     [Theory]
     [InlineData(151, 0, 0)]
     [InlineData(1, 1001, 0)]
@@ -70,8 +94,8 @@ public class ProductUseCaseTests
         db.Products.AddRange(active, inactive);
         await db.SaveChangesAsync();
 
-        var catalog = await new GetProductsUseCase(db).ExecuteAsync(false, false);
-        var forcedPublicCatalog = await new GetProductsUseCase(db).ExecuteAsync(true, false);
+        var catalog = await new GetProductsUseCase(db).ExecuteAsync(new ProductQuery(), false);
+        var forcedPublicCatalog = await new GetProductsUseCase(db).ExecuteAsync(new ProductQuery(IncludeInactive: true), false);
         var publicLookup = await new GetProductByIdUseCase(db).ExecuteAsync(inactive.Id, false);
 
         Assert.Collection(catalog, item => Assert.Equal(active.Id, item.Id));
@@ -87,12 +111,32 @@ public class ProductUseCaseTests
         db.Products.Add(inactive);
         await db.SaveChangesAsync();
 
-        var catalog = await new GetProductsUseCase(db).ExecuteAsync(true, true);
+        var catalog = await new GetProductsUseCase(db).ExecuteAsync(new ProductQuery(IncludeInactive: true), true);
         var lookup = await new GetProductByIdUseCase(db).ExecuteAsync(inactive.Id, true);
 
         Assert.Single(catalog);
         Assert.True(lookup.IsSuccess);
         Assert.Equal(inactive.Id, lookup.Value!.Id);
+    }
+
+    [Fact]
+    public async Task Catalog_filters_by_search_category_stock_and_price()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var strength = new Category { Name = "Fuerza", Slug = "fuerza", DisplayOrder = 1 };
+        var cardio = new Category { Name = "Cardio", Slug = "cardio", DisplayOrder = 2 };
+        db.Categories.AddRange(strength, cardio);
+        db.Products.AddRange(
+            new Product { Name = "Mancuerna", Description = "Acero", Price = 100, Stock = 3, Category = strength },
+            new Product { Name = "Soga", Description = "Cardio rápido", Price = 20, Stock = 0, Category = cardio });
+        await db.SaveChangesAsync();
+
+        var result = await new GetProductsUseCase(db).ExecuteAsync(
+            new ProductQuery(Search: "acero", Category: "fuerza", InStock: true, MinPrice: 50, MaxPrice: 150), false);
+
+        var product = Assert.Single(result);
+        Assert.Equal("Mancuerna", product.Name);
+        Assert.Equal("fuerza", product.Category?.Slug);
     }
 
     [Fact]

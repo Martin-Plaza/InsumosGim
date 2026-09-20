@@ -22,9 +22,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Retain the former SQL Server migrations as documentation, but do not compile them. -->
+    <!-- The only executable migration history is the Npgsql baseline in PostgresMigrations. -->
     <Compile Remove="Data\Migrations\**\*.cs" />
-    <!-- EF updates this snapshot when creating future PostgreSQL migrations. -->
     <Compile Include="Data\Migrations\GymShopDbContextModelSnapshot.cs" />
   </ItemGroup>
 

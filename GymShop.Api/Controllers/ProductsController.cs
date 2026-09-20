@@ -40,7 +40,7 @@ public class ProductsController : ApiControllerBase
 
     //get de todos los productos, y que no esten activos
     public async Task<ActionResult<List<ProductResponse>>> GetAll(
-        [FromQuery] bool includeInactive = false,
+        [FromQuery] ProductQuery query,
         CancellationToken cancellationToken = default)
     {
         //variable para que admin y superadmin puedan ver los inactivos
@@ -48,13 +48,13 @@ public class ProductsController : ApiControllerBase
 
         //si el usuario quiere quiere ver los inactivos pero no es admin ni superadmin este if valida si esta autenticado
         //si es verdadero usa forbid (que es sin autorizacion), si no esta autenticado avisa que necesita autenticacion.
-        if (includeInactive && !canViewInactive)
+        if (query.IncludeInactive && !canViewInactive)
         {
             return User.Identity?.IsAuthenticated == true ? Forbid() : Challenge();
         }
 
         //retorna los productos
-        return Ok(await _getProducts.ExecuteAsync(includeInactive, canViewInactive, cancellationToken));
+        return Ok(await _getProducts.ExecuteAsync(query, canViewInactive, cancellationToken));
     }
 
 

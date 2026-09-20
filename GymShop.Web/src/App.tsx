@@ -65,7 +65,7 @@ function AppShell() {
       {notice && <div className="notice" role="status">{notice}</div>}
       {error && <div className="error" role="alert">{error}</div>}
       <Routes>
-        <Route path="/" element={<Home onCatalog={() => navigate('/catalogo')} onProduct={id => navigate(`/catalogo/${id}`)} />} />
+        <Route path="/" element={<Home onCatalog={category => navigate(category ? `/catalogo?categoria=${encodeURIComponent(category)}` : '/catalogo')} onProduct={id => navigate(`/catalogo/${id}`)} />} />
         <Route path="/catalogo" element={<Catalog />} />
         <Route path="/catalogo/:productId" element={<ProductDetailPage />} />
         <Route path="/carrito" element={<CartPage />} />

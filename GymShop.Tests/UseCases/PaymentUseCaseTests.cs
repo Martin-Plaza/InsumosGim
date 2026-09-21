@@ -230,8 +230,74 @@ public class PaymentUseCaseTests
         Assert.Equal(PaymentStatus.Refunded, payment.Status);
         Assert.Equal(OrderStatus.Refunded, order.Status);
         Assert.Equal(3, product.Stock);
-        Assert.Contains("despues del envio", payment.FailureReason);
+        Assert.Contains("gestion manual", payment.FailureReason);
         Assert.Equal("PaymentRefundedByProvider", Assert.Single(db.AuditEntries).Action);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Preparing, true)]
+    [InlineData(OrderStatus.Delivered, false)]
+    public async Task Webhook_refund_handles_new_fulfillment_states(OrderStatus initialStatus, bool restoresStock)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        order.Status = initialStatus;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "refunded",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}"
+        };
+
+        var result = await new HandlePaymentWebhookUseCase(db, [gateway]).ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PaymentStatus.Refunded, payment.Status);
+        Assert.Equal(OrderStatus.Refunded, order.Status);
+        Assert.Equal(restoresStock ? 5 : 3, product.Stock);
+        if (!restoresStock) Assert.Contains("gestion manual", payment.FailureReason);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("PaymentRefundedByProvider", audit.Action);
+        Assert.Contains($"\"orderStatus\":\"{initialStatus}\"", audit.OldValue);
+        Assert.Contains("\"orderStatus\":\"Refunded\"", audit.NewValue);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Pending)]
+    [InlineData(OrderStatus.Canceled)]
+    [InlineData(OrderStatus.Refunded)]
+    public async Task Webhook_refund_rejects_non_refundable_order_states(OrderStatus initialStatus)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var product = await db.Products.SingleAsync();
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        payment.Status = PaymentStatus.Approved;
+        payment.ProviderPaymentId = "mp-pay-1";
+        order.Status = initialStatus;
+        await db.SaveChangesAsync();
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "refunded",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}"
+        };
+
+        var result = await new HandlePaymentWebhookUseCase(db, [gateway]).ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(PaymentStatus.Approved, payment.Status);
+        Assert.Equal(initialStatus, order.Status);
+        Assert.Equal(3, product.Stock);
+        Assert.Empty(db.AuditEntries);
     }
 
     [Fact]

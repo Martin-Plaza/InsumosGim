@@ -495,7 +495,7 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
         if (PaymentStatusMapper.IsPartialRefund(providerPayment.Status))
         {
             if (payment.Status != PaymentStatus.Approved ||
-                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
             {
                 return AppResult<PaymentResponse>.Failure(
                     AppErrorType.Conflict,
@@ -568,20 +568,20 @@ internal static class PaymentStatusApplier
             }
 
             if (payment.Status != PaymentStatus.Approved ||
-                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+                payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
             {
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pago y el pedido no se encuentran en un estado reembolsable.");
             }
 
             var oldPaymentStatus = payment.Status;
             var oldOrderStatus = payment.Order.Status;
-            var wasShipped = payment.Order.Status == OrderStatus.Shipped;
-            OrderCompensation.RefundAndRestoreStockIfNotShipped(payment.Order);
+            var requiresManualReturn = payment.Order.Status is OrderStatus.Shipped or OrderStatus.Delivered;
+            OrderCompensation.ApplyConfirmedRefund(payment.Order);
             payment.Status = PaymentStatus.Refunded;
             payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
             payment.FailureReason = string.IsNullOrWhiteSpace(failureReason)
-                ? wasShipped
-                    ? "Reembolso total confirmado despues del envio; devolucion y stock pendientes de gestion manual."
+                ? requiresManualReturn
+                    ? "Reembolso total confirmado; devolucion y stock requieren gestion manual."
                     : "Reembolso total confirmado por el proveedor."
                 : failureReason.Trim();
             payment.UpdatedAt = DateTime.UtcNow;

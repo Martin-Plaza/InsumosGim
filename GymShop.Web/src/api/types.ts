@@ -1,5 +1,5 @@
 export type Role = 'User' | 'Admin' | 'SuperAdmin'
-export type OrderStatus = 'Pending' | 'Paid' | 'Shipped' | 'Canceled' | 'Refunded'
+export type OrderStatus = 'Pending' | 'Paid' | 'Preparing' | 'Shipped' | 'Delivered' | 'Canceled' | 'Refunded'
 export type PaymentStatus = 'Creating' | 'Pending' | 'CreationFailed' | 'Approved' | 'Rejected' | 'Canceled' | 'Expired' | 'Refunded'
 
 export interface User { id: number; email: string; name: string; lastName?: string | null; role: Role }
@@ -21,8 +21,10 @@ export interface CartItem { productId: number; productName: string; unitPrice: n
 export interface Cart { id: number; userId: number; total: number; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }
 export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null }
-export interface Order { id: number; userId: number; userEmail: string | null; createdAt: string; total: number; status: OrderStatus; shippingAddress: string; cancellationReason: string | null; items: OrderItem[]; payments: OrderPayment[] }
-export interface OrderSummary { id: number; userId: number; userEmail: string | null; createdAt: string; total: number; status: OrderStatus; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
+export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; total: number; status: OrderStatus; shippingAddress: string; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
+export interface OrderSummary { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; total: number; status: OrderStatus; updatedAt: string | null; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
+export interface OrderPage { items: OrderSummary[]; page: number; pageSize: number; totalItems: number; totalPages: number }
+export interface OrderFilters { page?: number; pageSize?: number; search?: string; status?: string; fromUtc?: string; toUtc?: string }
 export interface Payment { id: number; orderId: number; provider: string; externalReference: string; providerPreferenceId: string | null; providerPaymentId: string | null; idempotencyKey: string | null; amount: number; currency: string; status: PaymentStatus; checkoutUrl: string | null; failureReason: string | null; createdAt: string; updatedAt: string | null; paidAt: string | null }
 export interface AuditPage { items: AuditEntry[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface AuditEntry { id: number; actorUserId: number | null; action: string; entityType: string; entityId: string; reason: string | null; createdAtUtc: string; correlationId: string }

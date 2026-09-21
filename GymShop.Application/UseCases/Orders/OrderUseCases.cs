@@ -19,7 +19,7 @@ public interface IGetOrderByIdUseCase
 
 public interface IGetOrdersUseCase
 {
-    Task<List<OrderSummaryResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default);
+    Task<AppResult<PagedOrdersResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default);
 }
 
 public interface ICancelOrderUseCase
@@ -100,24 +100,52 @@ public class GetOrdersUseCase : IGetOrdersUseCase
         _db = db;
     }
 
-    public async Task<List<OrderSummaryResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default)
+    public async Task<AppResult<PagedOrdersResponse>> ExecuteAsync(OrderFilterRequest filter, CancellationToken cancellationToken = default)
     {
-        var query = _db.Orders
-            .AsNoTracking()
-            .Include(x => x.User)
-            .Include(x => x.Payments)
-            .AsQueryable();
+        if (filter.Page < 1 || filter.PageSize is < 1 or > 100)
+            return AppResult<PagedOrdersResponse>.Failure(AppErrorType.Validation, "La paginacion solicitada no es valida.");
+        if (filter.FromUtc > filter.ToUtc)
+            return AppResult<PagedOrdersResponse>.Failure(AppErrorType.Validation, "El rango de fechas no es valido.");
 
-        if (!string.IsNullOrWhiteSpace(filter.UserEmail))
+        OrderStatus? status = null;
+        if (!string.IsNullOrWhiteSpace(filter.Status))
         {
-            var email = filter.UserEmail.Trim();
-            query = query.Where(x => x.User.Email.Contains(email));
+            if (!Enum.TryParse<OrderStatus>(filter.Status, true, out var parsed) || !Enum.IsDefined(parsed))
+                return AppResult<PagedOrdersResponse>.Failure(AppErrorType.Validation, "Estado de pedido invalido.");
+            status = parsed;
         }
 
-        return await query
-            .OrderByDescending(x => x.Id)
-            .Select(x => OrderMapper.ToSummaryResponse(x, x.User.Email))
+        var query = _db.Orders
+            .AsNoTracking()
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var search = filter.Search.Trim().ToLower();
+            var isOrderNumber = int.TryParse(search.TrimStart('#'), out var orderId);
+            query = query.Where(x =>
+                (isOrderNumber && x.Id == orderId) ||
+                x.User.Email.ToLower().Contains(search) ||
+                (x.User.Name + " " + (x.User.LastName ?? "")).ToLower().Contains(search));
+        }
+        if (status.HasValue) query = query.Where(x => x.Status == status.Value);
+        if (filter.FromUtc.HasValue) query = query.Where(x => x.CreatedAt >= filter.FromUtc.Value);
+        if (filter.ToUtc.HasValue) query = query.Where(x => x.CreatedAt <= filter.ToUtc.Value);
+
+        var total = await query.LongCountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .Select(x => new OrderSummaryResponse(
+                x.Id, x.UserId, x.User.Email,
+                (x.User.Name + " " + (x.User.LastName ?? "")).Trim(),
+                x.CreatedAt, x.Total, x.Status.ToString(), x.UpdatedAt,
+                x.Payments.OrderByDescending(payment => payment.Id).Select(payment => payment.Status.ToString()).FirstOrDefault(),
+                x.Payments.OrderByDescending(payment => payment.Id).Select(payment => (int?)payment.Id).FirstOrDefault()))
             .ToListAsync(cancellationToken);
+        var pages = total == 0 ? 0 : (int)Math.Ceiling(total / (double)filter.PageSize);
+        return AppResult<PagedOrdersResponse>.Success(new PagedOrdersResponse(items, filter.Page, filter.PageSize, total, pages));
     }
 }
 
@@ -248,14 +276,14 @@ internal static class OrderCompensation
         return true;
     }
 
-    public static bool RefundAndRestoreStockIfNotShipped(Order order)
+    public static bool ApplyConfirmedRefund(Order order)
     {
-        if (order.Status is not (OrderStatus.Paid or OrderStatus.Shipped))
+        if (order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
         {
             return false;
         }
 
-        var restoreStock = order.Status == OrderStatus.Paid;
+        var restoreStock = order.Status is OrderStatus.Paid or OrderStatus.Preparing;
         order.Status = OrderStatus.Refunded;
         order.UpdatedAt = DateTime.UtcNow;
 
@@ -311,6 +339,8 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
         }
 
         var oldStatus = order.Status;
+        if (request.ExpectedUpdatedAt.HasValue && order.UpdatedAt != request.ExpectedUpdatedAt.Value)
+            return AppResult.Failure(AppErrorType.Conflict, "El pedido fue actualizado por otro usuario. Recarga el detalle antes de continuar.");
         if (status == OrderStatus.Canceled)
         {
             OrderCompensation.CancelPendingAndRestoreStock(order, "Cancelacion administrativa del pedido.");
@@ -324,7 +354,14 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             new { status = oldStatus.ToString() },
             new { status = order.Status.ToString() },
             status == OrderStatus.Canceled ? "Cancelacion administrativa del pedido." : null);
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return AppResult.Failure(AppErrorType.Conflict, "El pedido fue actualizado por otro usuario. Recarga el detalle antes de continuar.");
+        }
 
         return AppResult.Success();
     }
@@ -342,7 +379,9 @@ internal static class OrderStatusTransitions
         return (current, next) switch
         {
             (OrderStatus.Pending, OrderStatus.Canceled) => true,
-            (OrderStatus.Paid, OrderStatus.Shipped) => true,
+            (OrderStatus.Paid, OrderStatus.Preparing) => true,
+            (OrderStatus.Preparing, OrderStatus.Shipped) => true,
+            (OrderStatus.Shipped, OrderStatus.Delivered) => true,
             _ => false
         };
     }
@@ -371,11 +410,14 @@ internal static class OrderMapper
             order.Id,
             order.UserId,
             order.User.Email,
+            $"{order.User.Name} {order.User.LastName}".Trim(),
+            order.User.Phone,
             order.CreatedAt,
             order.Total,
             order.Status.ToString(),
             order.ShippingAddress,
             order.CancellationReason,
+            order.UpdatedAt,
             order.Items
                 .OrderBy(x => x.Id)
                 .Select(x => new OrderItemResponse(x.ProductId, x.ProductName, x.UnitPrice, x.Quantity, x.Subtotal))
@@ -395,9 +437,11 @@ internal static class OrderMapper
             order.Id,
             order.UserId,
             userEmail,
+            $"{order.User.Name} {order.User.LastName}".Trim(),
             order.CreatedAt,
             order.Total,
             order.Status.ToString(),
+            order.UpdatedAt,
             lastPayment?.Status.ToString(),
             lastPayment?.Id
         );

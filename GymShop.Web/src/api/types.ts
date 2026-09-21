@@ -16,6 +16,7 @@ export interface Product { id: number; name: string; description: string | null;
 export interface ProductWrite { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
 export type CreateProductInput = ProductWrite
 export interface UpdateProductInput extends ProductWrite { isActive: boolean }
+export interface ProductImageUpload { url: string; key: string }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null }
 export interface Cart { id: number; userId: number; total: number; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }

@@ -1,18 +1,27 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Category } from '../../api/types'
 import { ProductImage } from '../catalog/ProductImage'
 import { PRODUCT_LIMITS, type ProductField, type ProductFormErrors, type ProductFormValues, validateProduct } from './productFormValidation'
 
-export function ProductForm({ mode, values: initialValues, categories, busy, serverErrors = {}, onSubmit }: {
+export function ProductForm({ mode, values: initialValues, categories, busy, busyLabel, serverErrors = {}, onSubmit }: {
   mode: 'create' | 'edit'
   values: ProductFormValues
   categories: Category[]
   busy: boolean
+  busyLabel?: string
   serverErrors?: ProductFormErrors
-  onSubmit(values: ProductFormValues): void
+  onSubmit(values: ProductFormValues, imageFile: File | null): void
 }) {
   const [values, setValues] = useState(initialValues)
   const [clientErrors, setClientErrors] = useState<ProductFormErrors>({})
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState('')
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!imageFile) { setPreviewUrl(null); return }
+    const url = URL.createObjectURL(imageFile); setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [imageFile])
   const errors = { ...serverErrors, ...clientErrors }
   const change = (field: ProductField, value: string) => { setValues(current => ({ ...current, [field]: value })); setClientErrors(current => ({ ...current, [field]: undefined })) }
   const fieldError = (field: ProductField) => errors[field] ? <small className="field-error" id={`${field}-error`}>{errors[field]}</small> : null
@@ -21,7 +30,7 @@ export function ProductForm({ mode, values: initialValues, categories, busy, ser
     if (busy) return
     const nextErrors = validateProduct(values)
     setClientErrors(nextErrors)
-    if (Object.keys(nextErrors).length === 0) onSubmit(values)
+    if (Object.keys(nextErrors).length === 0 && !fileError) onSubmit(values, imageFile)
   }}>
     <div className="product-form-fields">
       <label>Nombre<input aria-label="Nombre" name="name" value={values.name} maxLength={PRODUCT_LIMITS.name} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? 'name-error' : undefined} onChange={event => change('name', event.target.value)} />{fieldError('name')}</label>
@@ -32,9 +41,18 @@ export function ProductForm({ mode, values: initialValues, categories, busy, ser
       </div>
       <label>Categoría<select aria-label="Categoría" name="categoryId" value={values.categoryId} aria-invalid={Boolean(errors.categoryId)} aria-describedby={errors.categoryId ? 'categoryId-error' : undefined} onChange={event => change('categoryId', event.target.value)}><option value="">Seleccionar categoría</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}{'isActive' in category && category.isActive === false ? ' (inactiva, categoría actual)' : ''}</option>)}</select>{fieldError('categoryId')}</label>
       <label>URL de imagen<input aria-label="URL de imagen" name="imageUrl" type="url" value={values.imageUrl} maxLength={PRODUCT_LIMITS.imageUrl} placeholder="https://… o /images/…" aria-invalid={Boolean(errors.imageUrl)} aria-describedby={errors.imageUrl ? 'imageUrl-error' : undefined} onChange={event => change('imageUrl', event.target.value)} />{fieldError('imageUrl')}</label>
+      <label>Subir imagen<input aria-label="Subir imagen" name="imageFile" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} aria-invalid={Boolean(fileError)} aria-describedby={fileError ? 'imageFile-error' : 'imageFile-help'} onChange={event => {
+        const file = event.target.files?.[0] ?? null
+        if (!file) { setImageFile(null); setFileError(''); return }
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setImageFile(null); setFileError('Solo se permiten imágenes JPEG, PNG o WebP.'); return }
+        if (file.size > 5 * 1024 * 1024) { setImageFile(null); setFileError('La imagen no puede superar los 5 MB.'); return }
+        setImageFile(file); setFileError('')
+      }} />{fileError ? <small className="field-error" id="imageFile-error">{fileError}</small> : <small id="imageFile-help">JPEG, PNG o WebP, hasta 5 MB. La imagen subida tendrá prioridad sobre la URL manual.</small>}
+        {imageFile && <small role="status">Seleccionada: {imageFile.name} ({(imageFile.size / 1024).toFixed(1)} KB). Podés elegir otra antes de guardar.</small>}
+      </label>
       {mode === 'edit' && <label className="product-active"><input type="checkbox" checked={values.isActive} onChange={event => setValues(current => ({ ...current, isActive: event.target.checked }))} /> Producto activo</label>}
     </div>
-    <aside className="product-form-preview"><span>Vista previa</span><div><ProductImage src={values.imageUrl.trim() && !errors.imageUrl ? values.imageUrl.trim() : null} alt={values.name.trim() || 'Nuevo producto'} /></div><small>Si la imagen no puede cargarse, se mostrará el reemplazo visual de la tienda.</small></aside>
-    <div className="product-form-actions"><button className="primary" type="submit" disabled={busy || categories.length === 0}>{busy ? 'Guardando…' : mode === 'create' ? 'Crear producto' : 'Guardar cambios'}</button></div>
+    <aside className="product-form-preview"><span>Vista previa</span><div><ProductImage src={previewUrl ?? (values.imageUrl.trim() && !errors.imageUrl ? values.imageUrl.trim() : null)} alt={values.name.trim() || 'Nuevo producto'} /></div><small>Si la imagen no puede cargarse, se mostrará el reemplazo visual de la tienda.</small></aside>
+    <div className="product-form-actions"><button className="primary" type="submit" disabled={busy || categories.length === 0}>{busy ? busyLabel || 'Guardando…' : mode === 'create' ? 'Crear producto' : 'Guardar cambios'}</button></div>
   </form>
 }

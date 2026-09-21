@@ -27,6 +27,11 @@ services:
       SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
       SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
       SeedSuperAdmin__Password: ${GYMSHOP_SEED_ADMIN_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      PRODUCT_IMAGE_BUCKET: ${PRODUCT_IMAGE_BUCKET:-gymshop-product-images}
     ports:
       - "8080:8080"
     depends_on:

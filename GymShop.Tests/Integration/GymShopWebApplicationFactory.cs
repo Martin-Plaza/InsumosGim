@@ -8,9 +8,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Npgsql;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace GymShop.Tests.Integration;
 
@@ -19,13 +21,20 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
     private const string TestJwtSecret = "GymShop_HTTP_Tests_Secret_64_Characters_Long_And_Not_Production_12345";
     private readonly IReadOnlyDictionary<string, string?> _overrides;
     private readonly Action<IServiceCollection>? _configureServices;
+    private readonly bool _useInMemoryDatabase;
+    private readonly string _inMemoryDatabaseName = $"GymShopHttp_{Guid.NewGuid():N}";
+    private readonly IServiceProvider _inMemoryProvider = new ServiceCollection()
+        .AddEntityFrameworkInMemoryDatabase()
+        .BuildServiceProvider();
 
     public GymShopWebApplicationFactory(
         IReadOnlyDictionary<string, string?>? overrides = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        bool useInMemoryDatabase = false)
     {
         _overrides = overrides ?? new Dictionary<string, string?>();
         _configureServices = configureServices;
+        _useInMemoryDatabase = useInMemoryDatabase;
         var baseConnection = Environment.GetEnvironmentVariable("GYMSHOP_TEST_POSTGRES") ??
             "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
         var builder = new NpgsqlConnectionStringBuilder(baseConnection)
@@ -40,6 +49,11 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            logging.AddDebug();
+        });
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             var values = new Dictionary<string, string?>
@@ -60,7 +74,14 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
         {
             services.RemoveAll<DbContextOptions<GymShopDbContext>>();
             services.RemoveAll<GymShopDbContext>();
-            services.AddDbContext<GymShopDbContext>(options => options.UseNpgsql(ConnectionString));
+            if (_useInMemoryDatabase) services.RemoveAll<IDatabaseProvider>();
+            services.AddDbContext<GymShopDbContext>(options =>
+            {
+                if (_useInMemoryDatabase) options
+                    .UseInMemoryDatabase(_inMemoryDatabaseName)
+                    .UseInternalServiceProvider(_inMemoryProvider);
+                else options.UseNpgsql(ConnectionString);
+            });
             _configureServices?.Invoke(services);
         });
     }
@@ -75,7 +96,9 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
     {
         _ = Server;
         await using var scope = Services.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<GymShopDbContext>().Database.MigrateAsync();
+        var database = scope.ServiceProvider.GetRequiredService<GymShopDbContext>().Database;
+        if (_useInMemoryDatabase) await database.EnsureCreatedAsync();
+        else await database.MigrateAsync();
     }
 
     async Task IAsyncLifetime.DisposeAsync()

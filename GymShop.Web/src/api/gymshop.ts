@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, RegistrationPending, Role, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -20,6 +20,11 @@ export const api = {
   product: (id: number) => request<Product>(`/api/products/${id}`),
   createProduct: (data: CreateProductInput) => request<Product>('/api/products', json('POST', data)),
   updateProduct: (id: number, data: UpdateProductInput) => request<Product>(`/api/products/${id}`, json('PUT', data)),
+  uploadProductImage: (file: File, productId?: number) => {
+    const body = new FormData(); body.append('file', file); if (productId) body.append('productId', String(productId))
+    return request<ProductImageUpload>('/api/products/images', { method: 'POST', body })
+  },
+  deleteProductImage: (data: { key?: string; url?: string }) => request<void>('/api/products/images', json('DELETE', data)),
   setProductStock: (id: number, stock: number) => request<void>(`/api/products/${id}/stock`, json('PATCH', { stock })),
   setProductStatus: (id: number, isActive: boolean) => request<void>(`/api/products/${id}/status`, json('PATCH', { isActive })),
   cart: () => request<Cart>('/api/cart'),

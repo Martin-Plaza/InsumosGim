@@ -1,6 +1,8 @@
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Products;
+using GymShop.Application.DTOs.Stock;
 using GymShop.Application.UseCases.Products;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Tests.TestSupport;
 
@@ -41,6 +43,23 @@ public class ProductUseCaseTests
     }
 
     [Fact]
+    public async Task General_update_uses_current_stock_when_form_was_loaded_with_stale_stock()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var product = new Product { Name = "Producto", Description = "Anterior", Price = 100, Stock = 10 };
+        db.Products.Add(product); await db.SaveChangesAsync();
+
+        product.Stock = 9;
+        await db.SaveChangesAsync();
+        var result = await new UpdateProductUseCase(db).ExecuteAsync(product.Id,
+            new UpdateProductRequest("Producto", "Descripción actualizada", 100, null, true));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Descripción actualizada", product.Description);
+        Assert.Equal(9, product.Stock);
+    }
+
+    [Fact]
     public async Task Create_and_update_responses_include_selected_category()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -57,7 +76,7 @@ public class ProductUseCaseTests
 
         var updated = await new UpdateProductUseCase(db).ExecuteAsync(
             created.Value!.Id,
-            new UpdateProductRequest("Producto", "Descripción", 100, 5, null, true, cardio.Id));
+            new UpdateProductRequest("Producto", "Descripción", 100, null, true, cardio.Id));
 
         Assert.True(updated.IsSuccess);
         Assert.Equal("cardio", updated.Value?.Category?.Slug);
@@ -149,12 +168,12 @@ public class ProductUseCaseTests
         await db.SaveChangesAsync();
         var auditContext = new FakeAuditContext(actor.Id, "corr-product");
 
-        var stock = await new UpdateProductStockUseCase(db, auditContext).ExecuteAsync(product.Id, new UpdateProductStockRequest(8));
+        var stock = await new AdjustStockUseCase(db, auditContext).ExecuteAsync(product.Id, new ManualStockAdjustmentRequest("ManualEntry", 3, "Reposición"));
         var status = await new UpdateProductStatusUseCase(db, auditContext).ExecuteAsync(product.Id, new UpdateProductStatusRequest(false));
 
         Assert.True(stock.IsSuccess);
         Assert.True(status.IsSuccess);
-        Assert.Equal(["ProductStockChanged", "ProductStatusChanged"], db.AuditEntries.Select(x => x.Action).ToArray());
+        Assert.Equal(["ProductStockAdjusted", "ProductStatusChanged"], db.AuditEntries.Select(x => x.Action).ToArray());
         Assert.All(db.AuditEntries, entry => Assert.Equal("corr-product", entry.CorrelationId));
         Assert.DoesNotContain("secret-hash", string.Join('|', db.AuditEntries.Select(x => x.OldValue + x.NewValue + x.Reason)));
     }
@@ -163,8 +182,8 @@ public class ProductUseCaseTests
     public async Task Failed_product_change_does_not_create_success_audit()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
-        var result = await new UpdateProductStockUseCase(db, new FakeAuditContext(1, "corr-failed"))
-            .ExecuteAsync(999999, new UpdateProductStockRequest(4));
+        var result = await new AdjustStockUseCase(db, new FakeAuditContext(1, "corr-failed"))
+            .ExecuteAsync(999999, new ManualStockAdjustmentRequest("ManualEntry", 4, "Reposición"));
 
         Assert.False(result.IsSuccess);
         Assert.Empty(db.AuditEntries);

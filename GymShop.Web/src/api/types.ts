@@ -13,9 +13,12 @@ export interface Category extends CategorySummary { description: string | null; 
 export interface AdminCategory extends Category { isActive: boolean; productCount: number }
 export interface CategoryInput { name: string; slug: string; description: string | null; displayOrder: number }
 export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null }
-export interface ProductWrite { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
-export type CreateProductInput = ProductWrite
-export interface UpdateProductInput extends ProductWrite { isActive: boolean }
+export interface CreateProductInput { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
+export interface UpdateProductInput { name: string; description: string | null; price: number; imageUrl: string | null; isActive: boolean; categoryId: number | null }
+export type StockMovementType = 'InitialStock' | 'Sale' | 'CancellationReturn' | 'ManualEntry' | 'ManualCorrection' | 'LossDamage'
+export interface StockMovement { id: number; productId: number; productName: string; type: StockMovementType; quantity: number; previousStock: number; resultingStock: number; reason: string; actorUserId: number | null; actorName: string | null; orderId: number | null; createdAtUtc: string }
+export interface StockMovementPage { items: StockMovement[]; page: number; pageSize: number; totalItems: number; totalPages: number }
+export interface StockAdjustment { productId: number; previousStock: number; resultingStock: number; movement: StockMovement }
 export interface ProductImageUpload { url: string; key: string }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null }
 export interface Cart { id: number; userId: number; total: number; items: CartItem[] }
@@ -30,5 +33,15 @@ export interface OrderHistoryEvent { id: number; action: string; previousStatus:
 export interface Payment { id: number; orderId: number; provider: string; externalReference: string; providerPreferenceId: string | null; providerPaymentId: string | null; idempotencyKey: string | null; amount: number; currency: string; status: PaymentStatus; checkoutUrl: string | null; failureReason: string | null; createdAt: string; updatedAt: string | null; paidAt: string | null }
 export interface AuditPage { items: AuditEntry[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface AuditEntry { id: number; actorUserId: number | null; action: string; entityType: string; entityId: string; reason: string | null; createdAtUtc: string; correlationId: string }
+export interface DashboardStatusCount { status: OrderStatus; count: number }
+export interface DashboardDailySales { date: string; amount: number; orders: number }
+export interface DashboardTopProduct { productId: number; productName: string; quantity: number; amount: number }
+export interface DashboardStockProduct { productId: number; productName: string; stock: number; isActive: boolean }
+export interface DashboardStatistics {
+  fromUtc: string; toUtc: string; timeZoneId: string; totalSales: number; paidOrders: number; averageTicket: number
+  ordersByStatus: DashboardStatusCount[]; salesByDay: DashboardDailySales[]; topProducts: DashboardTopProduct[]
+  outOfStockProducts: DashboardStockProduct[]; lowStockProducts: DashboardStockProduct[]; lowStockThreshold: number
+}
+export interface DashboardFilters { period?: '7d' | '30d' | 'month'; from?: string; to?: string }
 
 export interface ApiErrorShape { status: number; message: string; traceId?: string; retryAfter?: number; validationErrors?: Record<string, string[]> }

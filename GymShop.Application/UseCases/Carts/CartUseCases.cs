@@ -3,6 +3,7 @@ using GymShop.Application.Common;
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Orders;
 using GymShop.Application.UseCases.Orders;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -303,8 +304,11 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             });
 
             order.Total += line.Subtotal;
+            var previousStock = line.Product.Stock;
             line.Product.Stock -= line.Quantity;
             line.Product.UpdatedAt = DateTime.UtcNow;
+            StockMovementRecorder.Add(_db, line.Product, StockMovementType.Sale, -line.Quantity, previousStock,
+                "Reserva de stock al crear el pedido.", order: order);
         }
 
         _db.Orders.Add(order);

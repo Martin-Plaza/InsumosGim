@@ -62,5 +62,9 @@ export function toProductInput(values: ProductFormValues): CreateProductInput {
 }
 
 export function toUpdateProductInput(values: ProductFormValues): UpdateProductInput {
-  return { ...toProductInput(values), isActive: values.isActive }
+  return {
+    name: values.name.trim(), description: values.description.trim() || null,
+    price: Number(values.price), imageUrl: values.imageUrl.trim() || null,
+    categoryId: Number(values.categoryId), isActive: values.isActive,
+  }
 }

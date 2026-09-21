@@ -1,7 +1,9 @@
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Products;
+using GymShop.Application.DTOs.Stock;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Products;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -49,8 +51,8 @@ public sealed class PostgresDomainConcurrencyTests
         var barrier = new ProductSaveBarrier(2);
         await using var firstDb = database.CreateContext(barrier);
         await using var secondDb = database.CreateContext(barrier);
-        var first = new UpdateProductStockUseCase(firstDb).ExecuteAsync(productId, new UpdateProductStockRequest(10));
-        var second = new UpdateProductStockUseCase(secondDb).ExecuteAsync(productId, new UpdateProductStockRequest(20));
+        var first = new AdjustStockUseCase(firstDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest("ManualCorrection", 7, "Corrección concurrente"));
+        var second = new AdjustStockUseCase(secondDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest("ManualCorrection", 17, "Corrección concurrente"));
         await barrier.AllArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
         barrier.Release.TrySetResult();
         var results = await Task.WhenAll(first, second);

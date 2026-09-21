@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -25,8 +25,14 @@ export const api = {
     return request<ProductImageUpload>('/api/products/images', { method: 'POST', body })
   },
   deleteProductImage: (data: { key?: string; url?: string }) => request<void>('/api/products/images', json('DELETE', data)),
-  setProductStock: (id: number, stock: number) => request<void>(`/api/products/${id}/stock`, json('PATCH', { stock })),
   setProductStatus: (id: number, isActive: boolean) => request<void>(`/api/products/${id}/status`, json('PATCH', { isActive })),
+  stockMovements: (filters: { productId?: number; page?: number; pageSize?: number; type?: string; fromUtc?: string; toUtc?: string } = {}) => {
+    const query = new URLSearchParams(); Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)) })
+    return request<StockMovementPage>(`/api/stock/movements?${query}`)
+  },
+  productStockMovements: (productId: number, page = 1) => request<StockMovementPage>(`/api/stock/products/${productId}/movements?page=${page}&pageSize=20`),
+  adjustStock: (productId: number, data: { type: Extract<StockMovementType, 'ManualEntry' | 'ManualCorrection' | 'LossDamage'>; quantity: number; reason: string }) =>
+    request<StockAdjustment>(`/api/stock/products/${productId}/adjustments`, json('POST', data)),
   cart: () => request<Cart>('/api/cart'),
   addCartItem: (productId: number, quantity: number) => request<Cart>('/api/cart/items', json('POST', { productId, quantity })),
   updateCartItem: (productId: number, quantity: number) => request<Cart>(`/api/cart/items/${productId}`, json('PUT', { quantity })),
@@ -52,6 +58,11 @@ export const api = {
   setUserRole: (id: number, role: Role) => request<void>(`/api/users/${id}/role`, json('PATCH', { role })),
   setUserStatus: (id: number, isActive: boolean) => request<void>(`/api/users/${id}/status`, json('PATCH', { isActive })),
   audit: () => request<AuditPage>('/api/audit?page=1&pageSize=50'),
+  dashboard: (filters: DashboardFilters = { period: '30d' }) => {
+    const query = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value) })
+    return request<DashboardStatistics>(`/api/admin/dashboard?${query}`)
+  },
 }
 
 export function paymentKey(orderId: number) {

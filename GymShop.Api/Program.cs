@@ -50,6 +50,8 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddApplication();
+var storeTimeZone = new StoreTimeZone(builder.Configuration["Store:TimeZone"]);
+builder.Services.AddSingleton<IStoreTimeZone>(storeTimeZone);
 builder.Services.AddSingleton(PaymentCreationPolicy.FromSeconds(
     builder.Configuration.GetValue("Payments:CreatingTimeoutSeconds", 300)));
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -157,6 +159,11 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+if (storeTimeZone.IsFallback)
+{
+    app.Logger.LogWarning("Store:TimeZone is invalid. Dashboard date calculations are falling back to UTC.");
+}
 
 _ = app.Services.GetRequiredService<IOptions<GymShopRateLimitingOptions>>().Value;
 _ = app.Services.GetRequiredService<IOptions<ReverseProxyOptions>>().Value;

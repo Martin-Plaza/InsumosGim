@@ -2,6 +2,8 @@ using GymShop.Application.DTOs.Audit;
 using GymShop.Application.UseCases.Audit;
 using GymShop.Application.UseCases.Products;
 using GymShop.Application.DTOs.Products;
+using GymShop.Application.DTOs.Stock;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Infrastructure.Data;
 using GymShop.Tests.TestSupport;
@@ -47,8 +49,8 @@ public class AuditUseCaseTests
         await using (var failing = new GymShopDbContext(failingOptions))
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                new UpdateProductStockUseCase(failing, new FakeAuditContext(null, "corr-fail"))
-                    .ExecuteAsync(10, new UpdateProductStockRequest(9)));
+                new AdjustStockUseCase(failing, new FakeAuditContext(null, "corr-fail"))
+                    .ExecuteAsync(10, new ManualStockAdjustmentRequest("ManualEntry", 4, "Reposición")));
         }
 
         await using var verification = new GymShopDbContext(normalOptions);

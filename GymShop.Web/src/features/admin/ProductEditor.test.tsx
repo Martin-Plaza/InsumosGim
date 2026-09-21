@@ -175,4 +175,56 @@ describe('alta y edición administrativa de productos', () => {
     resolveCreate(new Response(JSON.stringify({ ...product, name: 'Producto nuevo' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     await waitFor(() => expect(window.location.pathname).toBe('/admin/productos'))
   })
+
+  it('muestra archivo, sube la imagen y conserva la URL manual hasta guardar', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/nuevo')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/products/images') && init?.method === 'POST') return json({ url: 'https://storage.test/bucket/products/draft/uuid.png', key: 'products/draft/uuid.png' }, 201)
+      return defaultApi(input, init)
+    })
+    render(<App />); await screen.findByRole('button', { name: 'Crear producto' }); await fillValidCreateForm()
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'producto.png', { type: 'image/png' })
+    await userEvent.upload(screen.getByLabelText('Subir imagen'), file)
+    expect(screen.getByRole('status')).toHaveTextContent('producto.png')
+    expect(screen.getByLabelText('URL de imagen')).toHaveValue('/images/products/nuevo.webp')
+    await userEvent.click(screen.getByRole('button', { name: 'Crear producto' }))
+    await screen.findByText(/fue creado correctamente/)
+    const createCall = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith('/api/products') && init?.method === 'POST')
+    expect(JSON.parse(String(createCall?.[1]?.body)).imageUrl).toBe('https://storage.test/bucket/products/draft/uuid.png')
+  })
+
+  it('elimina la imagen nueva si falla guardar el producto', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/nuevo')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/products/images') && init?.method === 'POST') return json({ url: 'https://storage.test/bucket/products/draft/uuid.webp', key: 'products/draft/uuid.webp' }, 201)
+      if (url.endsWith('/api/products') && init?.method === 'POST') return json({ message: 'No se pudo guardar.' }, 500)
+      if (url.endsWith('/api/products/images') && init?.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
+      return defaultApi(input, init)
+    })
+    render(<App />); await screen.findByRole('button', { name: 'Crear producto' }); await fillValidCreateForm()
+    await userEvent.upload(screen.getByLabelText('Subir imagen'), new File(['webp'], 'producto.webp', { type: 'image/webp' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Crear producto' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar.')
+    const deleteCall = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith('/api/products/images') && init?.method === 'DELETE')
+    expect(JSON.parse(String(deleteCall?.[1]?.body)).key).toBe('products/draft/uuid.webp')
+  })
+
+  it('elimina la imagen anterior solo después de actualizar con éxito', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/7/editar')
+    const order: string[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/products/images') && init?.method === 'POST') { order.push('upload'); return json({ url: 'https://storage.test/bucket/products/7/new.jpg', key: 'products/7/new.jpg' }, 201) }
+      if (url.endsWith('/api/products/7') && init?.method === 'PUT') { order.push('save'); return json({ ...product, imageUrl: 'https://storage.test/bucket/products/7/new.jpg' }) }
+      if (url.endsWith('/api/products/images') && init?.method === 'DELETE') { order.push('delete-old'); return Promise.resolve(new Response(null, { status: 204 })) }
+      return defaultApi(input, init)
+    })
+    render(<App />); await screen.findByLabelText('Subir imagen')
+    await userEvent.upload(screen.getByLabelText('Subir imagen'), new File(['jpeg'], 'new.jpg', { type: 'image/jpeg' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await screen.findByText(/fue actualizado correctamente/)
+    expect(order).toEqual(['upload', 'save', 'delete-old'])
+  })
 })

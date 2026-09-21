@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using GymShop.Infrastructure.Configuration;
 
 namespace GymShop.Infrastructure;
 
@@ -19,6 +20,10 @@ public static class DependencyInjection
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<GymShopDbContext>());
         services.AddScoped<ITransactionManager, EfTransactionManager>();
+        services.AddOptions<ProductImageStorageOptions>()
+            .Configure(options => options.BucketName = configuration["PRODUCT_IMAGE_BUCKET"] ?? string.Empty);
+        services.AddSingleton<IProductImageStorage>(provider =>
+            ActivatorUtilities.CreateInstance<NeonProductImageStorage>(provider, configuration));
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IVerificationEmailSender, MockVerificationEmailSender>();

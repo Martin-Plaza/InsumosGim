@@ -11,6 +11,10 @@ const products = [
 const orders = [{ id: 10, userId: 7, userEmail: 'cliente@gym.com', userName: 'Cliente Gym', createdAt: '2026-09-20T12:00:00Z', updatedAt: null, total: 15000, status: 'Pending', lastPaymentStatus: null, lastPaymentId: null }]
 const orderPage = { items: orders, page: 1, pageSize: 20, totalItems: 1, totalPages: 1 }
 const orderDetail = { ...orders[0], userPhone: null, shippingAddress: 'Av. Siempre Viva 742', cancellationReason: null, items: [{ productId: 1, productName: 'Mancuerna 10kg', unitPrice: 15000, quantity: 1, subtotal: 15000 }], payments: [] }
+const orderHistory = [
+  { id: 1, action: 'OrderStatusChanged', previousStatus: 'Paid', newStatus: 'Preparing', reason: null, createdAtUtc: '2026-09-20T13:00:00Z', actorUserId: 1, actorName: 'Admin Gym', actorEmail: 'admin@gym.com', source: 'Manual' },
+  { id: 2, action: 'PaymentPartialRefundFlagged', previousStatus: 'Approved', newStatus: 'Approved', reason: 'Reembolso parcial; requiere gestión manual.', createdAtUtc: '2026-09-20T14:00:00Z', actorUserId: null, actorName: null, actorEmail: null, source: 'Provider' },
+]
 
 function signIn(role: 'User' | 'Admin' | 'SuperAdmin') {
   localStorage.setItem('gymshop.token', 'jwt')
@@ -21,6 +25,7 @@ function apiMock(input: RequestInfo | URL, init?: RequestInit) {
   const url = String(input)
   if (url.includes('/api/cart')) return response({ id: 1, userId: 1, total: 0, items: [] })
   if (url.includes('/api/products')) return init?.method === 'PATCH' ? response(null) : response(products)
+  if (url.includes('/api/orders/10/history')) return response(orderHistory)
   if (/\/api\/orders\/10$/.test(url)) return response(orderDetail)
   if (url.includes('/api/orders')) return init?.method === 'PATCH' ? Promise.resolve(new Response(null, { status: 204 })) : response(orderPage)
   if (url.includes('/api/users')) return response([])
@@ -106,9 +111,57 @@ describe('panel administrativo', () => {
     render(<App />)
     await userEvent.click(await screen.findByText('#10'))
     expect(await screen.findByRole('heading', { name: /15\.000,00/ })).toBeInTheDocument()
+    expect(await screen.findByText('Estado del pedido actualizado')).toBeInTheDocument()
+    expect(screen.getByText('Admin Gym · admin@gym.com')).toBeInTheDocument()
+    expect(screen.getByText('Reembolso parcial informado por el proveedor')).toBeInTheDocument()
+    expect(screen.getByText('Reembolso parcial; requiere gestión manual.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Marcar como cancelado' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/orders/10/status'), expect.objectContaining({ method: 'PATCH' })))
     expect(window.confirm).toHaveBeenCalled()
+  })
+
+  it('mantiene el detalle visible si falla el historial y permite reintentarlo', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    let historyLoads = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (String(input).includes('/api/orders/10/history')) return ++historyLoads === 1 ? response({ message: 'No se pudo cargar el historial.' }, 500) : response(orderHistory)
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+    expect(await screen.findByText('Av. Siempre Viva 742')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo cargar el historial.')
+    expect(screen.getByRole('heading', { name: 'Cliente' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar historial' }))
+    expect(await screen.findByText('Estado del pedido actualizado')).toBeInTheDocument()
+    expect(historyLoads).toBe(2)
+  })
+
+  it('ignora el historial tardío de un pedido anterior', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const secondSummary = { ...orders[0], id: 11, userName: 'Segundo Cliente', userEmail: 'segundo@gym.com' }
+    const secondDetail = { ...orderDetail, ...secondSummary, shippingAddress: 'Calle B 456' }
+    let resolveFirstHistory!: (value: Response) => void
+    const firstHistory = new Promise<Response>(resolve => { resolveFirstHistory = resolve })
+    const historyB = [{ ...orderHistory[0], id: 20, action: 'OrderCanceled', previousStatus: 'Pending', newStatus: 'Canceled', reason: 'Evento exclusivo de B' }]
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/orders/10/history')) return firstHistory
+      if (url.includes('/api/orders/11/history')) return response(historyB)
+      if (/\/api\/orders\/10$/.test(url)) return response(orderDetail)
+      if (/\/api\/orders\/11$/.test(url)) return response(secondDetail)
+      if (url.includes('/api/orders')) return response({ items: [orders[0], secondSummary], page: 1, pageSize: 20, totalItems: 2, totalPages: 1 })
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+    expect(await screen.findByText('Av. Siempre Viva 742')).toBeInTheDocument()
+    await userEvent.click(screen.getByText('#11'))
+    expect(await screen.findByText('Calle B 456')).toBeInTheDocument()
+    expect(await screen.findByText('Evento exclusivo de B')).toBeInTheDocument()
+    resolveFirstHistory(new Response(JSON.stringify([{ ...orderHistory[0], id: 99, reason: 'Evento tardío de A' }]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    await waitFor(() => expect(screen.queryByText('Evento tardío de A')).not.toBeInTheDocument())
+    expect(screen.getByText('Evento exclusivo de B')).toBeInTheDocument()
   })
 
   it('muestra errores de API del listado de pedidos y permite reintentar', async () => {

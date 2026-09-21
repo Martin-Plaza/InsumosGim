@@ -4,6 +4,7 @@ using GymShop.Application.DTOs.Orders;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace GymShop.Application.UseCases.Orders;
 
@@ -35,6 +36,11 @@ public interface IExpirePendingOrdersUseCase
 public interface IUpdateOrderStatusUseCase
 {
     Task<AppResult> ExecuteAsync(int id, UpdateOrderStatusRequest request, CancellationToken cancellationToken = default);
+}
+
+public interface IGetOrderHistoryUseCase
+{
+    Task<AppResult<List<OrderHistoryEventResponse>>> ExecuteAsync(int orderId, CancellationToken cancellationToken = default);
 }
 
 public class GetMyOrdersUseCase : IGetMyOrdersUseCase
@@ -146,6 +152,76 @@ public class GetOrdersUseCase : IGetOrdersUseCase
             .ToListAsync(cancellationToken);
         var pages = total == 0 ? 0 : (int)Math.Ceiling(total / (double)filter.PageSize);
         return AppResult<PagedOrdersResponse>.Success(new PagedOrdersResponse(items, filter.Page, filter.PageSize, total, pages));
+    }
+}
+
+public sealed class GetOrderHistoryUseCase : IGetOrderHistoryUseCase
+{
+    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderCanceled", "OrderExpiredAdministratively"];
+    private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged"];
+    private readonly IApplicationDbContext _db;
+
+    public GetOrderHistoryUseCase(IApplicationDbContext db) => _db = db;
+
+    public async Task<AppResult<List<OrderHistoryEventResponse>>> ExecuteAsync(int orderId, CancellationToken cancellationToken = default)
+    {
+        if (!await _db.Orders.AsNoTracking().AnyAsync(x => x.Id == orderId, cancellationToken))
+            return AppResult<List<OrderHistoryEventResponse>>.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
+
+        var orderEntityId = orderId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var paymentIds = (await _db.Payments.AsNoTracking()
+            .Where(x => x.OrderId == orderId)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken))
+            .Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
+
+        var rows = await _db.AuditEntries.AsNoTracking()
+            .Where(x =>
+                (x.EntityType == "Order" && x.EntityId == orderEntityId && OrderActions.Contains(x.Action)) ||
+                (x.EntityType == "Payment" && paymentIds.Contains(x.EntityId) && PaymentActions.Contains(x.Action)))
+            .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id, x.Action, x.OldValue, x.NewValue, x.Reason, x.CreatedAtUtc, x.ActorUserId,
+                ActorName = x.ActorUser == null ? null : (x.ActorUser.Name + " " + (x.ActorUser.LastName ?? "")).Trim(),
+                ActorEmail = x.ActorUser == null ? null : x.ActorUser.Email
+            })
+            .ToListAsync(cancellationToken);
+
+        var events = rows.Select(x => new OrderHistoryEventResponse(
+            x.Id,
+            x.Action,
+            ReadStatus(x.OldValue),
+            ReadStatus(x.NewValue),
+            x.Reason,
+            x.CreatedAtUtc,
+            x.ActorUserId,
+            x.ActorName,
+            x.ActorEmail,
+            x.Action.Contains("ByProvider", StringComparison.Ordinal) || x.Action is "PaymentRefundedByProvider" or "PaymentPartialRefundFlagged"
+                ? "Provider"
+                : x.ActorUserId.HasValue ? "Manual" : "Automatic"))
+            .ToList();
+
+        return AppResult<List<OrderHistoryEventResponse>>.Success(events);
+    }
+
+    private static string? ReadStatus(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            foreach (var property in new[] { "orderStatus", "status" })
+                if (document.RootElement.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+        }
+        catch (JsonException)
+        {
+            // Historical audit data may be malformed; keep the event without status details.
+        }
+        return null;
     }
 }
 

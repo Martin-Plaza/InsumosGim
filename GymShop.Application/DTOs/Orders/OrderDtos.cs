@@ -55,6 +55,18 @@ public sealed record PagedOrdersResponse(
     long TotalItems,
     int TotalPages);
 
+public sealed record OrderHistoryEventResponse(
+    long Id,
+    string Action,
+    string? PreviousStatus,
+    string? NewStatus,
+    string? Reason,
+    DateTime CreatedAtUtc,
+    int? ActorUserId,
+    string? ActorName,
+    string? ActorEmail,
+    string Source);
+
 public record OrderItemResponse(
     int ProductId,
     string ProductName,

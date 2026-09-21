@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderFilters, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -40,6 +40,7 @@ export const api = {
     return request<OrderPage>(`/api/orders?${query}`)
   },
   order: (id: number) => request<Order>(`/api/orders/${id}`),
+  orderHistory: (id: number) => request<OrderHistoryEvent[]>(`/api/orders/${id}/history`),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
   setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt })),
   createPayment: (orderId: number, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider: 'Mock', idempotencyKey })),

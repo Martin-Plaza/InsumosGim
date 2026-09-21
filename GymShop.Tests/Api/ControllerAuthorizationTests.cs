@@ -78,7 +78,7 @@ public class ControllerAuthorizationTests
     [Fact]
     public void Order_administration_is_restricted_to_admins()
     {
-        var methods = new[] { nameof(OrdersController.GetAll), nameof(OrdersController.UpdateStatus), nameof(OrdersController.ExpirePending) };
+        var methods = new[] { nameof(OrdersController.GetAll), nameof(OrdersController.GetHistory), nameof(OrdersController.UpdateStatus), nameof(OrdersController.ExpirePending) };
         foreach (var name in methods)
         {
             var authorize = typeof(OrdersController).GetMethod(name)!.GetCustomAttribute<AuthorizeAttribute>();

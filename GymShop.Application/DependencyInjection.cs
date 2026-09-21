@@ -41,6 +41,7 @@ public static class DependencyInjection
         services.AddScoped<IGetMyOrdersUseCase, GetMyOrdersUseCase>();
         services.AddScoped<IGetOrderByIdUseCase, GetOrderByIdUseCase>();
         services.AddScoped<IGetOrdersUseCase, GetOrdersUseCase>();
+        services.AddScoped<IGetOrderHistoryUseCase, GetOrderHistoryUseCase>();
         services.AddScoped<IUpdateOrderStatusUseCase, UpdateOrderStatusUseCase>();
         services.AddScoped<ICancelOrderUseCase, CancelOrderUseCase>();
         services.AddScoped<IExpirePendingOrdersUseCase, ExpirePendingOrdersUseCase>();

@@ -74,4 +74,19 @@ public class ControllerAuthorizationTests
         foreach (var name in methods) Assert.Equal("Admin,SuperAdmin", typeof(CategoriesController).GetMethod(name)!.GetCustomAttribute<AuthorizeAttribute>()!.Roles);
         Assert.Null(typeof(CategoriesController).GetMethod(nameof(CategoriesController.GetAll))!.GetCustomAttribute<AuthorizeAttribute>());
     }
+
+    [Fact]
+    public void Order_administration_is_restricted_to_admins()
+    {
+        var methods = new[] { nameof(OrdersController.GetAll), nameof(OrdersController.UpdateStatus), nameof(OrdersController.ExpirePending) };
+        foreach (var name in methods)
+        {
+            var authorize = typeof(OrdersController).GetMethod(name)!.GetCustomAttribute<AuthorizeAttribute>();
+            Assert.NotNull(authorize);
+            Assert.Equal("Admin,SuperAdmin", authorize!.Roles);
+            Assert.DoesNotContain("User", SplitRoles(authorize.Roles));
+        }
+
+        Assert.NotNull(typeof(OrdersController).GetCustomAttribute<AuthorizeAttribute>());
+    }
 }

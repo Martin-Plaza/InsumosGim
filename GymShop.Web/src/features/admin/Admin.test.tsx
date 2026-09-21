@@ -8,7 +8,9 @@ const products = [
   { id: 1, name: 'Mancuerna 10kg', description: null, price: 15000, stock: 3, imageUrl: null, isActive: true, category: { id: 1, name: 'Fuerza', slug: 'fuerza' } },
   { id: 2, name: 'Colchoneta', description: null, price: 9000, stock: 0, imageUrl: null, isActive: false, category: { id: 2, name: 'Movilidad', slug: 'movilidad' } },
 ]
-const orders = [{ id: 10, userId: 7, userEmail: 'cliente@gym.com', createdAt: '2026-09-20T12:00:00Z', total: 15000, status: 'Pending', lastPaymentStatus: null, lastPaymentId: null }]
+const orders = [{ id: 10, userId: 7, userEmail: 'cliente@gym.com', userName: 'Cliente Gym', createdAt: '2026-09-20T12:00:00Z', updatedAt: null, total: 15000, status: 'Pending', lastPaymentStatus: null, lastPaymentId: null }]
+const orderPage = { items: orders, page: 1, pageSize: 20, totalItems: 1, totalPages: 1 }
+const orderDetail = { ...orders[0], userPhone: null, shippingAddress: 'Av. Siempre Viva 742', cancellationReason: null, items: [{ productId: 1, productName: 'Mancuerna 10kg', unitPrice: 15000, quantity: 1, subtotal: 15000 }], payments: [] }
 
 function signIn(role: 'User' | 'Admin' | 'SuperAdmin') {
   localStorage.setItem('gymshop.token', 'jwt')
@@ -19,7 +21,8 @@ function apiMock(input: RequestInfo | URL, init?: RequestInit) {
   const url = String(input)
   if (url.includes('/api/cart')) return response({ id: 1, userId: 1, total: 0, items: [] })
   if (url.includes('/api/products')) return init?.method === 'PATCH' ? response(null) : response(products)
-  if (url.includes('/api/orders')) return response(orders)
+  if (/\/api\/orders\/10$/.test(url)) return response(orderDetail)
+  if (url.includes('/api/orders')) return init?.method === 'PATCH' ? Promise.resolve(new Response(null, { status: 204 })) : response(orderPage)
   if (url.includes('/api/users')) return response([])
   if (url.includes('/api/audit')) return response({ items: [], page: 1, pageSize: 50, totalItems: 0, totalPages: 0 })
   return response([])
@@ -77,23 +80,45 @@ describe('panel administrativo', () => {
     expect(within(navigation).getByRole('link', { name: 'Auditoría' })).toBeInTheDocument()
   })
 
-  it('consulta pedidos por email solo una vez al enviar el formulario', async () => {
+  it('consulta pedidos con búsqueda y filtros solo al aplicar', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
     render(<App />)
     await screen.findByText('#10')
     const orderCalls = () => fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/orders'))
     expect(orderCalls()).toHaveLength(1)
-    await userEvent.type(screen.getByLabelText('Email del cliente'), 'cliente@gym.com')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar' }), 'cliente@gym.com')
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Paid')
     expect(orderCalls()).toHaveLength(1)
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
     await waitFor(() => expect(orderCalls()).toHaveLength(2))
-    expect(String(orderCalls()[1][0])).toContain('/api/orders?userEmail=cliente%40gym.com')
-    await userEvent.clear(screen.getByLabelText('Email del cliente'))
-    expect(orderCalls()).toHaveLength(2)
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    expect(String(orderCalls()[1][0])).toContain('search=cliente%40gym.com')
+    expect(String(orderCalls()[1][0])).toContain('status=Paid')
+    await userEvent.click(screen.getByRole('button', { name: 'Limpiar' }))
     await waitFor(() => expect(orderCalls()).toHaveLength(3))
-    expect(String(orderCalls()[2][0])).toMatch(/\/api\/orders$/)
+    expect(String(orderCalls()[2][0])).toContain('page=1')
+  })
+
+  it('muestra el detalle y confirma un cambio de estado permitido', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+    expect(await screen.findByRole('heading', { name: /15\.000,00/ })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Marcar como cancelado' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/orders/10/status'), expect.objectContaining({ method: 'PATCH' })))
+    expect(window.confirm).toHaveBeenCalled()
+  })
+
+  it('muestra errores de API del listado de pedidos y permite reintentar', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    let loads = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => String(input).includes('/api/orders?') && ++loads === 1 ? response({ message: 'No se pudieron cargar los pedidos.' }, 500) : apiMock(input, init))
+    render(<App />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudieron cargar los pedidos.')
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+    expect(await screen.findByText('#10')).toBeInTheDocument()
   })
 
   it('busca, filtra y distingue lista vacía de ausencia de resultados', async () => {

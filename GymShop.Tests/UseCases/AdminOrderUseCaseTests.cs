@@ -23,12 +23,69 @@ public class AdminOrderUseCaseTests
         await db.SaveChangesAsync();
 
         var useCase = new GetOrdersUseCase(db);
-        var all = await useCase.ExecuteAsync(new OrderFilterRequest(null));
-        var filtered = await useCase.ExecuteAsync(new OrderFilterRequest("cliente-b"));
+        var all = await useCase.ExecuteAsync(new OrderFilterRequest());
+        var filtered = await useCase.ExecuteAsync(new OrderFilterRequest(Search: "cliente-b"));
 
-        Assert.Equal(2, all.Count);
-        Assert.Single(filtered);
-        Assert.Equal(orderB.Id, filtered[0].Id);
+        Assert.True(all.IsSuccess);
+        Assert.Equal(2, all.Value?.TotalItems);
+        Assert.True(filtered.IsSuccess);
+        Assert.Single(filtered.Value!.Items);
+        Assert.Equal(orderB.Id, filtered.Value.Items[0].Id);
+    }
+
+    [Fact]
+    public async Task GetOrders_paginates_and_filters_by_number_name_status_and_dates()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "ana@test.com");
+        user.Name = "Ana";
+        user.LastName = "Gimenez";
+        var older = await SeedOrderAsync(db, user.Id, 5, 1, 100);
+        older.CreatedAt = new DateTime(2026, 9, 1, 12, 0, 0, DateTimeKind.Utc);
+        var newer = await SeedOrderAsync(db, user.Id, 5, 1, 200);
+        newer.CreatedAt = new DateTime(2026, 9, 20, 12, 0, 0, DateTimeKind.Utc);
+        newer.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+        var useCase = new GetOrdersUseCase(db);
+
+        var page = await useCase.ExecuteAsync(new OrderFilterRequest(Page: 1, PageSize: 1));
+        var byName = await useCase.ExecuteAsync(new OrderFilterRequest(Search: "gimenez"));
+        var byNumber = await useCase.ExecuteAsync(new OrderFilterRequest(Search: $"#{newer.Id}"));
+        var filtered = await useCase.ExecuteAsync(new OrderFilterRequest(Status: "Paid", FromUtc: new DateTime(2026, 9, 10, 0, 0, 0, DateTimeKind.Utc)));
+
+        Assert.Equal(newer.Id, Assert.Single(page.Value!.Items).Id);
+        Assert.Equal(2, page.Value.TotalPages);
+        Assert.Equal(2, byName.Value!.TotalItems);
+        Assert.Equal(newer.Id, Assert.Single(byNumber.Value!.Items).Id);
+        Assert.Equal(newer.Id, Assert.Single(filtered.Value!.Items).Id);
+    }
+
+    [Fact]
+    public async Task GetOrderById_returns_not_found_for_missing_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var result = await new GetOrderByIdUseCase(db).ExecuteAsync(999, 1, canViewAll: true);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, result.Error?.Type);
+    }
+
+    [Fact]
+    public async Task UpdateOrderStatus_advances_fulfillment_and_audits_each_change()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "cliente@test.com");
+        var order = await SeedOrderAsync(db, user.Id, 5, 1, 100);
+        order.Status = OrderStatus.Paid;
+        await db.SaveChangesAsync();
+        var useCase = new UpdateOrderStatusUseCase(db);
+
+        Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Preparing"))).IsSuccess);
+        Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt))).IsSuccess);
+        Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Delivered", order.UpdatedAt))).IsSuccess);
+
+        Assert.Equal(OrderStatus.Delivered, order.Status);
+        Assert.Equal(3, await db.AuditEntries.CountAsync());
+        Assert.All(db.AuditEntries, entry => Assert.Equal("OrderStatusChanged", entry.Action));
     }
 
     [Fact]

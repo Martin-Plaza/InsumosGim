@@ -160,6 +160,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
             entity.Property(x => x.CancellationReason).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(x => x.UpdatedAt).IsConcurrencyToken();
 
             entity.HasIndex(x => x.UserId);
             entity.HasIndex(x => x.UserId)

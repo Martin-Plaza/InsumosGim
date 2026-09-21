@@ -53,9 +53,9 @@ public class OrdersController : ApiControllerBase
 
     [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpGet]
-    public async Task<ActionResult<List<OrderSummaryResponse>>> GetAll([FromQuery] string? userEmail, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedOrdersResponse>> GetAll([FromQuery] OrderFilterRequest filter, CancellationToken cancellationToken)
     {
-        return Ok(await _getOrders.ExecuteAsync(new OrderFilterRequest(userEmail), cancellationToken));
+        return FromResult(await _getOrders.ExecuteAsync(filter, cancellationToken));
     }
 
     [Authorize(Roles = "Admin,SuperAdmin")]

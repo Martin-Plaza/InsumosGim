@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, Order, OrderFilters, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -34,10 +34,14 @@ export const api = {
   clearCart: () => request<void>('/api/cart', json('DELETE')),
   checkout: (shippingAddress: string) => request<Order>('/api/cart/checkout', json('POST', { shippingAddress })),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
-  orders: (email = '') => request<OrderSummary[]>(`/api/orders${email ? `?userEmail=${encodeURIComponent(email)}` : ''}`),
+  orders: (filters: OrderFilters = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)) })
+    return request<OrderPage>(`/api/orders?${query}`)
+  },
   order: (id: number) => request<Order>(`/api/orders/${id}`),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
-  setOrderStatus: (id: number, status: string) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status })),
+  setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt })),
   createPayment: (orderId: number, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider: 'Mock', idempotencyKey })),
   payment: (id: number) => request<Payment>(`/api/payments/${id}`),
   orderPayments: (orderId: number) => request<Payment[]>(`/api/payments/orders/${orderId}`),

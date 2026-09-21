@@ -7,7 +7,7 @@ import type { Order, Payment } from '../../api/types'
 const product = { id: 4, name: 'Kettlebell 16kg', price: 42000, stock: 12, imageUrl: '/kettlebell.webp' }
 const cart = { id: 1, userId: 7, total: 84000, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000, stock: product.stock, imageUrl: product.imageUrl }] }
 const emptyCart = { ...cart, total: 0, items: [] }
-const order: Order = { id: 81, userId: 7, userEmail: 'u@gym.com', createdAt: '2026-08-11T10:00:00Z', total: 84000, status: 'Pending', shippingAddress: 'Av. Siempre Viva 742, Córdoba', cancellationReason: null, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000 }], payments: [] }
+const order: Order = { id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', userPhone: null, createdAt: '2026-08-11T10:00:00Z', updatedAt: null, total: 84000, status: 'Pending', shippingAddress: 'Av. Siempre Viva 742, Córdoba', cancellationReason: null, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000 }], payments: [] }
 const payment = (status: Payment['status']): Payment => ({ id: 91, orderId: 81, provider: 'Mock', externalReference: 'order-81', providerPreferenceId: null, providerPaymentId: null, idempotencyKey: 'key', amount: 84000, currency: 'ARS', status, checkoutUrl: null, failureReason: status === 'Rejected' ? 'Rechazado por Mock.' : null, createdAt: '2026-08-11T10:00:01Z', updatedAt: null, paidAt: null })
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } }))
 

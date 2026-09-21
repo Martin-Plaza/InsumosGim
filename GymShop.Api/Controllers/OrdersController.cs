@@ -15,6 +15,7 @@ public class OrdersController : ApiControllerBase
     private readonly IGetOrderByIdUseCase _getOrderById;
     private readonly IGetOrdersUseCase _getOrders;
     private readonly IUpdateOrderStatusUseCase _updateOrderStatus;
+    private readonly IGetOrderHistoryUseCase _getOrderHistory;
     private readonly ICancelOrderUseCase _cancelOrder;
     private readonly IExpirePendingOrdersUseCase _expirePendingOrders;
     private readonly ICurrentUserService _currentUser;
@@ -24,6 +25,7 @@ public class OrdersController : ApiControllerBase
         IGetOrderByIdUseCase getOrderById,
         IGetOrdersUseCase getOrders,
         IUpdateOrderStatusUseCase updateOrderStatus,
+        IGetOrderHistoryUseCase getOrderHistory,
         ICancelOrderUseCase cancelOrder,
         IExpirePendingOrdersUseCase expirePendingOrders,
         ICurrentUserService currentUser)
@@ -32,6 +34,7 @@ public class OrdersController : ApiControllerBase
         _getOrderById = getOrderById;
         _getOrders = getOrders;
         _updateOrderStatus = updateOrderStatus;
+        _getOrderHistory = getOrderHistory;
         _cancelOrder = cancelOrder;
         _expirePendingOrders = expirePendingOrders;
         _currentUser = currentUser;
@@ -56,6 +59,13 @@ public class OrdersController : ApiControllerBase
     public async Task<ActionResult<PagedOrdersResponse>> GetAll([FromQuery] OrderFilterRequest filter, CancellationToken cancellationToken)
     {
         return FromResult(await _getOrders.ExecuteAsync(filter, cancellationToken));
+    }
+
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    [HttpGet("{id:int}/history")]
+    public async Task<ActionResult<List<OrderHistoryEventResponse>>> GetHistory(int id, CancellationToken cancellationToken)
+    {
+        return FromResult(await _getOrderHistory.ExecuteAsync(id, cancellationToken));
     }
 
     [Authorize(Roles = "Admin,SuperAdmin")]

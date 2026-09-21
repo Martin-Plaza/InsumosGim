@@ -25,6 +25,8 @@ export interface Order { id: number; userId: number; userEmail: string | null; u
 export interface OrderSummary { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; total: number; status: OrderStatus; updatedAt: string | null; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
 export interface OrderPage { items: OrderSummary[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface OrderFilters { page?: number; pageSize?: number; search?: string; status?: string; fromUtc?: string; toUtc?: string }
+export type OrderHistorySource = 'Manual' | 'Automatic' | 'Provider'
+export interface OrderHistoryEvent { id: number; action: string; previousStatus: string | null; newStatus: string | null; reason: string | null; createdAtUtc: string; actorUserId: number | null; actorName: string | null; actorEmail: string | null; source: OrderHistorySource }
 export interface Payment { id: number; orderId: number; provider: string; externalReference: string; providerPreferenceId: string | null; providerPaymentId: string | null; idempotencyKey: string | null; amount: number; currency: string; status: PaymentStatus; checkoutUrl: string | null; failureReason: string | null; createdAt: string; updatedAt: string | null; paidAt: string | null }
 export interface AuditPage { items: AuditEntry[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface AuditEntry { id: number; actorUserId: number | null; action: string; entityType: string; entityId: string; reason: string | null; createdAtUtc: string; correlationId: string }

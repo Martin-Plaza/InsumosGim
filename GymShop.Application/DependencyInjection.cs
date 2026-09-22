@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.AddScoped<ICheckoutCartUseCase, CheckoutCartUseCase>();
 
         services.AddScoped<IGetUsersUseCase, GetUsersUseCase>();
+        services.AddScoped<IGetUserByIdUseCase, GetUserByIdUseCase>();
         services.AddScoped<ICreateUserUseCase, CreateUserUseCase>();
         services.AddScoped<IUpdateUserRoleUseCase, UpdateUserRoleUseCase>();
         services.AddScoped<IUpdateUserStatusUseCase, UpdateUserStatusUseCase>();

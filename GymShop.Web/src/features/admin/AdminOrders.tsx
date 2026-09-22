@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../../api/gymshop'
 import type { Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderStatus } from '../../api/types'
 import { money, storefront } from '../../config/storefront'
@@ -13,13 +14,50 @@ const sourceLabels = { Manual: 'Manual', Automatic: 'Automático', Provider: 'Pr
 const formatDate = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const utcStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : undefined
 const utcEnd = (value: string) => value ? new Date(`${value}T23:59:59.999`).toISOString() : undefined
+const allowedFilterStatuses = new Set(['Pending', 'Paid', 'Preparing', 'Shipped', 'Delivered', 'Canceled'])
+type OrderFilterDraft = { search: string; status: string; from: string; to: string }
+
+function singleValue(params: URLSearchParams, name: string) {
+  const values = params.getAll(name)
+  return values.length === 1 ? values[0].trim() : ''
+}
+
+function validDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const candidate = new Date(Date.UTC(year, month - 1, day))
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day
+}
+
+function normalizeOrderFilterParams(input: URLSearchParams) {
+  const search = singleValue(input, 'search')
+  const statusValue = singleValue(input, 'status')
+  const status = allowedFilterStatuses.has(statusValue) ? statusValue : ''
+  const pageValue = singleValue(input, 'page')
+  const page = /^\d+$/.test(pageValue) && Number(pageValue) > 0 && Number.isSafeInteger(Number(pageValue)) ? Number(pageValue) : 1
+  let from = singleValue(input, 'from'); let to = singleValue(input, 'to')
+  if (!validDate(from)) from = ''
+  if (!validDate(to)) to = ''
+  if (from && to && from > to) { from = ''; to = '' }
+  const params = new URLSearchParams()
+  if (search) params.set('search', search)
+  if (status) params.set('status', status)
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
+  if (page > 1) params.set('page', String(page))
+  const draft: OrderFilterDraft = { search, status, from, to }
+  const filters: OrderFilters = { page, pageSize: 20, search: search || undefined, status: status || undefined, fromUtc: from ? utcStart(from) : undefined, toUtc: to ? utcEnd(to) : undefined }
+  return { params, draft, filters, key: params.toString() }
+}
 function Status({ value }: { value: string | null }) { return value ? <span className={`status status-${value.toLowerCase()}`}>{statusLabels[value] || value}</span> : <span>—</span> }
 
 export function AdminOrders() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawKey = searchParams.toString()
+  const normalized = useMemo(() => normalizeOrderFilterParams(new URLSearchParams(rawKey)), [rawKey])
   const [page, setPage] = useState(initialPage)
   const [detail, setDetail] = useState<Order | null>(null)
-  const [draft, setDraft] = useState({ search: '', status: '', from: '', to: '' })
-  const [filters, setFilters] = useState<OrderFilters>({ page: 1, pageSize: 20 })
+  const [draft, setDraft] = useState<OrderFilterDraft>(() => normalized.draft)
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -29,15 +67,23 @@ export function AdminOrders() {
   const [historyError, setHistoryError] = useState('')
   const historyRequest = useRef(0)
   const openOrderId = useRef<number | null>(null)
+  const lastLoadedFilterKey = useRef<string | null>(null)
 
-  const load = useCallback(async (next = filters) => {
+  const load = useCallback(async (next: OrderFilters) => {
     setLoading(true); setError('')
     try { setPage(await api.orders(next)) } catch (value) { setError(describeAdminError(value)) } finally { setLoading(false) }
-  }, [filters])
-  useEffect(() => { void load(filters) }, [filters, load])
+  }, [])
+  useEffect(() => {
+    if (rawKey !== normalized.key) setSearchParams(normalized.params, { replace: true })
+    setDraft(normalized.draft)
+    if (lastLoadedFilterKey.current === normalized.key) return
+    lastLoadedFilterKey.current = normalized.key
+    void load(normalized.filters)
+  }, [load, normalized, rawKey, setSearchParams])
 
-  const apply = () => setFilters({ page: 1, pageSize: 20, search: draft.search.trim(), status: draft.status, fromUtc: utcStart(draft.from), toUtc: utcEnd(draft.to) })
-  const clear = () => { setDraft({ search: '', status: '', from: '', to: '' }); setFilters({ page: 1, pageSize: 20 }) }
+  const apply = () => { const next = new URLSearchParams(); if (draft.search.trim()) next.set('search', draft.search.trim()); if (draft.status) next.set('status', draft.status); if (draft.from) next.set('from', draft.from); if (draft.to) next.set('to', draft.to); setSearchParams(normalizeOrderFilterParams(next).params) }
+  const clear = () => setSearchParams(new URLSearchParams())
+  const goToPage = (value: number) => { const next = new URLSearchParams(normalized.params); if (value > 1) next.set('page', String(value)); else next.delete('page'); setSearchParams(next) }
   const loadHistory = async (id: number) => {
     const requestId = ++historyRequest.current
     setHistoryLoading(true); setHistoryError('')
@@ -62,7 +108,7 @@ export function AdminOrders() {
     try {
       await api.setOrderStatus(detail.id, status, detail.updatedAt)
       const updated = await api.order(detail.id)
-      setDetail(updated); setSuccess(`Pedido #${detail.id} actualizado a ${statusLabels[status]}.`); await Promise.all([load(), loadHistory(detail.id)])
+      setDetail(updated); setSuccess(`Pedido #${detail.id} actualizado a ${statusLabels[status]}.`); await Promise.all([load(normalized.filters), loadHistory(detail.id)])
     } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
   const transitions = detail ? nextStatuses[detail.status] || [] : []
@@ -78,11 +124,11 @@ export function AdminOrders() {
       <label>Hasta<input type="date" value={draft.to} onChange={event => setDraft(current => ({ ...current, to: event.target.value }))} /></label>
       <div className="order-filter-actions"><button disabled={loading}>Aplicar</button><button type="button" onClick={clear}>Limpiar</button></div>
     </form>
-    {loading && page.items.length === 0 ? <AdminLoading label="Cargando pedidos…" /> : error && page.items.length === 0 ? <button onClick={() => void load()}>Reintentar</button> : page.items.length === 0 ? <AdminEmpty>No hay pedidos que coincidan con los filtros.</AdminEmpty> : <div className="admin-order-list">
+    {loading && page.items.length === 0 ? <AdminLoading label="Cargando pedidos…" /> : error && page.items.length === 0 ? <button onClick={() => void load(normalized.filters)}>Reintentar</button> : page.items.length === 0 ? <AdminEmpty>No hay pedidos que coincidan con los filtros.</AdminEmpty> : <div className="admin-order-list">
       <div className="admin-order-row admin-order-header" aria-hidden="true"><span>Pedido</span><span>Cliente</span><span>Fecha</span><span>Total</span><span>Pedido</span><span>Pago</span></div>
       {page.items.map(order => <button type="button" className="admin-order-row" key={order.id} disabled={pending} onClick={() => void open(order.id)}><b>#{order.id}</b><span data-label="Cliente"><strong>{order.userName}</strong><small>{order.userEmail}</small></span><span data-label="Fecha">{formatDate(order.createdAt)}</span><strong data-label="Total">{money(order.total)}</strong><span data-label="Pedido"><Status value={order.status} /></span><span data-label="Pago"><Status value={order.lastPaymentStatus} /></span></button>)}
     </div>}
-    {page.totalPages > 1 && <nav className="admin-pagination" aria-label="Paginación de pedidos"><button disabled={loading || page.page <= 1} onClick={() => setFilters(current => ({ ...current, page: page.page - 1 }))}>Anterior</button><span>Página {page.page} de {page.totalPages}</span><button disabled={loading || page.page >= page.totalPages} onClick={() => setFilters(current => ({ ...current, page: page.page + 1 }))}>Siguiente</button></nav>}
+    {page.totalPages > 1 && <nav className="admin-pagination" aria-label="Paginación de pedidos"><button disabled={loading || page.page <= 1} onClick={() => goToPage(page.page - 1)}>Anterior</button><span>Página {page.page} de {page.totalPages}</span><button disabled={loading || page.page >= page.totalPages} onClick={() => goToPage(page.page + 1)}>Siguiente</button></nav>}
     {detail && <aside className="drawer admin-order-detail" aria-label={`Detalle del pedido ${detail.id}`} aria-busy={pending}><button className="close" onClick={closeDetail} aria-label="Cerrar detalle">×</button><p className="eyebrow">PEDIDO #{detail.id}</p><h2>{money(detail.total)}</h2><Status value={detail.status} />
       <section><h3>Cliente</h3><p><strong>{detail.userName}</strong><br />{detail.userEmail}<br />{detail.userPhone || 'Sin teléfono informado'}</p><p>{detail.shippingAddress || 'Sin dirección informada'}</p></section>
       <section><h3>Productos</h3>{detail.items.map(item => <div className="list-row" key={item.productId}><span>{item.quantity} × {item.productName}<small>{money(item.unitPrice)} c/u</small></span><strong>{money(item.subtotal)}</strong></div>)}<div className="list-row"><strong>Total</strong><strong>{money(detail.total)}</strong></div></section>

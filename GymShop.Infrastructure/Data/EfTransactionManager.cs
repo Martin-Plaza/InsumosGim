@@ -1,6 +1,8 @@
 using GymShop.Application.Abstractions;
 using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace GymShop.Infrastructure.Data;
 
@@ -19,6 +21,23 @@ public sealed class EfTransactionManager : ITransactionManager
         return new EfApplicationTransaction(transaction);
     }
 
+    public async Task<IApplicationTransaction> BeginUserAdministrationTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // One database-wide transactional mutex makes the count-and-update invariant atomic
+            // across every API instance. PostgreSQL releases it automatically on commit/rollback.
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(87324519)", cancellationToken);
+            return new EfApplicationTransaction(transaction);
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+    }
+
     private sealed class EfApplicationTransaction : IApplicationTransaction
     {
         private readonly IDbContextTransaction _transaction;
@@ -30,7 +49,16 @@ public sealed class EfTransactionManager : ITransactionManager
 
         public Task CommitAsync(CancellationToken cancellationToken = default)
         {
-            return _transaction.CommitAsync(cancellationToken);
+            return CommitCoreAsync(cancellationToken);
+        }
+
+        private async Task CommitCoreAsync(CancellationToken cancellationToken)
+        {
+            try { await _transaction.CommitAsync(cancellationToken); }
+            catch (PostgresException exception) when (exception.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected)
+            {
+                throw new DbUpdateConcurrencyException("La operación concurrente debe reintentarse.", exception);
+            }
         }
 
         public ValueTask DisposeAsync()

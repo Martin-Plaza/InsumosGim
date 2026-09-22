@@ -10,6 +10,7 @@ const links = [
   { to: '/admin/stock', label: 'Stock' },
   { to: '/admin/categorias', label: 'Categorías' },
   { to: '/admin/pedidos', label: 'Pedidos' },
+  { to: '/admin/cupones', label: 'Cupones' },
 ]
 
 export function AdminLayout({ user, onLogout }: { user: User; onLogout(): void }) {

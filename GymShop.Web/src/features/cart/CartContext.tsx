@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { api } from '../../api/gymshop'
-import type { CartItem, Product, User } from '../../api/types'
+import type { Cart, CartItem, Product, User } from '../../api/types'
 import { session } from '../../auth/session'
 import { CartContext, type CartContextValue } from './cartContextValue'
 import { guestCartStore, mergePlanStore, type MergePlan } from './guestCart'
@@ -10,6 +10,8 @@ const describe = (error: unknown) => error instanceof ApiError ? error.message :
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(() => session.user())
   const [cart, setCart] = useState<CartItem[]>(() => user ? [] : guestCartStore.read())
+  const [pricing, setPricing] = useState<Pick<Cart, 'subtotal' | 'discount' | 'total' | 'couponCode'>>({ subtotal: 0, discount: 0, total: 0, couponCode: null })
+  const acceptServerCart = useCallback((result: Cart) => { setCart(result.items); setPricing({ subtotal: result.subtotal, discount: result.discount, total: result.total, couponCode: result.couponCode }) }, [])
   const [loading, setLoading] = useState(Boolean(user))
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -23,10 +25,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       return
     }
     setLoading(true)
-    try { setCart((await api.cart()).items) }
+    try { acceptServerCart(await api.cart()) }
     catch (value) { setError(describe(value)) }
     finally { setLoading(false) }
-  }, [])
+  }, [acceptServerCart])
 
   const mergeGuestCart = useCallback(async (currentUser: User) => {
     const guestItems = guestCartStore.read()
@@ -72,8 +74,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       mergePlanStore.write(plan)
     }
     mergePlanStore.clear()
-    setCart(serverCart.items)
-  }, [])
+    acceptServerCart(serverCart)
+  }, [acceptServerCart])
 
   useEffect(() => {
     const changed = () => setUser(session.user())
@@ -105,7 +107,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const accepted = Math.min(safeQuantity, Math.max(product.stock - existing, 0))
       if (accepted < 1) { setNotice(`Ya alcanzaste el stock disponible de ${product.name}.`); setDrawerOpen(true); return }
       const result = await api.addCartItem(product.id, accepted)
-      setCart(result.items)
+      acceptServerCart(result)
       if (accepted < safeQuantity) setNotice(`Sumamos ${accepted}; alcanzaste el límite de stock de ${product.name}.`)
     } else {
       const items = guestCartStore.read()
@@ -125,33 +127,38 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const item = cart.find(candidate => candidate.productId === productId)
     if (!item) return
     const target = Math.min(Math.max(1, Math.floor(quantity)), item.stock)
-    if (session.user()) setCart((await api.updateCartItem(productId, target)).items)
+    if (session.user()) acceptServerCart(await api.updateCartItem(productId, target))
     else {
       const next = cart.map(candidate => candidate.productId === productId ? { ...candidate, quantity: target, subtotal: candidate.unitPrice * target } : candidate)
       guestCartStore.write(next); setCart(next)
     }
     if (target !== quantity) setNotice(`La cantidad máxima disponible de ${item.productName} es ${item.stock}.`)
-  }, [cart])
+  }, [acceptServerCart, cart])
 
   const remove = useCallback(async (productId: number) => {
-    if (session.user()) setCart((await api.removeCartItem(productId)).items)
+    if (session.user()) acceptServerCart(await api.removeCartItem(productId))
     else setCart(guestCartStore.remove(productId))
-  }, [])
+  }, [acceptServerCart])
 
   const clear = useCallback(async () => {
-    if (session.user()) { await api.clearCart(); setCart([]) }
+    if (session.user()) { await api.clearCart(); setCart([]); setPricing({ subtotal: 0, discount: 0, total: 0, couponCode: null }) }
     else { guestCartStore.clear(); setCart([]) }
   }, [])
 
   const value = useMemo<CartContextValue>(() => ({
     items: cart,
-    total: cart.reduce((sum, item) => sum + item.subtotal, 0),
+    subtotal: session.user() ? pricing.subtotal : cart.reduce((sum, item) => sum + item.subtotal, 0),
+    discount: session.user() ? pricing.discount : 0,
+    total: session.user() ? pricing.total : cart.reduce((sum, item) => sum + item.subtotal, 0),
+    couponCode: session.user() ? pricing.couponCode : null,
     count: cart.reduce((sum, item) => sum + item.quantity, 0),
     loading, error, notice, drawerOpen, add, update, remove, clear, refresh,
+    applyCoupon: async code => { setError(''); try { acceptServerCart(await api.applyCoupon(code)); setNotice('Cupón aplicado.') } catch (value) { setError(describe(value)); throw value } },
+    removeCoupon: async () => { setError(''); acceptServerCart(await api.removeCoupon()); setNotice('Cupón quitado.') },
     openDrawer: () => setDrawerOpen(true),
     closeDrawer: () => setDrawerOpen(false),
     dismissMessages: () => { setError(''); setNotice('') },
-  }), [add, cart, clear, drawerOpen, error, loading, notice, refresh, remove, update])
+  }), [acceptServerCart, add, cart, clear, drawerOpen, error, loading, notice, pricing, refresh, remove, update])
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>
 }

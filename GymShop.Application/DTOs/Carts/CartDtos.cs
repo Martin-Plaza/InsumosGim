@@ -8,5 +8,5 @@ public record UpdateCartItemRequest(int Quantity);
 public record CheckoutCartRequest(
     [Required, StringLength(ValidationLimits.ShippingAddress)] string ShippingAddress);
 
-public record CartResponse(int Id, int UserId, decimal Total, List<CartItemResponse> Items);
+public record CartResponse(int Id, int UserId, decimal Subtotal, decimal Discount, decimal Total, string? CouponCode, List<CartItemResponse> Items);
 public record CartItemResponse(int ProductId, string ProductName, decimal UnitPrice, int Quantity, decimal Subtotal, int Stock, string? ImageUrl);

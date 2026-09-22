@@ -8,6 +8,9 @@ public class Order
     public int UserId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public decimal Total { get; set; }
+    public decimal Subtotal { get; set; }
+    public string? CouponCode { get; set; }
+    public decimal DiscountAmount { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
     public string ShippingAddress { get; set; } = string.Empty;
     public string? CancellationReason { get; set; }
@@ -16,6 +19,7 @@ public class Order
     public User User { get; set; } = null!;
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    public CouponRedemption? CouponRedemption { get; set; }
 }
 
 

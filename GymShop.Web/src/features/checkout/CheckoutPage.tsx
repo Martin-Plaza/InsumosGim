@@ -61,7 +61,7 @@ export function CheckoutPage() {
       <div className="checkout-review-list">{cart.items.map(item => <article key={item.productId}><div className="checkout-thumb"><ProductImage src={item.imageUrl} alt={item.productName} /></div><div><h3>{item.productName}</h3><p>{item.quantity} × {money(item.unitPrice)}</p></div><strong>{money(item.subtotal)}</strong></article>)}</div>
     </div><form className="checkout-confirmation" onSubmit={submit}>
       <p className="eyebrow">ENTREGA</p><h2>Dirección de envío</h2><label>Dirección completa<textarea value={address} onChange={event => setAddress(event.target.value)} required maxLength={300} placeholder="Calle, número, localidad, provincia y referencia" /></label><small>{address.length}/300 caracteres</small>
-      <div className="checkout-total"><span>Total</span><strong>{money(cart.total)}</strong></div><p className="checkout-disclaimer">No se agregan costos de envío, cuotas ni impuestos porque todavía no forman parte del contrato.</p>
+      <div className="checkout-total"><span>Subtotal</span><strong>{money(cart.subtotal)}</strong></div>{cart.discount > 0 && <div className="checkout-total"><span>Descuento {cart.couponCode && `(${cart.couponCode})`}</span><strong>−{money(cart.discount)}</strong></div>}<div className="checkout-total"><span>Total</span><strong>{money(cart.total)}</strong></div><p className="checkout-disclaimer">El cupón se vuelve a validar al confirmar. No se agregan costos de envío, cuotas ni impuestos.</p>
       <button className="primary" disabled={busy}>{busy ? 'Confirmando compra…' : 'Confirmar y pagar'}</button><Link className="secondary-link" to="/carrito">Volver al carrito</Link>
     </form></div>
   </section>

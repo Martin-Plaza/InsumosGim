@@ -25,10 +25,14 @@ export interface StockMovementPage { items: StockMovement[]; page: number; pageS
 export interface StockAdjustment { productId: number; previousStock: number; resultingStock: number; movement: StockMovement }
 export interface ProductImageUpload { url: string; key: string }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null }
-export interface Cart { id: number; userId: number; total: number; items: CartItem[] }
+export interface Cart { id: number; userId: number; subtotal: number; discount: number; total: number; couponCode: string | null; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }
 export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null }
-export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; total: number; status: OrderStatus; shippingAddress: string; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
+export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; total: number; status: OrderStatus; shippingAddress: string; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
+export type CouponType = 'Percentage' | 'FixedAmount'
+export interface Coupon { id: number; code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean; reservedUses: number; consumedUses: number; createdAtUtc: string; updatedAtUtc: string | null }
+export interface CouponPage { items: Coupon[]; page: number; pageSize: number; totalItems: number; totalPages: number }
+export interface CouponInput { code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean }
 export interface OrderSummary { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; total: number; status: OrderStatus; updatedAt: string | null; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
 export interface OrderPage { items: OrderSummary[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface OrderFilters { page?: number; pageSize?: number; search?: string; status?: string; fromUtc?: string; toUtc?: string }

@@ -24,6 +24,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<EmailVerificationCode> EmailVerificationCodes => Set<EmailVerificationCode>();
     public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
     public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
+    public DbSet<Coupon> Coupons => Set<Coupon>();
+    public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -176,6 +178,9 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.ToTable("Orders");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Total).HasPrecision(18, 2);
+            entity.Property(x => x.Subtotal).HasPrecision(18, 2);
+            entity.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(x => x.CouponCode).HasMaxLength(50);
             entity.Property(x => x.Status)
                 .HasConversion<string>()
                 .HasMaxLength(30)
@@ -204,12 +209,45 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasKey(x => x.Id);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.UserId).IsUnique();
+            entity.HasOne(x => x.Coupon).WithMany().HasForeignKey(x => x.CouponId).OnDelete(DeleteBehavior.SetNull);
 
             entity
                 .HasOne(x => x.User)
                 .WithOne(x => x.Cart)
                 .HasForeignKey<Cart>(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Coupon>(entity =>
+        {
+            entity.ToTable("Coupons", table =>
+            {
+                table.HasCheckConstraint("CK_Coupons_Value_Positive", "\"Value\" > 0");
+                table.HasCheckConstraint("CK_Coupons_Percentage_Range", "\"Type\" <> 'Percentage' OR \"Value\" <= 100");
+                table.HasCheckConstraint("CK_Coupons_Date_Range", "\"StartsAtUtc\" IS NULL OR \"EndsAtUtc\" IS NULL OR \"EndsAtUtc\" > \"StartsAtUtc\"");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.Value).HasPrecision(18, 2);
+            entity.Property(x => x.MinimumPurchase).HasPrecision(18, 2);
+            entity.Property(x => x.MaximumDiscount).HasPrecision(18, 2);
+            entity.HasIndex(x => x.Code).IsUnique();
+            entity.HasIndex(x => new { x.IsActive, x.StartsAtUtc, x.EndsAtUtc });
+        });
+
+        modelBuilder.Entity<CouponRedemption>(entity =>
+        {
+            entity.ToTable("CouponRedemptions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.HasIndex(x => x.OrderId).IsUnique();
+            entity.HasIndex(x => new { x.CouponId, x.Status });
+            entity.HasIndex(x => new { x.CouponId, x.UserId, x.Status });
+            entity.HasOne(x => x.Coupon).WithMany(x => x.Redemptions).HasForeignKey(x => x.CouponId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Order).WithOne(x => x.CouponRedemption).HasForeignKey<CouponRedemption>(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<CartItem>(entity =>

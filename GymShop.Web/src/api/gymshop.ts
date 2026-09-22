@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -38,6 +38,8 @@ export const api = {
   updateCartItem: (productId: number, quantity: number) => request<Cart>(`/api/cart/items/${productId}`, json('PUT', { quantity })),
   removeCartItem: (productId: number) => request<Cart>(`/api/cart/items/${productId}`, json('DELETE')),
   clearCart: () => request<void>('/api/cart', json('DELETE')),
+  applyCoupon: (code: string) => request<Cart>('/api/cart/coupon', json('POST', { code })),
+  removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),
   checkout: (shippingAddress: string) => request<Order>('/api/cart/checkout', json('POST', { shippingAddress })),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   orders: (filters: OrderFilters = {}) => {
@@ -63,6 +65,11 @@ export const api = {
   setUserRole: (id: number, role: Role) => request<void>(`/api/users/${id}/role`, json('PATCH', { role })),
   setUserStatus: (id: number, isActive: boolean) => request<void>(`/api/users/${id}/status`, json('PATCH', { isActive })),
   audit: () => request<AuditPage>('/api/audit?page=1&pageSize=50'),
+  coupons: (filters: Record<string, string | number> = {}) => { const query = new URLSearchParams(); Object.entries(filters).forEach(([key, value]) => { if (value !== '') query.set(key, String(value)) }); return request<CouponPage>(`/api/coupons?${query}`) },
+  coupon: (id: number) => request<Coupon>(`/api/coupons/${id}`),
+  createCoupon: (data: CouponInput) => request<Coupon>('/api/coupons', json('POST', data)),
+  updateCoupon: (id: number, data: CouponInput) => request<Coupon>(`/api/coupons/${id}`, json('PUT', data)),
+  setCouponStatus: (id: number, isActive: boolean) => request<void>(`/api/coupons/${id}/status`, json('PATCH', { isActive })),
   dashboard: (filters: DashboardFilters = { period: '30d' }) => {
     const query = new URLSearchParams()
     Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value) })

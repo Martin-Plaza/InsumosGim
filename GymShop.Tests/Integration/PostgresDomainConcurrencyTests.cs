@@ -5,6 +5,7 @@ using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Products;
 using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
+using GymShop.Domain.Enums;
 using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -17,6 +18,22 @@ namespace GymShop.Tests.Integration;
 [Trait("Category", "Concurrency")]
 public sealed class PostgresDomainConcurrencyTests
 {
+    [Fact]
+    public async Task Concurrent_checkouts_cannot_reserve_the_same_last_coupon_use()
+    {
+        await using var database = await SqlTestDatabase.CreateMigratedAsync();
+        var (firstUser, secondUser, _) = await SeedTwoCartsWithCouponAsync(database);
+        await using var firstDb = database.CreateContext();
+        await using var secondDb = database.CreateContext();
+        var outcomes = await Task.WhenAll(
+            new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb)).ExecuteAsync(firstUser, new CheckoutCartRequest("First Address")),
+            new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb)).ExecuteAsync(secondUser, new CheckoutCartRequest("Second Address")));
+        Assert.Single(outcomes, x => x.IsSuccess);
+        Assert.Single(outcomes, x => !x.IsSuccess && x.Error?.Message.Contains("agotó", StringComparison.OrdinalIgnoreCase) == true);
+        await using var verification = database.CreateContext();
+        Assert.Single(await verification.CouponRedemptions.Where(x => x.Status == CouponRedemptionStatus.Reserved).ToListAsync());
+    }
+
     [Fact]
     public async Task Concurrent_checkouts_cannot_sell_the_same_last_stock_twice()
     {
@@ -81,6 +98,22 @@ public sealed class PostgresDomainConcurrencyTests
         db.Carts.AddRange(firstCart, secondCart);
         await db.SaveChangesAsync();
         return (first.Id, second.Id, product.Id);
+    }
+
+    private static async Task<(int FirstUser, int SecondUser, int CouponId)> SeedTwoCartsWithCouponAsync(SqlTestDatabase database)
+    {
+        await using var db = database.CreateContext();
+        var role = await db.Roles.SingleAsync(x => x.Name == "User");
+        var first = new User { Email = $"coupon-first-{Guid.NewGuid():N}@test.com", Name = "First", PasswordHash = "x", RoleId = role.Id, IsActive = true };
+        var second = new User { Email = $"coupon-second-{Guid.NewGuid():N}@test.com", Name = "Second", PasswordHash = "x", RoleId = role.Id, IsActive = true };
+        var firstProduct = new Product { Name = "First Product", Price = 100, Stock = 2, IsActive = true };
+        var secondProduct = new Product { Name = "Second Product", Price = 100, Stock = 2, IsActive = true };
+        var coupon = new Coupon { Code = $"LAST-{Guid.NewGuid():N}"[..20], Name = "Last use", Type = CouponType.FixedAmount, Value = 10, TotalUsageLimit = 1, IsActive = true };
+        db.AddRange(first, second, firstProduct, secondProduct, coupon); await db.SaveChangesAsync();
+        var firstCart = new Cart { UserId = first.Id, CouponId = coupon.Id }; firstCart.Items.Add(new CartItem { ProductId = firstProduct.Id, Quantity = 1 });
+        var secondCart = new Cart { UserId = second.Id, CouponId = coupon.Id }; secondCart.Items.Add(new CartItem { ProductId = secondProduct.Id, Quantity = 1 });
+        db.Carts.AddRange(firstCart, secondCart); await db.SaveChangesAsync();
+        return (first.Id, second.Id, coupon.Id);
     }
 
     private static async Task<(bool Success, Exception? Error)> Capture<T>(Func<Task<T>> operation)

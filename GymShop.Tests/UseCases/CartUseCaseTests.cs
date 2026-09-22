@@ -215,6 +215,29 @@ public class CartUseCaseTests
         Assert.Equal(OrderStatus.Pending, db.Orders.Single().Status);
     }
 
+    [Fact]
+    public async Task Cart_response_removes_coupon_when_content_falls_below_minimum_purchase()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        var coupon = new Coupon { Code = "MINIMUM", Name = "Minimum", Type = CouponType.FixedAmount, Value = 10, MinimumPurchase = 200, IsActive = true };
+        db.Coupons.Add(coupon); await db.SaveChangesAsync();
+        var add = new AddCartItemUseCase(db);
+        await add.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
+        var applied = await new GymShop.Application.UseCases.Coupons.ApplyCartCouponUseCase(db).ExecuteAsync(user.Id, new GymShop.Application.DTOs.Coupons.ApplyCouponRequest("minimum"));
+        Assert.True(applied.IsSuccess);
+
+        var response = await new UpdateCartItemUseCase(db).ExecuteAsync(user.Id, product.Id, new UpdateCartItemRequest(1));
+
+        Assert.True(response.IsSuccess);
+        Assert.Equal(100, response.Value!.Subtotal);
+        Assert.Equal(0, response.Value.Discount);
+        Assert.Equal(100, response.Value.Total);
+        Assert.Null(response.Value.CouponCode);
+        Assert.Null((await db.Carts.SingleAsync(x => x.UserId == user.Id)).CouponId);
+    }
+
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var role = db.Roles.Single(x => x.Name == "User");

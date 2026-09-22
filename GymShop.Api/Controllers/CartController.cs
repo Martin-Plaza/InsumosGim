@@ -2,6 +2,8 @@
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Orders;
 using GymShop.Application.UseCases.Carts;
+using GymShop.Application.UseCases.Coupons;
+using GymShop.Application.DTOs.Coupons;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,6 +21,8 @@ public class CartController : ApiControllerBase
     private readonly IClearCartUseCase _clearCart;
     private readonly ICheckoutCartUseCase _checkoutCart;
     private readonly ICurrentUserService _currentUser;
+    private readonly IApplyCartCouponUseCase _applyCoupon;
+    private readonly IRemoveCartCouponUseCase _removeCoupon;
 
     public CartController(
         IGetCartUseCase getCart,
@@ -27,7 +31,7 @@ public class CartController : ApiControllerBase
         IRemoveCartItemUseCase removeCartItem,
         IClearCartUseCase clearCart,
         ICheckoutCartUseCase checkoutCart,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser, IApplyCartCouponUseCase applyCoupon, IRemoveCartCouponUseCase removeCoupon)
     {
         _getCart = getCart;
         _addCartItem = addCartItem;
@@ -36,6 +40,21 @@ public class CartController : ApiControllerBase
         _clearCart = clearCart;
         _checkoutCart = checkoutCart;
         _currentUser = currentUser;
+        _applyCoupon = applyCoupon; _removeCoupon = removeCoupon;
+    }
+
+    [HttpPost("coupon")]
+    public async Task<ActionResult<CartResponse>> ApplyCoupon(ApplyCouponRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _applyCoupon.ExecuteAsync(_currentUser.UserId, request, cancellationToken);
+        return result.IsSuccess ? Ok(await _getCart.ExecuteAsync(_currentUser.UserId, cancellationToken)) : ToErrorResponse(result.Error!);
+    }
+
+    [HttpDelete("coupon")]
+    public async Task<ActionResult<CartResponse>> RemoveCoupon(CancellationToken cancellationToken)
+    {
+        var result = await _removeCoupon.ExecuteAsync(_currentUser.UserId, cancellationToken);
+        return result.IsSuccess ? Ok(await _getCart.ExecuteAsync(_currentUser.UserId, cancellationToken)) : ToErrorResponse(result.Error!);
     }
 
     [HttpGet]

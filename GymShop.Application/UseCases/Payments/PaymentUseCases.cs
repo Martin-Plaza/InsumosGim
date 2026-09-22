@@ -471,6 +471,8 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             .Include(x => x.Order)
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Order)
+            .ThenInclude(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x =>
                 x.Provider == provider &&
                 (x.ProviderPaymentId == providerPayment.ProviderPaymentId ||
@@ -539,6 +541,8 @@ internal static class PaymentQueries
             .Include(x => x.Order)
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Order)
+            .ThenInclude(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
     }
 }
@@ -625,6 +629,7 @@ internal static class PaymentStatusApplier
             payment.PaidAt = DateTime.UtcNow;
             payment.Order.Status = OrderStatus.Paid;
             payment.Order.UpdatedAt = DateTime.UtcNow;
+            CouponRedemptionLifecycle.Consume(payment.Order);
         }
         else if (newStatus is PaymentStatus.Rejected or PaymentStatus.Canceled or PaymentStatus.Expired)
         {

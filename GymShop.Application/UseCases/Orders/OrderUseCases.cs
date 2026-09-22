@@ -1,6 +1,7 @@
 using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Orders;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -274,7 +275,7 @@ public class CancelOrderUseCase : ICancelOrderUseCase
         var reason = string.IsNullOrWhiteSpace(request.Reason)
             ? "Cancelacion solicitada para el pedido."
             : request.Reason.Trim();
-        OrderCompensation.CancelPendingAndRestoreStock(order, reason);
+        OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
         AuditTrail.Add(_db, _auditContext, "OrderCanceled", "Order", order.Id,
             new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() }, reason);
         await _db.SaveChangesAsync(cancellationToken);
@@ -311,7 +312,7 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 
         foreach (var order in orders)
         {
-            OrderCompensation.CancelPendingAndRestoreStock(order, "Pedido pendiente expirado.");
+            OrderCompensation.CancelPendingAndRestoreStock(_db, order, "Pedido pendiente expirado.");
             AuditTrail.Add(_db, _auditContext, "OrderExpiredAdministratively", "Order", order.Id,
                 new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() },
                 $"OlderThanMinutes={request.OlderThanMinutes}");
@@ -324,7 +325,7 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 
 internal static class OrderCompensation
 {
-    public static bool CancelPendingAndRestoreStock(Order order, string reason)
+    public static bool CancelPendingAndRestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
     {
         if (order.Status != OrderStatus.Pending)
         {
@@ -345,14 +346,17 @@ internal static class OrderCompensation
 
         foreach (var item in order.Items)
         {
+            var previousStock = item.Product.Stock;
             item.Product.Stock += item.Quantity;
             item.Product.UpdatedAt = DateTime.UtcNow;
+            StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
+                previousStock, reason, actorUserId, order);
         }
 
         return true;
     }
 
-    public static bool ApplyConfirmedRefund(Order order)
+    public static bool ApplyConfirmedRefund(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
     {
         if (order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
         {
@@ -367,8 +371,11 @@ internal static class OrderCompensation
         {
             foreach (var item in order.Items)
             {
+                var previousStock = item.Product.Stock;
                 item.Product.Stock += item.Quantity;
                 item.Product.UpdatedAt = DateTime.UtcNow;
+                StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
+                    previousStock, reason, actorUserId, order);
             }
         }
 
@@ -419,7 +426,7 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             return AppResult.Failure(AppErrorType.Conflict, "El pedido fue actualizado por otro usuario. Recarga el detalle antes de continuar.");
         if (status == OrderStatus.Canceled)
         {
-            OrderCompensation.CancelPendingAndRestoreStock(order, "Cancelacion administrativa del pedido.");
+            OrderCompensation.CancelPendingAndRestoreStock(_db, order, "Cancelacion administrativa del pedido.", _auditContext?.ActorUserId);
         }
         else
         {

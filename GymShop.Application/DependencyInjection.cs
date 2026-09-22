@@ -1,10 +1,13 @@
+using GymShop.Application.Abstractions;
 using GymShop.Application.UseCases.Auth;
 using GymShop.Application.UseCases.Audit;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Categories;
+using GymShop.Application.UseCases.Dashboard;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Payments;
 using GymShop.Application.UseCases.Products;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Application.UseCases.Users;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,6 +18,7 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IStoreTimeZone>(new StoreTimeZone(null));
         services.AddScoped<IRegisterUserUseCase, RegisterUserUseCase>();
         services.AddScoped<IVerifyEmailUseCase, VerifyEmailUseCase>();
         services.AddScoped<IResendVerificationUseCase, ResendVerificationUseCase>();
@@ -24,6 +28,7 @@ public static class DependencyInjection
         services.AddScoped<IConfirmPasswordResetUseCase, ConfirmPasswordResetUseCase>();
         services.AddScoped<IGetCurrentUserUseCase, GetCurrentUserUseCase>();
         services.AddScoped<IGetAuditEntriesUseCase, GetAuditEntriesUseCase>();
+        services.AddScoped<IGetDashboardStatisticsUseCase, GetDashboardStatisticsUseCase>();
 
         services.AddScoped<IGetProductsUseCase, GetProductsUseCase>();
         services.AddScoped<IGetCategoriesUseCase, GetCategoriesUseCase>();
@@ -35,8 +40,9 @@ public static class DependencyInjection
         services.AddScoped<IGetProductByIdUseCase, GetProductByIdUseCase>();
         services.AddScoped<ICreateProductUseCase, CreateProductUseCase>();
         services.AddScoped<IUpdateProductUseCase, UpdateProductUseCase>();
-        services.AddScoped<IUpdateProductStockUseCase, UpdateProductStockUseCase>();
         services.AddScoped<IUpdateProductStatusUseCase, UpdateProductStatusUseCase>();
+        services.AddScoped<IGetStockMovementsUseCase, GetStockMovementsUseCase>();
+        services.AddScoped<IAdjustStockUseCase, AdjustStockUseCase>();
 
         services.AddScoped<IGetMyOrdersUseCase, GetMyOrdersUseCase>();
         services.AddScoped<IGetOrderByIdUseCase, GetOrderByIdUseCase>();

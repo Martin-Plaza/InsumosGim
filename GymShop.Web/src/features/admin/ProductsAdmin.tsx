@@ -61,13 +61,6 @@ export function ProductsAdmin() {
     if (!window.confirm(`¿Querés ${action} “${product.name}”?`)) return
     void mutate(product, () => api.setProductStatus(product.id, !product.isActive), `${product.name} fue ${product.isActive ? 'desactivado' : 'activado'} correctamente.`)
   }
-  const changeStock = (product: Product, input: HTMLInputElement) => {
-    const value = input.value.trim()
-    const nextStock = Number(value)
-    if (value === '' || !Number.isInteger(nextStock) || nextStock < 0) { input.value = String(product.stock); return }
-    if (nextStock === product.stock) return
-    void mutate(product, () => api.setProductStock(product.id, nextStock), `Stock de ${product.name} actualizado a ${nextStock}.`)
-  }
   const clear = () => { setSearch(''); setCategory('all'); setStatus('all'); setStock('all') }
 
   return <section className="admin-page">
@@ -87,7 +80,7 @@ export function ProductsAdmin() {
         return <article className="admin-product-row" key={product.id} aria-busy={isPending}>
           <div><strong>{product.name}</strong><span>{product.category?.name || 'Sin categoría'}</span></div>
           <div data-label="Precio"><strong>{money(product.price)}</strong></div>
-          <label data-label="Stock"><span className="sr-only">Stock de {product.name}</span><input aria-label={`Stock de ${product.name}`} type="number" min="0" step="1" defaultValue={product.stock} disabled={pending !== null} onBlur={event => changeStock(product, event.currentTarget)} />{low && <small className="low-stock">Stock bajo</small>}{product.stock === 0 && <small className="no-stock">Sin stock</small>}</label>
+          <div data-label="Stock"><strong>{product.stock}</strong>{low && <small className="low-stock"> Stock bajo</small>}{product.stock === 0 && <small className="no-stock"> Sin stock</small>}</div>
           <div data-label="Estado"><span className={product.isActive ? 'admin-pill active' : 'admin-pill inactive'}>{product.isActive ? 'Activo' : 'Inactivo'}</span></div>
           <div className="admin-product-actions"><Link to={`/admin/productos/${product.id}/editar`}>Editar</Link><button type="button" disabled={pending !== null} onClick={() => changeStatus(product)}>{isPending ? 'Guardando…' : product.isActive ? 'Desactivar' : 'Activar'}</button></div>
         </article>

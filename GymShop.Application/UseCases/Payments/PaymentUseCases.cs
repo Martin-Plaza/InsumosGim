@@ -576,7 +576,8 @@ internal static class PaymentStatusApplier
             var oldPaymentStatus = payment.Status;
             var oldOrderStatus = payment.Order.Status;
             var requiresManualReturn = payment.Order.Status is OrderStatus.Shipped or OrderStatus.Delivered;
-            OrderCompensation.ApplyConfirmedRefund(payment.Order);
+            OrderCompensation.ApplyConfirmedRefund(db, payment.Order,
+                "Reposicion por reembolso total confirmado.", auditContext?.ActorUserId);
             payment.Status = PaymentStatus.Refunded;
             payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
             payment.FailureReason = string.IsNullOrWhiteSpace(failureReason)
@@ -628,8 +629,8 @@ internal static class PaymentStatusApplier
         else if (newStatus is PaymentStatus.Rejected or PaymentStatus.Canceled or PaymentStatus.Expired)
         {
             OrderCompensation.CancelPendingAndRestoreStock(
-                payment.Order,
-                payment.FailureReason ?? $"Pago resuelto como {newStatus}.");
+                db, payment.Order,
+                payment.FailureReason ?? $"Pago resuelto como {newStatus}.", auditContext?.ActorUserId);
         }
         else
         {

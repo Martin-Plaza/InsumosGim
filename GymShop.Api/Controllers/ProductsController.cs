@@ -13,7 +13,6 @@ public class ProductsController : ApiControllerBase
     private readonly IGetProductByIdUseCase _getProductById;
     private readonly ICreateProductUseCase _createProduct;
     private readonly IUpdateProductUseCase _updateProduct;
-    private readonly IUpdateProductStockUseCase _updateProductStock;
     private readonly IUpdateProductStatusUseCase _updateProductStatus;
 
     public ProductsController(
@@ -21,14 +20,12 @@ public class ProductsController : ApiControllerBase
         IGetProductByIdUseCase getProductById,
         ICreateProductUseCase createProduct,
         IUpdateProductUseCase updateProduct,
-        IUpdateProductStockUseCase updateProductStock,
         IUpdateProductStatusUseCase updateProductStatus)
     {
         _getProducts = getProducts;
         _getProductById = getProductById;
         _createProduct = createProduct;
         _updateProduct = updateProduct;
-        _updateProductStock = updateProductStock;
         _updateProductStatus = updateProductStatus;
     }
 
@@ -89,14 +86,6 @@ public class ProductsController : ApiControllerBase
     public async Task<ActionResult<ProductResponse>> Update(int id, UpdateProductRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _updateProduct.ExecuteAsync(id, request, cancellationToken));
-    }
-
-
-    [Authorize(Roles = "Admin,SuperAdmin")]
-    [HttpPatch("{id:int}/stock")]
-    public async Task<ActionResult> UpdateStock(int id, UpdateProductStockRequest request, CancellationToken cancellationToken)
-    {
-        return FromResult(await _updateProductStock.ExecuteAsync(id, request, cancellationToken));
     }
 
 

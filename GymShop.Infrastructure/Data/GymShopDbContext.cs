@@ -20,6 +20,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<CartItem> CartItems => Set<CartItem>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<EmailVerificationCode> EmailVerificationCodes => Set<EmailVerificationCode>();
     public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
     public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
@@ -45,6 +46,28 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(x => new { x.ActorUserId, x.CreatedAtUtc });
             entity.HasIndex(x => x.CorrelationId);
             entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockMovement>(entity =>
+        {
+            entity.ToTable("StockMovements", table =>
+            {
+                table.HasCheckConstraint("CK_StockMovements_Quantity_NotZero", "\"Quantity\" <> 0");
+                table.HasCheckConstraint("CK_StockMovements_Stocks_NonNegative", "\"PreviousStock\" >= 0 AND \"ResultingStock\" >= 0");
+                table.HasCheckConstraint("CK_StockMovements_StockBalance", "\"ResultingStock\" = \"PreviousStock\" + \"Quantity\"");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(40).IsRequired();
+            entity.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(x => new { x.CreatedAtUtc, x.Id });
+            entity.HasIndex(x => new { x.ProductId, x.CreatedAtUtc, x.Id });
+            entity.HasIndex(x => new { x.OrderId, x.ProductId, x.Type })
+                .IsUnique()
+                .HasFilter("\"OrderId\" IS NOT NULL");
+            entity.HasOne(x => x.Product).WithMany(x => x.StockMovements).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Role>(entity =>

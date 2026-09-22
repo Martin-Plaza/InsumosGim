@@ -15,6 +15,7 @@ const orderHistory = [
   { id: 1, action: 'OrderStatusChanged', previousStatus: 'Paid', newStatus: 'Preparing', reason: null, createdAtUtc: '2026-09-20T13:00:00Z', actorUserId: 1, actorName: 'Admin Gym', actorEmail: 'admin@gym.com', source: 'Manual' },
   { id: 2, action: 'PaymentPartialRefundFlagged', previousStatus: 'Approved', newStatus: 'Approved', reason: 'Reembolso parcial; requiere gestión manual.', createdAtUtc: '2026-09-20T14:00:00Z', actorUserId: null, actorName: null, actorEmail: null, source: 'Provider' },
 ]
+const dashboard = { fromUtc: '2026-09-01T03:00:00Z', toUtc: '2026-09-22T03:00:00Z', timeZoneId: 'America/Argentina/Buenos_Aires', totalSales: 15000, paidOrders: 1, averageTicket: 15000, ordersByStatus: [{ status: 'Pending', count: 1 }], salesByDay: [{ date: '2026-09-20', amount: 15000, orders: 1 }], topProducts: [{ productId: 1, productName: 'Mancuerna 10kg', quantity: 1, amount: 15000 }], outOfStockProducts: [], lowStockProducts: [{ productId: 1, productName: 'Mancuerna 10kg', stock: 3, isActive: true }], lowStockThreshold: 5 }
 
 function signIn(role: 'User' | 'Admin' | 'SuperAdmin') {
   localStorage.setItem('gymshop.token', 'jwt')
@@ -23,6 +24,7 @@ function signIn(role: 'User' | 'Admin' | 'SuperAdmin') {
 
 function apiMock(input: RequestInfo | URL, init?: RequestInit) {
   const url = String(input)
+  if (url.includes('/api/admin/dashboard')) return response(dashboard)
   if (url.includes('/api/cart')) return response({ id: 1, userId: 1, total: 0, items: [] })
   if (url.includes('/api/products')) return init?.method === 'PATCH' ? response(null) : response(products)
   if (url.includes('/api/orders/10/history')) return response(orderHistory)
@@ -33,8 +35,6 @@ function apiMock(input: RequestInfo | URL, init?: RequestInit) {
   return response([])
 }
 
-const productRequests = (calls: readonly (readonly unknown[])[]) => calls.filter(([input]) => String(input).includes('/api/products'))
-const productMutations = (calls: readonly (readonly unknown[])[]) => productRequests(calls).filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH')
 
 describe('panel administrativo', () => {
   beforeEach(() => { localStorage.clear(); window.history.replaceState(null, '', '/'); vi.restoreAllMocks() })
@@ -59,8 +59,8 @@ describe('panel administrativo', () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin')
     vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
     render(<App />)
-    expect(await screen.findByText('Total de productos')).toBeInTheDocument()
-    expect(screen.getByText('2', { selector: '.admin-stats strong' })).toBeInTheDocument()
+    expect(await screen.findByText('Ventas confirmadas')).toBeInTheDocument()
+    expect(screen.getByText('Pedidos pagados')).toBeInTheDocument()
     const navigation = screen.getByRole('navigation', { name: 'Navegación administrativa' })
     expect(within(navigation).getByRole('link', { name: 'Productos' })).toBeInTheDocument()
     expect(within(navigation).getByRole('link', { name: 'Pedidos' })).toBeInTheDocument()
@@ -212,79 +212,12 @@ describe('panel administrativo', () => {
     expect(productLoads).toBe(2)
   })
 
-  it('muestra éxito únicamente cuando la mutación y la recarga de productos funcionan', async () => {
-    signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
-    render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); await userEvent.type(stock, '8'); await userEvent.tab()
-    expect(await screen.findByRole('status')).toHaveTextContent('Stock de Mancuerna 10kg actualizado a 8.')
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(productMutations(fetchMock.mock.calls)).toHaveLength(1)
-    expect(productRequests(fetchMock.mock.calls)).toHaveLength(3)
-  })
-
-  it('informa una mutación fallida y no recarga el listado', async () => {
-    signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => String(input).includes('/stock') && init?.method === 'PATCH' ? response({ message: 'No se pudo actualizar el stock.' }, 500) : apiMock(input, init))
-    render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); await userEvent.type(stock, '8'); await userEvent.tab()
-    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo actualizar el stock.')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(productMutations(fetchMock.mock.calls)).toHaveLength(1)
-    expect(productRequests(fetchMock.mock.calls)).toHaveLength(2)
-  })
-
-  it('advierte cuando la mutación funciona pero falla la recarga del listado', async () => {
-    signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
-    let productLoads = 0
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      if (String(input).includes('/api/products') && init?.method !== 'PATCH') return ++productLoads === 1 ? response(products) : response({ message: 'Falló la recarga.' }, 500)
-      return apiMock(input, init)
-    })
-    render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); await userEvent.type(stock, '8'); await userEvent.tab()
-    expect(await screen.findByRole('alert')).toHaveTextContent('El cambio pudo realizarse, pero no se pudo actualizar el listado. Falló la recarga.')
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(productMutations(fetchMock.mock.calls)).toHaveLength(1)
-    expect(productLoads).toBe(2)
-  })
-
-  it.each([
-    ['vacío', '', '3'],
-    ['negativo', '-1', '3'],
-    ['decimal', '2.5', '3'],
-    ['sin cambios', '3', '3'],
-  ])('no actualiza stock ante un valor %s', async (_case, value, restoredValue) => {
-    signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
-    render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); if (value) await userEvent.type(stock, value); await userEvent.tab()
-    expect(stock).toHaveValue(Number(restoredValue))
-    expect(productMutations(fetchMock.mock.calls)).toHaveLength(0)
-  })
-
-  it.each([['cero explícito', '0'], ['entero válido', '8']])('actualiza stock con %s', async (_case, value) => {
-    signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
-    render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); await userEvent.type(stock, value); await userEvent.tab()
-    await waitFor(() => expect(productMutations(fetchMock.mock.calls)).toHaveLength(1))
-    expect((productMutations(fetchMock.mock.calls)[0][1] as RequestInit).body).toBe(JSON.stringify({ stock: Number(value) }))
-  })
-
-  it('actualiza stock y confirma cambios de estado', async () => {
+  it('confirma cambios de estado del producto', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/productos')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(apiMock)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<App />)
-    const stock = await screen.findByRole('spinbutton', { name: 'Stock de Mancuerna 10kg' })
-    await userEvent.clear(stock); await userEvent.type(stock, '8'); await userEvent.tab()
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/products/1/stock'), expect.objectContaining({ method: 'PATCH' })))
+    await screen.findByText('Mancuerna 10kg')
     await userEvent.click(screen.getByRole('button', { name: 'Desactivar' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/products/1/status'), expect.objectContaining({ method: 'PATCH' })))
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Mancuerna 10kg'))

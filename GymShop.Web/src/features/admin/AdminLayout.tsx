@@ -7,6 +7,7 @@ import { isSuperAdmin } from './adminConfig'
 const links = [
   { to: '/admin', label: 'Resumen', end: true },
   { to: '/admin/productos', label: 'Productos' },
+  { to: '/admin/stock', label: 'Stock' },
   { to: '/admin/categorias', label: 'Categorías' },
   { to: '/admin/pedidos', label: 'Pedidos' },
 ]

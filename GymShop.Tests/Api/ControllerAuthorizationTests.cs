@@ -89,4 +89,23 @@ public class ControllerAuthorizationTests
 
         Assert.NotNull(typeof(OrdersController).GetCustomAttribute<AuthorizeAttribute>());
     }
+
+    [Fact]
+    public void Dashboard_is_restricted_to_admin_and_superadmin()
+    {
+        var authorize = typeof(DashboardController).GetCustomAttribute<AuthorizeAttribute>();
+        Assert.NotNull(authorize);
+        Assert.Equal("Admin,SuperAdmin", authorize!.Roles);
+        Assert.DoesNotContain("User", SplitRoles(authorize.Roles));
+        Assert.Single(typeof(DashboardController).GetMethods(), method => method.GetCustomAttribute<HttpGetAttribute>() is not null);
+    }
+
+    [Fact]
+    public void Stock_management_is_restricted_to_admin_and_superadmin()
+    {
+        var authorize = typeof(StockController).GetCustomAttribute<AuthorizeAttribute>();
+        Assert.NotNull(authorize);
+        Assert.Equal("Admin,SuperAdmin", authorize!.Roles);
+        Assert.DoesNotContain("User", SplitRoles(authorize.Roles));
+    }
 }

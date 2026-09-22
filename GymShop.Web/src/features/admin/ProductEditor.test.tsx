@@ -124,7 +124,9 @@ describe('alta y edición administrativa de productos', () => {
     await userEvent.clear(screen.getByLabelText('Nombre')); await userEvent.type(screen.getByLabelText('Nombre'), 'Kettlebell Pro')
     await userEvent.dblClick(screen.getByRole('button', { name: 'Guardar cambios' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Kettlebell Pro fue actualizado correctamente.')
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1)
+    const updates = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(updates).toHaveLength(1)
+    expect(JSON.parse(String(updates[0][1]?.body))).not.toHaveProperty('stock')
   })
 
   it('muestra un estado específico si el producto no existe', async () => {

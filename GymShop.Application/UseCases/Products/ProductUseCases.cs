@@ -1,7 +1,9 @@
 ﻿using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Products;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
+using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Application.UseCases.Products;
@@ -29,11 +31,6 @@ public interface ICreateProductUseCase
 public interface IUpdateProductUseCase
 {
     Task<AppResult<ProductResponse>> ExecuteAsync(int id, UpdateProductRequest request, CancellationToken cancellationToken = default);
-}
-
-public interface IUpdateProductStockUseCase
-{
-    Task<AppResult> ExecuteAsync(int id, UpdateProductStockRequest request, CancellationToken cancellationToken = default);
 }
 
 public interface IUpdateProductStatusUseCase
@@ -116,10 +113,12 @@ public class GetProductByIdUseCase : IGetProductByIdUseCase
 public class CreateProductUseCase : ICreateProductUseCase
 {
     private readonly IApplicationDbContext _db;
+    private readonly IAuditContext _auditContext;
 
-    public CreateProductUseCase(IApplicationDbContext db)
+    public CreateProductUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
     {
         _db = db;
+        _auditContext = auditContext ?? SystemAuditContext.Instance;
     }
 
     public async Task<AppResult<ProductResponse>> ExecuteAsync(CreateProductRequest request, CancellationToken cancellationToken = default)
@@ -148,6 +147,11 @@ public class CreateProductUseCase : ICreateProductUseCase
         };
 
         _db.Products.Add(product);
+        if (product.Stock > 0)
+        {
+            StockMovementRecorder.Add(_db, product, StockMovementType.InitialStock, product.Stock, 0,
+                "Stock inicial del producto", _auditContext.ActorUserId);
+        }
         await _db.SaveChangesAsync(cancellationToken);
 
         return AppResult<ProductResponse>.Success(ProductMapper.ToResponse(product));
@@ -173,7 +177,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
             return AppResult<ProductResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado.");
         }
 
-        var validationError = ProductValidator.Validate(request.Name, request.Description, request.Price, request.Stock, request.ImageUrl);
+        var validationError = ProductValidator.ValidateGeneral(request.Name, request.Description, request.Price, request.ImageUrl);
         if (validationError is not null)
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
@@ -189,7 +193,6 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         product.Name = request.Name.Trim();
         product.Description = request.Description?.Trim();
         product.Price = request.Price;
-        product.Stock = request.Stock;
         product.ImageUrl = request.ImageUrl?.Trim();
         product.IsActive = request.IsActive;
         product.Category = category;
@@ -207,50 +210,6 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         }
 
         return AppResult<ProductResponse>.Success(ProductMapper.ToResponse(product));
-    }
-}
-
-public class UpdateProductStockUseCase : IUpdateProductStockUseCase
-{
-    private readonly IApplicationDbContext _db;
-    private readonly IAuditContext? _auditContext;
-
-    public UpdateProductStockUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
-    {
-        _db = db;
-        _auditContext = auditContext;
-    }
-
-    public async Task<AppResult> ExecuteAsync(int id, UpdateProductStockRequest request, CancellationToken cancellationToken = default)
-    {
-        if (request.Stock < 0)
-        {
-            return AppResult.Failure(AppErrorType.Validation, "El stock no puede ser negativo.");
-        }
-
-        var product = await _db.Products.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (product is null)
-        {
-            return AppResult.Failure(AppErrorType.NotFound, "Producto no encontrado.");
-        }
-
-        if (product.Stock == request.Stock) return AppResult.Success();
-
-        var oldStock = product.Stock;
-        product.Stock = request.Stock;
-        product.UpdatedAt = DateTime.UtcNow;
-        AuditTrail.Add(_db, _auditContext, "ProductStockChanged", "Product", product.Id,
-            new { stock = oldStock }, new { stock = product.Stock });
-        try
-        {
-            await _db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return AppResult.Failure(AppErrorType.Conflict, "El producto fue modificado por otra operacion. Volve a intentar.");
-        }
-
-        return AppResult.Success();
     }
 }
 
@@ -297,6 +256,13 @@ public static class ProductValidator
 {
     public static string? Validate(string name, string? description, decimal price, int stock, string? imageUrl)
     {
+        var generalError = ValidateGeneral(name, description, price, imageUrl);
+        if (generalError is not null) return generalError;
+        return stock < 0 ? "El stock no puede ser negativo." : null;
+    }
+
+    public static string? ValidateGeneral(string name, string? description, decimal price, string? imageUrl)
+    {
         if (string.IsNullOrWhiteSpace(name))
         {
             return "El nombre es obligatorio.";
@@ -314,12 +280,6 @@ public static class ProductValidator
         {
             return "El precio debe ser compatible con decimal(18,2).";
         }
-
-        if (stock < 0)
-        {
-            return "El stock no puede ser negativo.";
-        }
-
 
         if (imageUrl?.Trim().Length > ValidationLimits.ImageUrl) return "ImageUrl no puede superar los 500 caracteres.";
         if (!new ProductImageUrlAttribute().IsValid(imageUrl?.Trim()))

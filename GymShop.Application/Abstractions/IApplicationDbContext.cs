@@ -15,6 +15,7 @@ public interface IApplicationDbContext
     DbSet<CartItem> CartItems { get; }
     DbSet<Payment> Payments { get; }
     DbSet<AuditEntry> AuditEntries { get; }
+    DbSet<StockMovement> StockMovements { get; }
     DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
     DbSet<PasswordResetCode> PasswordResetCodes { get; }
     DbSet<UserExternalLogin> UserExternalLogins { get; }

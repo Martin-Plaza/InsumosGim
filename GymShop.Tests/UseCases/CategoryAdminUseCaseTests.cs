@@ -55,7 +55,7 @@ public class CategoryAdminUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         Assert.Equal(AppErrorType.NotFound, (await new UpdateCategoryUseCase(db).ExecuteAsync(999, new UpsertCategoryRequest("X", "x", null, 0))).Error!.Type);
         var category = new Category { Name = "Vieja", Slug = "vieja", IsActive = false }; var product = new Product { Name = "Producto", Price = 10, Stock = 1, Category = category }; db.Products.Add(product); await db.SaveChangesAsync();
-        var result = await new UpdateProductUseCase(db).ExecuteAsync(product.Id, new("Producto editado", null, 10, 1, null, true, category.Id));
+        var result = await new UpdateProductUseCase(db).ExecuteAsync(product.Id, new("Producto editado", null, 10, null, true, category.Id));
         Assert.True(result.IsSuccess); Assert.Equal(category.Id, db.Products.Single().CategoryId);
     }
 }

@@ -8,4 +8,5 @@ public interface IApplicationTransaction : IAsyncDisposable
 public interface ITransactionManager
 {
     Task<IApplicationTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+    Task<IApplicationTransaction> BeginUserAdministrationTransactionAsync(CancellationToken cancellationToken = default);
 }

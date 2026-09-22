@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -53,7 +53,12 @@ export const api = {
   payment: (id: number) => request<Payment>(`/api/payments/${id}`),
   orderPayments: (orderId: number) => request<Payment[]>(`/api/payments/orders/${orderId}`),
   setPaymentStatus: (id: number, status: string, failureReason?: string) => request<Payment>(`/api/payments/${id}/status`, json('POST', { status, failureReason: failureReason || null, providerPaymentId: null })),
-  users: () => request<AdminUser[]>('/api/users'),
+  users: (filters: AdminUserFilters = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)) })
+    return request<AdminUserPage>(`/api/users?${query}`)
+  },
+  user: (id: number) => request<AdminUserDetail>(`/api/users/${id}`),
   createUser: (data: { name: string; email: string; password: string; role: Role }) => request<AdminUser>('/api/users', json('POST', data)),
   setUserRole: (id: number, role: Role) => request<void>(`/api/users/${id}/role`, json('PATCH', { role })),
   setUserStatus: (id: number, isActive: boolean) => request<void>(`/api/users/${id}/status`, json('PATCH', { isActive })),

@@ -7,6 +7,10 @@ export interface RegistrationPending { email: string; expiresInSeconds: number; 
 export interface PasswordResetPending { message: string; expiresInSeconds: number; developmentCode: string | null }
 export interface PasswordResetCompleted { message: string }
 export interface AdminUser extends User { isActive: boolean; createdAt: string }
+export interface AdminUserPage { items: AdminUser[]; page: number; pageSize: number; totalItems: number; totalPages: number }
+export interface AdminUserFilters { page?: number; pageSize?: number; search?: string; role?: Role; isActive?: boolean }
+export interface UserOrderSummary { id: number; createdAt: string; total: number; status: OrderStatus }
+export interface AdminUserDetail extends AdminUser { orderCount: number; totalPurchased: number; lastOrderAt: string | null; ordersTotal: number; ordersPageSize: number; recentOrders: UserOrderSummary[] }
 export interface AuthResponse { token: string; user: User }
 export interface CategorySummary { id: number; name: string; slug: string }
 export interface Category extends CategorySummary { description: string | null; displayOrder: number }

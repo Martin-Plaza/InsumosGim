@@ -86,13 +86,15 @@ describe('StockAdmin', () => {
     })
     render(<MemoryRouter><StockAdmin /></MemoryRouter>)
     await screen.findByRole('button', { name: 'Gestionar' })
-    const globalCallsBefore = fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/stock/movements')).length
+    const movementCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/stock/movements'))
+    await waitFor(() => expect(movementCalls()).toHaveLength(1))
+    const globalCallsBefore = movementCalls().length
     await userEvent.click(screen.getByRole('button', { name: 'Gestionar' }))
     await userEvent.type(screen.getByLabelText('Cantidad'), '2')
     await userEvent.type(screen.getByLabelText('Motivo'), 'Control')
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar ajuste' }))
     expect(await screen.findByText('Falló el ajuste')).toBeInTheDocument()
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/stock/movements'))).toHaveLength(globalCallsBefore)
+    expect(movementCalls()).toHaveLength(globalCallsBefore)
   })
 
   it('aplica, pagina y limpia filtros globales sin consultar por cada pulsación', async () => {

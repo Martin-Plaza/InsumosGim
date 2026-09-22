@@ -61,4 +61,25 @@ describe('carrito visitante y fusión autenticada', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('inexistentes, inactivos o sin stock')
     expect(JSON.parse(localStorage.getItem('gymshop.guest-cart.v1') || '[]')).toHaveLength(1)
   })
+
+  it('aplica y quita un cupón mostrando subtotal, descuento y total confirmados por API', async () => {
+    localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'U', role: 'User' })); window.history.replaceState(null, '', '/carrito')
+    const base = { id: 1, userId: 7, subtotal: 2000, discount: 0, total: 2000, couponCode: null, items: [cartItem(2)] }
+    const discounted = { ...base, discount: 200, total: 1800, couponCode: 'SAVE10' }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => { const url = String(input); if (url.endsWith('/api/cart/coupon') && init?.method === 'POST') return json(discounted); if (url.endsWith('/api/cart/coupon') && init?.method === 'DELETE') return json(base); return json(base) })
+    render(<App />); await screen.findByText('Mancuerna Pro')
+    await userEvent.type(screen.getByLabelText('Código de descuento'), 'save10'); await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    expect(await screen.findByText(/−.*200,00/)).toBeInTheDocument(); expect(screen.getAllByText(/1\.800,00/).length).toBeGreaterThan(0); expect(screen.getAllByText(/2\.000,00/).length).toBeGreaterThan(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar SAVE10' })); await waitFor(() => expect(screen.queryByText(/−.*200,00/)).not.toBeInTheDocument())
+  })
+
+  it('remueve visualmente un cupón invalidado por un cambio del carrito', async () => {
+    localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'U', role: 'User' })); window.history.replaceState(null, '', '/carrito')
+    const discounted = { id: 1, userId: 7, subtotal: 2000, discount: 200, total: 1800, couponCode: 'MINIMUM', items: [cartItem(2)] }
+    const invalidated = { id: 1, userId: 7, subtotal: 1000, discount: 0, total: 1000, couponCode: null, items: [cartItem(1)] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => String(input).endsWith('/api/cart/items/42') && init?.method === 'PUT' ? json(invalidated) : json(discounted))
+    render(<App />); expect(await screen.findByRole('button', { name: 'Quitar MINIMUM' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar una unidad de Mancuerna Pro' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Quitar MINIMUM' })).not.toBeInTheDocument()); expect(screen.queryByText(/−.*200,00/)).not.toBeInTheDocument()
+  })
 })

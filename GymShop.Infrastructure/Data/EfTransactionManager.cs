@@ -38,6 +38,17 @@ public sealed class EfTransactionManager : ITransactionManager
         }
     }
 
+    public async Task<IApplicationTransaction> BeginCouponCheckoutTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(87324520)", cancellationToken);
+            return new EfApplicationTransaction(transaction);
+        }
+        catch { await transaction.DisposeAsync(); throw; }
+    }
+
     private sealed class EfApplicationTransaction : IApplicationTransaction
     {
         private readonly IDbContextTransaction _transaction;

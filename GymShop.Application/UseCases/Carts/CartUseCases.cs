@@ -4,6 +4,7 @@ using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Orders;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Stock;
+using GymShop.Application.UseCases.Coupons;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -201,6 +202,7 @@ public class ClearCartUseCase : IClearCartUseCase
 
         var items = await _db.CartItems.Where(x => x.CartId == cart.Id).ToListAsync(cancellationToken);
         _db.CartItems.RemoveRange(items);
+        cart.CouponId = null;
         cart.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -233,6 +235,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         var cart = await _db.Carts
             .Include(x => x.Items)
+            .Include(x => x.Coupon)
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
 
         if (cart is null || cart.Items.Count == 0)
@@ -283,7 +286,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             })
             .ToList();
 
-        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cart.CouponId is not null, cancellationToken);
 
         var order = new Order
         {
@@ -291,6 +294,22 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             ShippingAddress = request.ShippingAddress.Trim(),
             Status = OrderStatus.Pending
         };
+
+        var subtotal = orderLines.Sum(x => x.Subtotal);
+        decimal discount = 0;
+        if (cart.Coupon is not null)
+        {
+            var activeUses = await _db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
+            var userUses = await _db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.UserId == userId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
+            var couponError = CouponRules.ValidateAvailability(cart.Coupon, subtotal, DateTime.UtcNow, activeUses, userUses);
+            if (couponError is not null) return AppResult<OrderResponse>.Failure(AppErrorType.Validation, couponError);
+            discount = CouponRules.CalculateDiscount(cart.Coupon, subtotal);
+            order.CouponCode = cart.Coupon.Code;
+            order.CouponRedemption = new CouponRedemption { CouponId = cart.Coupon.Id, UserId = userId };
+        }
+        order.Subtotal = subtotal;
+        order.DiscountAmount = discount;
+        order.Total = Math.Max(0, subtotal - discount);
 
         foreach (var line in orderLines)
         {
@@ -303,7 +322,6 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
                 Subtotal = line.Subtotal
             });
 
-            order.Total += line.Subtotal;
             var previousStock = line.Product.Stock;
             line.Product.Stock -= line.Quantity;
             line.Product.UpdatedAt = DateTime.UtcNow;
@@ -313,6 +331,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         _db.Orders.Add(order);
         _db.CartItems.RemoveRange(cart.Items);
+        cart.CouponId = null;
         cart.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -325,11 +344,13 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         return AppResult<OrderResponse>.Success(await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken));
     }
 
-    private async Task<IApplicationTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
+    private async Task<IApplicationTransaction?> BeginTransactionAsync(bool couponCheckout, CancellationToken cancellationToken)
     {
         return _transactionManager is null
             ? null
-            : await _transactionManager.BeginTransactionAsync(cancellationToken);
+            : couponCheckout
+                ? await _transactionManager.BeginCouponCheckoutTransactionAsync(cancellationToken)
+                : await _transactionManager.BeginTransactionAsync(cancellationToken);
     }
 }
 
@@ -363,9 +384,9 @@ internal static class CartQueries
     public static async Task<CartResponse> LoadCartResponseAsync(IApplicationDbContext db, int cartId, CancellationToken cancellationToken)
     {
         var cart = await db.Carts
-            .AsNoTracking()
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Coupon)
             .SingleAsync(x => x.Id == cartId, cancellationToken);
 
         var items = cart.Items
@@ -381,6 +402,27 @@ internal static class CartQueries
             ))
             .ToList();
 
-        return new CartResponse(cart.Id, cart.UserId, items.Sum(x => x.Subtotal), items);
+        var subtotal = items.Sum(x => x.Subtotal);
+        decimal discount = 0;
+        string? couponCode = null;
+        if (cart.Coupon is not null)
+        {
+            var activeUses = await db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
+            var userUses = await db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.UserId == cart.UserId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
+            var error = CouponRules.ValidateAvailability(cart.Coupon, subtotal, DateTime.UtcNow, activeUses, userUses);
+            if (error is null)
+            {
+                discount = CouponRules.CalculateDiscount(cart.Coupon, subtotal);
+                couponCode = cart.Coupon.Code;
+            }
+            else
+            {
+                cart.CouponId = null;
+                cart.Coupon = null;
+                cart.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+        return new CartResponse(cart.Id, cart.UserId, subtotal, discount, Math.Max(0, subtotal - discount), couponCode, items);
     }
 }

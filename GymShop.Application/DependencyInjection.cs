@@ -9,6 +9,7 @@ using GymShop.Application.UseCases.Payments;
 using GymShop.Application.UseCases.Products;
 using GymShop.Application.UseCases.Stock;
 using GymShop.Application.UseCases.Users;
+using GymShop.Application.UseCases.Coupons;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GymShop.Application;
@@ -64,6 +65,13 @@ public static class DependencyInjection
         services.AddScoped<IRemoveCartItemUseCase, RemoveCartItemUseCase>();
         services.AddScoped<IClearCartUseCase, ClearCartUseCase>();
         services.AddScoped<ICheckoutCartUseCase, CheckoutCartUseCase>();
+        services.AddScoped<IApplyCartCouponUseCase, ApplyCartCouponUseCase>();
+        services.AddScoped<IRemoveCartCouponUseCase, RemoveCartCouponUseCase>();
+        services.AddScoped<IGetCouponsUseCase, GetCouponsUseCase>();
+        services.AddScoped<IGetCouponUseCase, GetCouponUseCase>();
+        services.AddScoped<ICreateCouponUseCase, CreateCouponUseCase>();
+        services.AddScoped<IUpdateCouponUseCase, UpdateCouponUseCase>();
+        services.AddScoped<IUpdateCouponStatusUseCase, UpdateCouponStatusUseCase>();
 
         services.AddScoped<IGetUsersUseCase, GetUsersUseCase>();
         services.AddScoped<IGetUserByIdUseCase, GetUserByIdUseCase>();

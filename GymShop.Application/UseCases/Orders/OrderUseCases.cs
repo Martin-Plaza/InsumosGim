@@ -60,6 +60,7 @@ public class GetMyOrdersUseCase : IGetMyOrdersUseCase
             .Where(x => x.UserId == userId)
             .Include(x => x.User)
             .Include(x => x.Payments)
+            .Include(x => x.CouponRedemption)
             .OrderByDescending(x => x.Id)
             .Select(x => OrderMapper.ToSummaryResponse(x, x.User.Email))
             .ToListAsync(cancellationToken);
@@ -82,6 +83,7 @@ public class GetOrderByIdUseCase : IGetOrderByIdUseCase
             .Include(x => x.User)
             .Include(x => x.Items)
             .Include(x => x.Payments)
+            .Include(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (order is null)
@@ -250,6 +252,7 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
             .Include(x => x.Payments)
+            .Include(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (order is null)
@@ -307,6 +310,7 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
             .Include(x => x.Payments)
+            .Include(x => x.CouponRedemption)
             .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff)
             .ToListAsync(cancellationToken);
 
@@ -352,6 +356,8 @@ internal static class OrderCompensation
             StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
                 previousStock, reason, actorUserId, order);
         }
+
+        CouponRedemptionLifecycle.Release(order);
 
         return true;
     }
@@ -405,6 +411,7 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
             .Include(x => x.Payments)
+            .Include(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (order is null)
         {
@@ -496,6 +503,9 @@ internal static class OrderMapper
             $"{order.User.Name} {order.User.LastName}".Trim(),
             order.User.Phone,
             order.CreatedAt,
+            order.Subtotal,
+            order.CouponCode,
+            order.DiscountAmount,
             order.Total,
             order.Status.ToString(),
             order.ShippingAddress,

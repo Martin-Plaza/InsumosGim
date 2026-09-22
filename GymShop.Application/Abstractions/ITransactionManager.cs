@@ -9,4 +9,5 @@ public interface ITransactionManager
 {
     Task<IApplicationTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
     Task<IApplicationTransaction> BeginUserAdministrationTransactionAsync(CancellationToken cancellationToken = default);
+    Task<IApplicationTransaction> BeginCouponCheckoutTransactionAsync(CancellationToken cancellationToken = default);
 }

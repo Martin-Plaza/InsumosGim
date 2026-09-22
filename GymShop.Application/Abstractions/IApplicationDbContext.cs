@@ -19,5 +19,7 @@ public interface IApplicationDbContext
     DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
     DbSet<PasswordResetCode> PasswordResetCodes { get; }
     DbSet<UserExternalLogin> UserExternalLogins { get; }
+    DbSet<Coupon> Coupons { get; }
+    DbSet<CouponRedemption> CouponRedemptions { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

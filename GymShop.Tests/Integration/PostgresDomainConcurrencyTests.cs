@@ -48,6 +48,7 @@ public sealed class PostgresDomainConcurrencyTests
         var seed = await database.SeedPendingOrderAsync();
         await using var lookup = database.CreateContext();
         var productId = await lookup.OrderItems.Where(x => x.OrderId == seed.OrderId).Select(x => x.ProductId).SingleAsync();
+        var initialStock = await lookup.Products.Where(x => x.Id == productId).Select(x => x.Stock).SingleAsync();
         var barrier = new ProductSaveBarrier(2);
         await using var firstDb = database.CreateContext(barrier);
         await using var secondDb = database.CreateContext(barrier);
@@ -60,7 +61,8 @@ public sealed class PostgresDomainConcurrencyTests
         Assert.Single(results, x => x.IsSuccess);
         Assert.Single(results, x => !x.IsSuccess && x.Error?.Type == GymShop.Application.Common.AppErrorType.Conflict);
         await using var verification = database.CreateContext();
-        Assert.Contains((await verification.Products.SingleAsync(x => x.Id == productId)).Stock, new[] { 10, 20 });
+        Assert.Contains((await verification.Products.SingleAsync(x => x.Id == productId)).Stock,
+            new[] { initialStock + 7, initialStock + 17 });
     }
 
     private static async Task<(int FirstUser, int SecondUser, int ProductId)> SeedTwoCartsAsync(SqlTestDatabase database, int stock)

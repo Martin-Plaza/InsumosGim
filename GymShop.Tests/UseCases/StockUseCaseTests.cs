@@ -144,7 +144,7 @@ public sealed class StockUseCaseTests
         var cart = new Cart { User = user }; cart.Items.Add(new CartItem { Product = product, Quantity = 2 });
         db.Add(cart); await db.SaveChangesAsync();
 
-        var checkout = await new CheckoutCartUseCase(db).ExecuteAsync(user.Id, new CheckoutCartRequest("Calle 123"));
+        var checkout = await new CheckoutCartUseCase(db).ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Calle 123", 0));
         Assert.True(checkout.IsSuccess); Assert.Equal(3, product.Stock);
         var sale = Assert.Single(db.StockMovements); Assert.Equal(StockMovementType.Sale, sale.Type); Assert.Equal(-2, sale.Quantity);
 

@@ -101,7 +101,7 @@ public sealed class PostgresBehaviorTests
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new CheckoutCartUseCase(failing, new EfTransactionManager(failing))
-                    .ExecuteAsync(userId, new CheckoutCartRequest("Rollback Address")));
+                    .ExecuteAsync(userId, new CheckoutCartRequest("HomeDelivery", "Rollback Address", 0)));
         }
 
         await using var verification = database.CreateContext();

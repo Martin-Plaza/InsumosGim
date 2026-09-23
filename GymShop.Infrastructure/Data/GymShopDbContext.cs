@@ -1,4 +1,5 @@
 using GymShop.Application.Abstractions;
+using GymShop.Application.Common;
 using GymShop.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -180,12 +181,20 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.Total).HasPrecision(18, 2);
             entity.Property(x => x.Subtotal).HasPrecision(18, 2);
             entity.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(x => x.ShippingCost).HasPrecision(18, 2);
+            entity.Property(x => x.DeliveryMethod).HasConversion<string>().HasMaxLength(30).IsRequired();
             entity.Property(x => x.CouponCode).HasMaxLength(50);
             entity.Property(x => x.Status)
                 .HasConversion<string>()
                 .HasMaxLength(30)
                 .IsRequired();
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.PickupAddress).HasMaxLength(ValidationLimits.ShippingAddress).IsRequired();
+            entity.Property(x => x.PickupHours).HasMaxLength(ValidationLimits.PickupHours).IsRequired();
+            entity.Property(x => x.PickupInstructions).HasMaxLength(ValidationLimits.PickupInstructions).IsRequired();
+            entity.Property(x => x.Carrier).HasMaxLength(100);
+            entity.Property(x => x.TrackingNumber).HasMaxLength(100);
+            entity.Property(x => x.TrackingUrl).HasMaxLength(500);
             entity.Property(x => x.CancellationReason).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(x => x.UpdatedAt).IsConcurrencyToken();

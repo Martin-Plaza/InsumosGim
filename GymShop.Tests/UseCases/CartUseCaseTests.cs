@@ -1,4 +1,5 @@
 using GymShop.Application.Common;
+using GymShop.Application.Abstractions;
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Domain.Entities;
@@ -75,7 +76,7 @@ public class CartUseCaseTests
         await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
 
         var checkout = new CheckoutCartUseCase(db);
-        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Av. Siempre Viva 742", 0));
 
         Assert.True(result.IsSuccess);
         Assert.NotNull(result.Value);
@@ -99,7 +100,7 @@ public class CartUseCaseTests
         await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
 
         var checkout = new CheckoutCartUseCase(db);
-        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Av. Siempre Viva 742", 0));
         product.Price = 999;
         await db.SaveChangesAsync();
 
@@ -123,7 +124,7 @@ public class CartUseCaseTests
         await addToCart.ExecuteAsync(user.Id, new AddCartItemRequest(secondProduct.Id, 3));
 
         var checkout = new CheckoutCartUseCase(db);
-        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Av. Siempre Viva 742", 0));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(3, firstProduct.Stock);
@@ -145,7 +146,7 @@ public class CartUseCaseTests
         await db.SaveChangesAsync();
 
         var checkout = new CheckoutCartUseCase(db);
-        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Av. Siempre Viva 742"));
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Av. Siempre Viva 742", 0));
 
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Validation, result.Error?.Type);
@@ -174,10 +175,11 @@ public class CartUseCaseTests
         await db.SaveChangesAsync();
 
         var checkout = new CheckoutCartUseCase(db);
-        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("Otra direccion 123"));
+        var result = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Otra direccion 123", 0));
 
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal("pending_order_exists", result.Error?.Code);
         Assert.Single(db.Orders);
     }
 
@@ -237,6 +239,100 @@ public class CartUseCaseTests
         Assert.Null(response.Value.CouponCode);
         Assert.Null((await db.Carts.SingleAsync(x => x.UserId == user.Id)).CouponId);
     }
+
+    [Fact]
+    public async Task Checkout_applies_coupon_before_home_delivery_cost_and_snapshots_total()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        var coupon = new Coupon { Code = "SAVE20", Name = "Save", Type = CouponType.FixedAmount, Value = 20, IsActive = true };
+        db.Coupons.Add(coupon); await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
+        await new GymShop.Application.UseCases.Coupons.ApplyCartCouponUseCase(db)
+            .ExecuteAsync(user.Id, new GymShop.Application.DTOs.Coupons.ApplyCouponRequest("SAVE20"));
+
+        var result = await new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(30))
+            .ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Calle 123", 30, 200, 20));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(200, result.Value!.Subtotal);
+        Assert.Equal(20, result.Value.DiscountAmount);
+        Assert.Equal(30, result.Value.ShippingCost);
+        Assert.Equal(210, result.Value.Total);
+        Assert.Equal("HomeDelivery", result.Value.DeliveryMethod);
+    }
+
+    [Fact]
+    public async Task Checkout_store_pickup_snapshots_current_configuration()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 2, price: 100);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+
+        var result = await new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(999))
+            .ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 100, 0));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(string.Empty, result.Value!.ShippingAddress);
+        Assert.Equal(0, result.Value.ShippingCost);
+        Assert.Equal(100, result.Value.Total);
+        Assert.Equal("Test pickup", result.Value.PickupAddress);
+        Assert.Equal("Test hours", result.Value.PickupHours);
+        Assert.Equal("Test instructions", result.Value.PickupInstructions);
+
+        var saved = await db.Orders.SingleAsync();
+        Assert.Equal("Test pickup", saved.PickupAddress);
+        Assert.Equal("Test hours", saved.PickupHours);
+        Assert.Equal("Test instructions", saved.PickupInstructions);
+    }
+
+    [Fact]
+    public async Task Checkout_store_pickup_rejects_missing_pickup_address()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 2, price: 100);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+
+        var settings = new TestShippingSettings(50, PickupAddress: "   ");
+        var result = await new CheckoutCartUseCase(db, shippingSettings: settings)
+            .ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 100, 0));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Equal("pickup_configuration_missing", result.Error?.Code);
+        Assert.Empty(db.Orders);
+        Assert.Equal(2, product.Stock);
+    }
+
+    [Fact]
+    public async Task Checkout_rejects_stale_shipping_quote_without_creating_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 2, price: 100);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+
+        var result = await new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(50))
+            .ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Calle 123", 40, 100, 0));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal("checkout_pricing_changed", result.Error?.Code);
+        Assert.Empty(db.Orders);
+        Assert.Equal(2, product.Stock);
+    }
+
+    private sealed record TestShippingSettings(
+        decimal HomeDeliveryCost,
+        string PickupAddress = "Test pickup",
+        string PickupInstructions = "Test instructions",
+        string PickupHours = "Test hours") : IShippingSettings;
 
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {

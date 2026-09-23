@@ -80,12 +80,35 @@ public class AdminOrderUseCaseTests
         var useCase = new UpdateOrderStatusUseCase(db);
 
         Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Preparing"))).IsSuccess);
-        Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt))).IsSuccess);
+        Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt, "Correo Argentino", "TRACK-1", "https://correo.example/track/TRACK-1"))).IsSuccess);
         Assert.True((await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Delivered", order.UpdatedAt))).IsSuccess);
 
         Assert.Equal(OrderStatus.Delivered, order.Status);
         Assert.Equal(3, await db.AuditEntries.CountAsync());
         Assert.All(db.AuditEntries, entry => Assert.Equal("OrderStatusChanged", entry.Action));
+    }
+
+    [Fact]
+    public async Task Shipping_home_delivery_requires_valid_tracking_and_allows_correction()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "tracking@test.com");
+        var order = await SeedOrderAsync(db, user.Id, 5, 1, 100);
+        order.Status = OrderStatus.Preparing;
+        await db.SaveChangesAsync();
+        var useCase = new UpdateOrderStatusUseCase(db);
+
+        var missing = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt));
+        var invalidUrl = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt, "Andreani", "ABC", "http://inseguro.test"));
+        var shipped = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt, "Andreani", "ABC", "https://tracking.example/ABC"));
+        var corrected = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Shipped", order.UpdatedAt, "Andreani", "XYZ", "https://tracking.example/XYZ"));
+
+        Assert.Equal(AppErrorType.Validation, missing.Error?.Type);
+        Assert.Equal(AppErrorType.Validation, invalidUrl.Error?.Type);
+        Assert.True(shipped.IsSuccess);
+        Assert.True(corrected.IsSuccess);
+        Assert.Equal("XYZ", order.TrackingNumber);
+        Assert.Contains(db.AuditEntries, x => x.Action == "OrderTrackingUpdated");
     }
 
     [Fact]

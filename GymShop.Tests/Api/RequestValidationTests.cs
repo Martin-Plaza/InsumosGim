@@ -65,7 +65,7 @@ public class RequestValidationTests
         { new CreateProductRequest(new string('N', 151), null, 10, 1, null), nameof(CreateProductRequest.Name) },
         { new CreateProductRequest("Producto", new string('D', 1001), 10, 1, null), nameof(CreateProductRequest.Description) },
         { new CreateProductRequest("Producto", null, 10, 1, "/" + new string('i', 500)), nameof(CreateProductRequest.ImageUrl) },
-        { new CheckoutCartRequest(new string('A', 301)), nameof(CheckoutCartRequest.ShippingAddress) },
+        { new CheckoutCartRequest("HomeDelivery", new string('A', 301), 0), nameof(CheckoutCartRequest.ShippingAddress) },
         { new CreatePaymentRequest("Mock", new string('K', 101)), nameof(CreatePaymentRequest.IdempotencyKey) },
         { new CreatePaymentRequest(new string('P', 51), null), nameof(CreatePaymentRequest.Provider) },
         { new UpdatePaymentStatusRequest("Rejected", null, new string('R', 501)), nameof(UpdatePaymentStatusRequest.FailureReason) },

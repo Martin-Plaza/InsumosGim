@@ -214,23 +214,45 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly ITransactionManager? _transactionManager;
+    private readonly IShippingSettings _shippingSettings;
 
-    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null)
+    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null, IShippingSettings? shippingSettings = null)
     {
         _db = db;
         _transactionManager = transactionManager;
+        _shippingSettings = shippingSettings ?? new FreeShippingSettings();
     }
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.ShippingAddress))
+        if (!Enum.TryParse<DeliveryMethod>(request.DeliveryMethod, true, out var deliveryMethod) || !Enum.IsDefined(deliveryMethod))
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La modalidad de entrega no es valida.");
+        }
+
+        if (deliveryMethod == DeliveryMethod.HomeDelivery && string.IsNullOrWhiteSpace(request.ShippingAddress))
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
         }
 
-        if (request.ShippingAddress.Trim().Length > ValidationLimits.ShippingAddress)
+        if (request.ShippingAddress?.Trim().Length > ValidationLimits.ShippingAddress)
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio no puede superar los 300 caracteres.");
+        }
+
+        var pickupAddress = _shippingSettings.PickupAddress?.Trim() ?? string.Empty;
+        var pickupHours = _shippingSettings.PickupHours?.Trim() ?? string.Empty;
+        var pickupInstructions = _shippingSettings.PickupInstructions?.Trim() ?? string.Empty;
+        if (deliveryMethod == DeliveryMethod.StorePickup && string.IsNullOrWhiteSpace(pickupAddress))
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El retiro en tienda no esta disponible porque falta configurar su direccion.", "pickup_configuration_missing");
+        }
+        if (deliveryMethod == DeliveryMethod.StorePickup &&
+            (pickupAddress.Length > ValidationLimits.ShippingAddress ||
+             pickupHours.Length > ValidationLimits.PickupHours ||
+             pickupInstructions.Length > ValidationLimits.PickupInstructions))
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La configuracion de retiro en tienda supera los limites permitidos.", "pickup_configuration_invalid");
         }
 
         var cart = await _db.Carts
@@ -246,7 +268,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         var hasPendingOrder = await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken);
         if (hasPendingOrder)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de crear otra.");
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de crear otra.", "pending_order_exists");
         }
 
         var productIds = cart.Items.Select(x => x.ProductId).Distinct().ToList();
@@ -291,7 +313,11 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         var order = new Order
         {
             UserId = userId,
-            ShippingAddress = request.ShippingAddress.Trim(),
+            DeliveryMethod = deliveryMethod,
+            ShippingAddress = deliveryMethod == DeliveryMethod.HomeDelivery ? request.ShippingAddress!.Trim() : string.Empty,
+            PickupAddress = deliveryMethod == DeliveryMethod.StorePickup ? pickupAddress : string.Empty,
+            PickupHours = deliveryMethod == DeliveryMethod.StorePickup ? pickupHours : string.Empty,
+            PickupInstructions = deliveryMethod == DeliveryMethod.StorePickup ? pickupInstructions : string.Empty,
             Status = OrderStatus.Pending
         };
 
@@ -309,7 +335,16 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         }
         order.Subtotal = subtotal;
         order.DiscountAmount = discount;
-        order.Total = Math.Max(0, subtotal - discount);
+        order.ShippingCost = deliveryMethod == DeliveryMethod.HomeDelivery ? _shippingSettings.HomeDeliveryCost : 0;
+        if (order.ShippingCost < 0)
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El costo de envio configurado no es valido.");
+        if (request.ExpectedShippingCost != order.ShippingCost ||
+            (request.ExpectedSubtotal.HasValue && request.ExpectedSubtotal.Value != subtotal) ||
+            (request.ExpectedDiscount.HasValue && request.ExpectedDiscount.Value != discount))
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El precio, descuento o costo de envio cambio. Revisa el resumen antes de confirmar.", "checkout_pricing_changed");
+        }
+        order.Total = Math.Max(0, subtotal - discount) + order.ShippingCost;
 
         foreach (var line in orderLines)
         {

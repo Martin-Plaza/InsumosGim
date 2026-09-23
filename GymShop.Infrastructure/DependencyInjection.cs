@@ -20,6 +20,10 @@ public static class DependencyInjection
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<GymShopDbContext>());
         services.AddScoped<ITransactionManager, EfTransactionManager>();
+        var shippingOptions = configuration.GetSection(ShippingOptions.SectionName).Get<ShippingOptions>() ?? new ShippingOptions();
+        if (shippingOptions.HomeDeliveryCost < 0)
+            throw new InvalidOperationException("Shipping:HomeDeliveryCost cannot be negative.");
+        services.AddSingleton<IShippingSettings>(shippingOptions);
         services.AddOptions<ProductImageStorageOptions>()
             .Configure(options => options.BucketName = configuration["PRODUCT_IMAGE_BUCKET"] ?? string.Empty);
         services.AddSingleton<IProductImageStorage>(provider =>

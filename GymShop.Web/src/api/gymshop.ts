@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, ShippingOptions, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -40,7 +40,8 @@ export const api = {
   clearCart: () => request<void>('/api/cart', json('DELETE')),
   applyCoupon: (code: string) => request<Cart>('/api/cart/coupon', json('POST', { code })),
   removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),
-  checkout: (shippingAddress: string) => request<Order>('/api/cart/checkout', json('POST', { shippingAddress })),
+  shippingOptions: () => request<ShippingOptions>('/api/cart/shipping-options'),
+  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number }) => request<Order>('/api/cart/checkout', json('POST', data)),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   orders: (filters: OrderFilters = {}) => {
     const query = new URLSearchParams()
@@ -50,7 +51,7 @@ export const api = {
   order: (id: number) => request<Order>(`/api/orders/${id}`),
   orderHistory: (id: number) => request<OrderHistoryEvent[]>(`/api/orders/${id}/history`),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
-  setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt })),
+  setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null, tracking?: { carrier: string; trackingNumber: string; trackingUrl: string }) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt, ...tracking })),
   createPayment: (orderId: number, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider: 'Mock', idempotencyKey })),
   payment: (id: number) => request<Payment>(`/api/payments/${id}`),
   orderPayments: (orderId: number) => request<Payment[]>(`/api/payments/orders/${orderId}`),

@@ -43,7 +43,7 @@ public sealed class GetUserByIdUseCase(IApplicationDbContext db) : IGetUserByIdU
         var metrics = await valid.GroupBy(_ => 1).Select(g => new { Count = g.LongCount(), Total = g.Sum(x => x.Total), Last = (DateTime?)g.Max(x => x.CreatedAt) }).SingleOrDefaultAsync(cancellationToken);
         var allOrders = db.Orders.AsNoTracking().Where(x => x.UserId == id);
         var ordersTotal = await allOrders.LongCountAsync(cancellationToken);
-        var recentOrders = await allOrders.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(RecentOrdersPageSize).Select(x => new UserOrderSummaryResponse(x.Id, x.CreatedAt, x.Total, x.Status.ToString())).ToListAsync(cancellationToken);
+        var recentOrders = await allOrders.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(RecentOrdersPageSize).Select(x => new UserOrderSummaryResponse(x.Id, x.CreatedAt, x.Total, x.Status.ToString(), x.DeliveryMethod.ToString())).ToListAsync(cancellationToken);
         return AppResult<AdminUserDetailResponse>.Success(new(user.Id, user.Email, user.Name, user.Role, user.IsActive, user.CreatedAt, metrics?.Count ?? 0, metrics?.Total ?? 0, metrics?.Last, ordersTotal, RecentOrdersPageSize, recentOrders));
     }
 }

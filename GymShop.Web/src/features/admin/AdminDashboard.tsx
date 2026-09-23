@@ -6,8 +6,8 @@ import { describeAdminError } from './adminErrors'
 import { AdminEmpty, AdminFeedback, AdminLoading } from './adminUi'
 
 const statusLabels: Record<OrderStatus, string> = {
-  Pending: 'Pendientes', Paid: 'Pagados', Preparing: 'En preparación', Shipped: 'Enviados',
-  Delivered: 'Entregados', Canceled: 'Cancelados', Refunded: 'Reembolsados',
+  Pending: 'Pendientes', Paid: 'Pagados', Preparing: 'En preparación', Shipped: 'Enviados / listos para retirar',
+  Delivered: 'Entregados / retirados', Canceled: 'Cancelados', Refunded: 'Reembolsados',
 }
 
 export function AdminDashboard() {

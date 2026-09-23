@@ -149,7 +149,7 @@ public class GetOrdersUseCase : IGetOrdersUseCase
             .Select(x => new OrderSummaryResponse(
                 x.Id, x.UserId, x.User.Email,
                 (x.User.Name + " " + (x.User.LastName ?? "")).Trim(),
-                x.CreatedAt, x.Total, x.Status.ToString(), x.UpdatedAt,
+                x.CreatedAt, x.Total, x.DeliveryMethod.ToString(), x.Status.ToString(), x.UpdatedAt,
                 x.Payments.OrderByDescending(payment => payment.Id).Select(payment => payment.Status.ToString()).FirstOrDefault(),
                 x.Payments.OrderByDescending(payment => payment.Id).Select(payment => (int?)payment.Id).FirstOrDefault()))
             .ToListAsync(cancellationToken);
@@ -160,7 +160,7 @@ public class GetOrdersUseCase : IGetOrdersUseCase
 
 public sealed class GetOrderHistoryUseCase : IGetOrderHistoryUseCase
 {
-    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderCanceled", "OrderExpiredAdministratively"];
+    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively"];
     private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged"];
     private readonly IApplicationDbContext _db;
 
@@ -423,15 +423,28 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             return AppResult.Failure(AppErrorType.Conflict, "Transicion de estado invalida. Los pagos y reembolsos deben resolverse desde su flujo especifico.");
         }
 
-        if (order.Status == status)
-        {
+        var trackingResult = ValidateTracking(order, status, request);
+        if (trackingResult is not null) return trackingResult;
+
+        if (order.Status == status && status != OrderStatus.Shipped)
             return AppResult.Success();
-        }
 
         var oldStatus = order.Status;
         if (request.ExpectedUpdatedAt.HasValue && order.UpdatedAt != request.ExpectedUpdatedAt.Value)
             return AppResult.Failure(AppErrorType.Conflict, "El pedido fue actualizado por otro usuario. Recarga el detalle antes de continuar.");
-        if (status == OrderStatus.Canceled)
+        if (status == OrderStatus.Shipped)
+        {
+            var oldTracking = new { order.Carrier, order.TrackingNumber, order.TrackingUrl };
+            order.Carrier = Normalize(request.Carrier);
+            order.TrackingNumber = Normalize(request.TrackingNumber);
+            order.TrackingUrl = Normalize(request.TrackingUrl);
+            order.Status = status;
+            order.UpdatedAt = DateTime.UtcNow;
+            if (oldStatus == status)
+                AuditTrail.Add(_db, _auditContext, "OrderTrackingUpdated", "Order", order.Id, oldTracking,
+                    new { order.Carrier, order.TrackingNumber, order.TrackingUrl });
+        }
+        else if (status == OrderStatus.Canceled)
         {
             OrderCompensation.CancelPendingAndRestoreStock(_db, order, "Cancelacion administrativa del pedido.", _auditContext?.ActorUserId);
         }
@@ -440,10 +453,11 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
             order.Status = status;
             order.UpdatedAt = DateTime.UtcNow;
         }
-        AuditTrail.Add(_db, _auditContext, "OrderStatusChanged", "Order", order.Id,
-            new { status = oldStatus.ToString() },
-            new { status = order.Status.ToString() },
-            status == OrderStatus.Canceled ? "Cancelacion administrativa del pedido." : null);
+        if (oldStatus != status)
+            AuditTrail.Add(_db, _auditContext, "OrderStatusChanged", "Order", order.Id,
+                new { status = oldStatus.ToString() },
+                new { status = order.Status.ToString() },
+                status == OrderStatus.Canceled ? "Cancelacion administrativa del pedido." : null);
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
@@ -455,6 +469,22 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
 
         return AppResult.Success();
     }
+
+    private static AppResult? ValidateTracking(Order order, OrderStatus status, UpdateOrderStatusRequest request)
+    {
+        if (status != OrderStatus.Shipped) return null;
+        if (order.DeliveryMethod == DeliveryMethod.HomeDelivery &&
+            (string.IsNullOrWhiteSpace(request.Carrier) || string.IsNullOrWhiteSpace(request.TrackingNumber)))
+            return AppResult.Failure(AppErrorType.Validation, "La empresa transportista y el numero de seguimiento son obligatorios para un envio a domicilio.");
+        if (request.Carrier?.Trim().Length > ValidationLimits.Carrier || request.TrackingNumber?.Trim().Length > ValidationLimits.TrackingNumber)
+            return AppResult.Failure(AppErrorType.Validation, "Los datos de seguimiento superan la longitud permitida.");
+        if (!string.IsNullOrWhiteSpace(request.TrackingUrl) &&
+            (!Uri.TryCreate(request.TrackingUrl.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
+            return AppResult.Failure(AppErrorType.Validation, "La URL de seguimiento debe ser una URL HTTPS valida.");
+        return null;
+    }
+
+    private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 internal static class OrderStatusTransitions
@@ -506,9 +536,17 @@ internal static class OrderMapper
             order.Subtotal,
             order.CouponCode,
             order.DiscountAmount,
+            order.DeliveryMethod.ToString(),
+            order.ShippingCost,
             order.Total,
             order.Status.ToString(),
             order.ShippingAddress,
+            order.PickupAddress,
+            order.PickupHours,
+            order.PickupInstructions,
+            order.Carrier,
+            order.TrackingNumber,
+            order.TrackingUrl,
             order.CancellationReason,
             order.UpdatedAt,
             order.Items
@@ -533,6 +571,7 @@ internal static class OrderMapper
             $"{order.User.Name} {order.User.LastName}".Trim(),
             order.CreatedAt,
             order.Total,
+            order.DeliveryMethod.ToString(),
             order.Status.ToString(),
             order.UpdatedAt,
             lastPayment?.Status.ToString(),

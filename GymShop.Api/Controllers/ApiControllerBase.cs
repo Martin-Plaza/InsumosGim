@@ -27,7 +27,7 @@ public abstract class ApiControllerBase : ControllerBase
 
     protected ActionResult ToErrorResponse(AppError error)
     {
-        var body = new { message = error.Message };
+        var body = new { message = error.Message, code = error.Code };
 
         return error.Type switch
         {

@@ -5,6 +5,7 @@ export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5093')
 
 export class ApiError extends Error implements ApiErrorShape {
   status: number
+  code?: string
   traceId?: string
   retryAfter?: number
   validationErrors?: Record<string, string[]>
@@ -12,6 +13,7 @@ export class ApiError extends Error implements ApiErrorShape {
     super(data.message)
     this.name = 'ApiError'
     this.status = data.status
+    this.code = data.code
     this.traceId = data.traceId
     this.retryAfter = data.retryAfter
     this.validationErrors = data.validationErrors
@@ -37,6 +39,7 @@ async function normalizeError(response: Response): Promise<ApiError> {
   return new ApiError({
     status: response.status,
     message,
+    code: typeof body.code === 'string' ? body.code : undefined,
     traceId: typeof body.traceId === 'string' ? body.traceId : undefined,
     retryAfter: Number.isFinite(retry) && retry > 0 ? retry : undefined,
     validationErrors: errors,

@@ -23,6 +23,7 @@ public class CartController : ApiControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly IApplyCartCouponUseCase _applyCoupon;
     private readonly IRemoveCartCouponUseCase _removeCoupon;
+    private readonly IShippingSettings _shippingSettings;
 
     public CartController(
         IGetCartUseCase getCart,
@@ -31,7 +32,8 @@ public class CartController : ApiControllerBase
         IRemoveCartItemUseCase removeCartItem,
         IClearCartUseCase clearCart,
         ICheckoutCartUseCase checkoutCart,
-        ICurrentUserService currentUser, IApplyCartCouponUseCase applyCoupon, IRemoveCartCouponUseCase removeCoupon)
+        ICurrentUserService currentUser, IApplyCartCouponUseCase applyCoupon, IRemoveCartCouponUseCase removeCoupon,
+        IShippingSettings shippingSettings)
     {
         _getCart = getCart;
         _addCartItem = addCartItem;
@@ -41,7 +43,15 @@ public class CartController : ApiControllerBase
         _checkoutCart = checkoutCart;
         _currentUser = currentUser;
         _applyCoupon = applyCoupon; _removeCoupon = removeCoupon;
+        _shippingSettings = shippingSettings;
     }
+
+    [HttpGet("shipping-options")]
+    public ActionResult<ShippingOptionsResponse> GetShippingOptions() => Ok(new ShippingOptionsResponse(
+        _shippingSettings.HomeDeliveryCost,
+        _shippingSettings.PickupAddress,
+        _shippingSettings.PickupInstructions,
+        _shippingSettings.PickupHours));
 
     [HttpPost("coupon")]
     public async Task<ActionResult<CartResponse>> ApplyCoupon(ApplyCouponRequest request, CancellationToken cancellationToken)

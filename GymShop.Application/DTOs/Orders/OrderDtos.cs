@@ -3,7 +3,12 @@ using GymShop.Application.Common;
 
 namespace GymShop.Application.DTOs.Orders;
 
-public record UpdateOrderStatusRequest([Required, StringLength(30)] string Status, DateTime? ExpectedUpdatedAt = null);
+public record UpdateOrderStatusRequest(
+    [Required, StringLength(30)] string Status,
+    DateTime? ExpectedUpdatedAt = null,
+    [StringLength(ValidationLimits.Carrier)] string? Carrier = null,
+    [StringLength(ValidationLimits.TrackingNumber)] string? TrackingNumber = null,
+    [StringLength(ValidationLimits.TrackingUrl)] string? TrackingUrl = null);
 
 public sealed record OrderFilterRequest(
     [Range(1, int.MaxValue)] int Page = 1,
@@ -29,9 +34,17 @@ public record OrderResponse(
     decimal Subtotal,
     string? CouponCode,
     decimal DiscountAmount,
+    string DeliveryMethod,
+    decimal ShippingCost,
     decimal Total,
     string Status,
     string ShippingAddress,
+    string PickupAddress,
+    string PickupHours,
+    string PickupInstructions,
+    string? Carrier,
+    string? TrackingNumber,
+    string? TrackingUrl,
     string? CancellationReason,
     DateTime? UpdatedAt,
     List<OrderItemResponse> Items,
@@ -45,6 +58,7 @@ public record OrderSummaryResponse(
     string UserName,
     DateTime CreatedAt,
     decimal Total,
+    string DeliveryMethod,
     string Status,
     DateTime? UpdatedAt,
     string? LastPaymentStatus,

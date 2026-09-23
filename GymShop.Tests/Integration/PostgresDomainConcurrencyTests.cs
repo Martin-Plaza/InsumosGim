@@ -26,8 +26,8 @@ public sealed class PostgresDomainConcurrencyTests
         await using var firstDb = database.CreateContext();
         await using var secondDb = database.CreateContext();
         var outcomes = await Task.WhenAll(
-            new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb)).ExecuteAsync(firstUser, new CheckoutCartRequest("First Address")),
-            new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb)).ExecuteAsync(secondUser, new CheckoutCartRequest("Second Address")));
+            new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb)).ExecuteAsync(firstUser, new CheckoutCartRequest("HomeDelivery", "First Address", 0)),
+            new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb)).ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
         Assert.Single(outcomes, x => x.IsSuccess);
         Assert.Single(outcomes, x => !x.IsSuccess && x.Error?.Message.Contains("agotó", StringComparison.OrdinalIgnoreCase) == true);
         await using var verification = database.CreateContext();
@@ -44,9 +44,9 @@ public sealed class PostgresDomainConcurrencyTests
         await using var secondDb = database.CreateContext(barrier);
 
         var firstTask = Capture(() => new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb))
-            .ExecuteAsync(firstUser, new CheckoutCartRequest("First Address")));
+            .ExecuteAsync(firstUser, new CheckoutCartRequest("HomeDelivery", "First Address", 0)));
         var secondTask = Capture(() => new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb))
-            .ExecuteAsync(secondUser, new CheckoutCartRequest("Second Address")));
+            .ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
         await barrier.AllArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
         barrier.Release.TrySetResult();
         var outcomes = await Task.WhenAll(firstTask, secondTask);

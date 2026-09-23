@@ -9,7 +9,7 @@ export interface PasswordResetCompleted { message: string }
 export interface AdminUser extends User { isActive: boolean; createdAt: string }
 export interface AdminUserPage { items: AdminUser[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface AdminUserFilters { page?: number; pageSize?: number; search?: string; role?: Role; isActive?: boolean }
-export interface UserOrderSummary { id: number; createdAt: string; total: number; status: OrderStatus }
+export interface UserOrderSummary { id: number; createdAt: string; total: number; status: OrderStatus; deliveryMethod?: DeliveryMethod }
 export interface AdminUserDetail extends AdminUser { orderCount: number; totalPurchased: number; lastOrderAt: string | null; ordersTotal: number; ordersPageSize: number; recentOrders: UserOrderSummary[] }
 export interface AuthResponse { token: string; user: User }
 export interface CategorySummary { id: number; name: string; slug: string }
@@ -28,12 +28,14 @@ export interface CartItem { productId: number; productName: string; unitPrice: n
 export interface Cart { id: number; userId: number; subtotal: number; discount: number; total: number; couponCode: string | null; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }
 export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null }
-export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; total: number; status: OrderStatus; shippingAddress: string; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
+export type DeliveryMethod = 'StorePickup' | 'HomeDelivery'
+export interface ShippingOptions { homeDeliveryCost: number; pickupAddress: string; pickupInstructions: string; pickupHours: string }
+export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; deliveryMethod?: DeliveryMethod; shippingCost?: number; total: number; status: OrderStatus; shippingAddress: string; pickupAddress?: string; pickupHours?: string; pickupInstructions?: string; carrier?: string | null; trackingNumber?: string | null; trackingUrl?: string | null; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
 export type CouponType = 'Percentage' | 'FixedAmount'
 export interface Coupon { id: number; code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean; reservedUses: number; consumedUses: number; createdAtUtc: string; updatedAtUtc: string | null }
 export interface CouponPage { items: Coupon[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface CouponInput { code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean }
-export interface OrderSummary { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; total: number; status: OrderStatus; updatedAt: string | null; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
+export interface OrderSummary { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; total: number; deliveryMethod?: DeliveryMethod; status: OrderStatus; updatedAt: string | null; lastPaymentStatus: PaymentStatus | null; lastPaymentId: number | null }
 export interface OrderPage { items: OrderSummary[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface OrderFilters { page?: number; pageSize?: number; search?: string; status?: string; fromUtc?: string; toUtc?: string }
 export type OrderHistorySource = 'Manual' | 'Automatic' | 'Provider'
@@ -52,4 +54,4 @@ export interface DashboardStatistics {
 }
 export interface DashboardFilters { period?: '7d' | '30d' | 'month'; from?: string; to?: string }
 
-export interface ApiErrorShape { status: number; message: string; traceId?: string; retryAfter?: number; validationErrors?: Record<string, string[]> }
+export interface ApiErrorShape { status: number; message: string; code?: string; traceId?: string; retryAfter?: number; validationErrors?: Record<string, string[]> }

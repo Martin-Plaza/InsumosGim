@@ -14,6 +14,18 @@ export const paymentLabels: Record<PaymentStatus, string> = {
 
 export const terminalRetryablePayments: PaymentStatus[] = ['CreationFailed', 'Rejected', 'Canceled', 'Expired']
 
+export function isCheckoutPricingConflict(value: unknown) {
+  return value instanceof ApiError
+    && value.status === 409
+    && value.code === 'checkout_pricing_changed'
+}
+
+export function isPendingOrderConflict(value: unknown) {
+  return value instanceof ApiError
+    && value.status === 409
+    && value.code === 'pending_order_exists'
+}
+
 export function checkoutErrorMessage(value: unknown) {
   if (!(value instanceof ApiError)) return 'No pudimos comunicarnos con el servidor. Antes de reintentar, revisá tus órdenes para evitar duplicados.'
   const details = [value.message]

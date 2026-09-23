@@ -99,7 +99,7 @@ public class CreatePaymentUseCase : ICreatePaymentUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido ya esta pagado.");
         }
 
-        if (order.Status == OrderStatus.Canceled || order.Status == OrderStatus.Shipped)
+        if (order.Status != OrderStatus.Pending)
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido no admite nuevos pagos.");
         }

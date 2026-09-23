@@ -12,6 +12,11 @@ public static class ValidationLimits
     public const int ProductDescription = 1000;
     public const int ImageUrl = 500;
     public const int ShippingAddress = 300;
+    public const int PickupHours = 300;
+    public const int PickupInstructions = 1000;
+    public const int Carrier = 100;
+    public const int TrackingNumber = 100;
+    public const int TrackingUrl = 500;
     public const int IdempotencyKey = 100;
     public const int PaymentProvider = 50;
     public const int PaymentProviderId = 100;

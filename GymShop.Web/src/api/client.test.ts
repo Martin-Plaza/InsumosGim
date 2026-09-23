@@ -64,7 +64,7 @@ describe('cliente HTTP y contrato GymShop', () => {
   it('usa los endpoints actuales de carrito y checkout', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(response({ id: 5 })))
     await api.addCartItem(2, 3)
-    await api.checkout('Calle 123')
+    await api.checkout({ deliveryMethod: 'HomeDelivery', shippingAddress: 'Calle 123', expectedShippingCost: 10, expectedSubtotal: 100, expectedDiscount: 0 })
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/cart/items')
     expect(String(fetchMock.mock.calls[1][0])).toContain('/api/cart/checkout')
   })

@@ -79,7 +79,7 @@ public class CreateCategoryUseCase(IApplicationDbContext db, IAuditContext? audi
         var category = new Category { Name = name, Slug = slug, Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(), Color = request.Color, DisplayOrder = request.DisplayOrder, IsActive = true };
         db.Categories.Add(category);
         await db.SaveChangesAsync(cancellationToken);
-        AuditTrail.Add(db, auditContext, "CategoryCreated", "Category", category.Id, null, new { category.Name, category.Slug, category.Description, category.DisplayOrder, category.IsActive });
+        AuditTrail.Add(db, auditContext, "CategoryCreated", "Category", category.Id, null, new { category.Name, category.Slug, category.Description, category.Color, category.DisplayOrder, category.IsActive });
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<AdminCategoryResponse>.Success(CategoryRules.Map(category, 0));
     }

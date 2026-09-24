@@ -62,6 +62,17 @@ describe('alta y edición administrativa de productos', () => {
     expect(screen.getByText('El precio debe ser mayor a cero.')).toBeInTheDocument()
     expect(screen.getByText('El stock debe ser un número entero mayor o igual a cero.')).toBeInTheDocument()
     expect(screen.getByText('Seleccioná una categoría.')).toBeInTheDocument()
+    expect(screen.getByText('Agregá una imagen o su URL.')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
+
+  it('no crea un producto sin archivo ni URL aunque el resto esté completo', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/nuevo')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(defaultApi)
+    render(<App />); await screen.findByRole('button', { name: 'Crear producto' }); await fillValidCreateForm()
+    await userEvent.clear(screen.getByLabelText('URL de imagen'))
+    await userEvent.click(screen.getByRole('button', { name: 'Crear producto' }))
+    expect(screen.getByText('Agregá una imagen o su URL.')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
 

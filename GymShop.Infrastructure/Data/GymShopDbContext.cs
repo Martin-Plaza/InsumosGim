@@ -148,6 +148,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.Name).HasMaxLength(100).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(120).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(500);
+            entity.Property(x => x.Color).HasMaxLength(7);
             entity.HasIndex(x => x.Slug).IsUnique();
             entity.HasIndex(x => new { x.IsActive, x.DisplayOrder });
         });

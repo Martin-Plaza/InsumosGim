@@ -48,6 +48,7 @@ export function ProductEditorPage({ mode }: { mode: 'create' | 'edit' }) {
 
   const save = async (values: ProductFormValues, imageFile: File | null) => {
     if (submitting.current) return
+    if (!imageFile && !values.imageUrl.trim()) { setFieldErrors({ imageUrl: 'Agregá una imagen o su URL.' }); return }
     submitting.current = true; setBusy(true); setSubmitError(''); setFieldErrors({})
     let completed = false; let uploadedKey: string | undefined
     try {

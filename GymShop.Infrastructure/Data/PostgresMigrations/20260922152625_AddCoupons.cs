@@ -38,7 +38,7 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                 defaultValue: 0m);
 
             // Existing orders predate discounts, so their historical subtotal equals their total.
-            migrationBuilder.Sql("UPDATE \"Orders\" SET \"Subtotal\" = \"Total\"");
+            migrationBuilder.Sql("UPDATE \"Orders\" SET \"Subtotal\" = \"Total\";");
 
             migrationBuilder.AddColumn<int>(
                 name: "CouponId",

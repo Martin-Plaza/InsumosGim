@@ -87,7 +87,7 @@ public class GetCategoriesUseCase : IGetCategoriesUseCase
         _db.Categories.AsNoTracking()
             .Where(x => x.IsActive)
             .OrderBy(x => x.DisplayOrder).ThenBy(x => x.Name)
-            .Select(x => new CategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder))
+            .Select(x => new CategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder, x.Color))
             .ToListAsync(cancellationToken);
 }
 
@@ -128,6 +128,8 @@ public class CreateProductUseCase : ICreateProductUseCase
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
         }
+        if (string.IsNullOrWhiteSpace(request.ImageUrl))
+            return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "Agregá una imagen o su URL.");
 
         var category = request.CategoryId.HasValue
             ? await _db.Categories.SingleOrDefaultAsync(x => x.Id == request.CategoryId && x.IsActive, cancellationToken)

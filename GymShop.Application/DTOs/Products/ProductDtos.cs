@@ -16,7 +16,7 @@ public record ProductResponse(
 
 public record CategorySummaryResponse(int Id, string Name, string Slug);
 
-public record CategoryResponse(int Id, string Name, string Slug, string? Description, int DisplayOrder);
+public record CategoryResponse(int Id, string Name, string Slug, string? Description, int DisplayOrder, string? Color = null);
 
 public record ProductQuery(
     string? Search = null,
@@ -31,7 +31,7 @@ public record CreateProductRequest(
     [StringLength(ValidationLimits.ProductDescription)] string? Description,
     [SqlDecimal] decimal Price,
     [Range(0, int.MaxValue)] int Stock,
-    [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
+    [Required(ErrorMessage = "Agregá una imagen o su URL."), StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
     int? CategoryId = null
 );
 

@@ -43,6 +43,16 @@ public class ProductUseCaseTests
     }
 
     [Fact]
+    public async Task CreateProduct_requires_image()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var result = await new CreateProductUseCase(db).ExecuteAsync(new CreateProductRequest("Producto", null, 10, 1, null));
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Empty(db.Products);
+    }
+
+    [Fact]
     public async Task General_update_uses_current_stock_when_form_was_loaded_with_stale_stock()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -69,7 +79,7 @@ public class ProductUseCaseTests
         await db.SaveChangesAsync();
 
         var created = await new CreateProductUseCase(db).ExecuteAsync(
-            new CreateProductRequest("Producto", "Descripción", 100, 5, null, strength.Id));
+            new CreateProductRequest("Producto", "Descripción", 100, 5, "/images/producto.webp", strength.Id));
 
         Assert.True(created.IsSuccess);
         Assert.Equal("fuerza", created.Value?.Category?.Slug);

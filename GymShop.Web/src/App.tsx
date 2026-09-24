@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { AuthResponse, User } from './api/types'
 import { session } from './auth/session'
@@ -37,8 +37,15 @@ function AppShell() {
   const cart = useCart()
   const navigate = useNavigate()
   const location = useLocation()
+  const previousPath = useRef(location.pathname)
   const refreshSession = useCallback(() => setUser(session.user()), [])
   useEffect(() => { window.addEventListener('gymshop:session', refreshSession); return () => window.removeEventListener('gymshop:session', refreshSession) }, [refreshSession])
+  useEffect(() => {
+    if (previousPath.current !== location.pathname && /^\/catalogo\/[^/]+$/.test(location.pathname)) {
+      window.scrollTo(0, 0)
+    }
+    previousPath.current = location.pathname
+  }, [location.pathname])
   const logout = () => { session.clear(); navigate('/'); setNotice('Sesión cerrada.') }
   const adminArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
 

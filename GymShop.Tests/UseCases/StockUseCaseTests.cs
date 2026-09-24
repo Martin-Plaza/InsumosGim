@@ -25,7 +25,7 @@ public sealed class StockUseCaseTests
         db.Users.Add(actor); await db.SaveChangesAsync();
 
         var result = await new GymShop.Application.UseCases.Products.CreateProductUseCase(db, new FakeAuditContext(actor.Id, "create"))
-            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 7, null));
+            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 7, "/images/banco.webp"));
 
         Assert.True(result.IsSuccess);
         var movement = Assert.Single(db.StockMovements);
@@ -39,7 +39,7 @@ public sealed class StockUseCaseTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var result = await new GymShop.Application.UseCases.Products.CreateProductUseCase(db)
-            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 0, null));
+            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 0, "/images/banco.webp"));
         Assert.True(result.IsSuccess); Assert.Empty(db.StockMovements);
     }
 
@@ -53,7 +53,7 @@ public sealed class StockUseCaseTests
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new GymShop.Application.UseCases.Products.CreateProductUseCase(failing)
-                    .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 2, null)));
+                    .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 2, "/images/banco.webp")));
         }
         await using var verification = new GymShop.Infrastructure.Data.GymShopDbContext(
             new DbContextOptionsBuilder<GymShop.Infrastructure.Data.GymShopDbContext>().UseInMemoryDatabase(database).Options);
@@ -65,7 +65,7 @@ public sealed class StockUseCaseTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var created = await new GymShop.Application.UseCases.Products.CreateProductUseCase(db)
-            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 5, null));
+            .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 5, "/images/banco.webp"));
         await new AdjustStockUseCase(db).ExecuteAsync(created.Value!.Id, new("ManualCorrection", -2, "Conteo físico"));
         Assert.Equal(db.Products.Single().Stock, db.StockMovements.Where(x => x.ProductId == created.Value.Id).Sum(x => x.Quantity));
     }

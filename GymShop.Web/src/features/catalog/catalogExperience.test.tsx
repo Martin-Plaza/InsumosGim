@@ -40,6 +40,18 @@ describe('experiencia pública del catálogo', () => {
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(3)
   })
 
+  it('vuelve arriba al abrir el detalle de un producto desde el catálogo', async () => {
+    window.history.replaceState(null, '', '/catalogo')
+    mockCatalog()
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Ver Mancuerna Pro' }))
+
+    expect(window.location.pathname).toBe('/catalogo/1')
+    expect(scrollTo).toHaveBeenCalledWith(0, 0)
+  })
+
   it('cierra los filtros móviles con Escape y devuelve el foco al disparador', async () => {
     window.history.replaceState(null, '', '/catalogo'); mockCatalog(); render(<App />)
     await screen.findByRole('heading', { name: 'Mancuerna Pro' })

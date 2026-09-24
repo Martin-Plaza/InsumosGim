@@ -51,7 +51,7 @@ function AppShell() {
 }
 
 function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | null; onLogout(): void; onCart(): void; cartCount: number }) {
-  return <header><Link className="brand" to="/">{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</Link><nav aria-label="Navegación principal"><NavLink to="/catalogo">{storefront.copy.catalogNav}</NavLink>{user && <NavLink to="/ordenes">Órdenes</NavLink>}{isAdmin(user) && <NavLink to="/admin">Administración</NavLink>}</nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={onCart}>Carrito <b>{cartCount}</b></button>{user ? <button onClick={onLogout}>Salir</button> : <Link className="primary link-button" to="/login">Ingresar</Link>}</div></header>
+  return <header><a className="brand" href="/">{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</a><nav aria-label="Navegación principal"><NavLink to="/catalogo">{storefront.copy.catalogNav}</NavLink>{user && <NavLink to="/ordenes">Órdenes</NavLink>}{isAdmin(user) && <NavLink to="/admin">Administración</NavLink>}</nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={onCart}>Carrito <b>{cartCount}</b></button>{user ? <button onClick={onLogout}>Salir</button> : <Link className="primary link-button" to="/login">Ingresar</Link>}</div></header>
 }
 
 function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: AuthResponse): void }) {

@@ -29,6 +29,19 @@ public class CategoryAdminUseCaseTests
         Assert.Equal(AppErrorType.Conflict, (await useCase.ExecuteAsync(new UpsertCategoryRequest("Otra", "FUERZA MAXIMA", null, 0))).Error!.Type);
     }
 
+    [Fact]
+    public async Task Category_color_is_persisted_and_exposed_to_storefront()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var created = await new CreateCategoryUseCase(db).ExecuteAsync(new UpsertCategoryRequest("Fuerza", "fuerza", null, 1, "#ff8a5b"));
+        Assert.True(created.IsSuccess);
+        Assert.Equal("#ff8a5b", created.Value!.Color);
+        var publicItems = await new GetCategoriesUseCase(db).ExecuteAsync();
+        Assert.Equal("#ff8a5b", Assert.Single(publicItems).Color);
+        var invalid = await new CreateCategoryUseCase(db).ExecuteAsync(new UpsertCategoryRequest("Otra", "otra", null, 2, "#123456"));
+        Assert.Equal(AppErrorType.Validation, invalid.Error?.Type);
+    }
+
     [Theory]
     [InlineData("", "slug", null, 0)]
     [InlineData("Nombre", "---", null, 0)]

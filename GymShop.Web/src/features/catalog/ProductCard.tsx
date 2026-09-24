@@ -13,7 +13,7 @@ export function ProductCard({ product, onAdd }: { product: Product; onAdd?(produ
     <div className="product-card-body">
       <small>{product.stock > 0 ? `${product.stock} disponibles` : 'Temporalmente sin stock'}</small>
       <h3><Link to={`/catalogo/${product.id}`}>{product.name}</Link></h3>
-      <p>{product.description || storefront.copy.productFallback}</p>
+      {product.description?.trim() && <p>{product.description}</p>}
       <div className="price-row"><strong>{money(product.price)}</strong>{onAdd
         ? <button disabled={product.stock < 1} onClick={() => onAdd(product)}>{product.stock > 0 ? 'Agregar' : 'Sin stock'}</button>
         : <Link className="card-link" to={`/catalogo/${product.id}`}>{storefront.copy.productAction} →</Link>}

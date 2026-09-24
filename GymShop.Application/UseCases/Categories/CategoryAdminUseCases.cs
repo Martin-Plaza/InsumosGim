@@ -16,6 +16,7 @@ public interface IUpdateCategoryStatusUseCase { Task<AppResult> ExecuteAsync(int
 
 internal static class CategoryRules
 {
+    private static readonly HashSet<string> Colors = new(StringComparer.OrdinalIgnoreCase) { "#d7ff45", "#ff8a5b", "#9f8cff", "#57d7ff", "#ff7eb6", "#77d8a3" };
     public static string NormalizeSlug(string value)
     {
         var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
@@ -38,18 +39,19 @@ internal static class CategoryRules
         if (slug.Length > 120) return "El slug no puede superar los 120 caracteres.";
         if (request.Description?.Trim().Length > 500) return "La descripción no puede superar los 500 caracteres.";
         if (request.DisplayOrder < 0) return "El orden de presentación debe ser mayor o igual a cero.";
+        if (request.Color is not null && !Colors.Contains(request.Color)) return "Seleccioná un color disponible.";
         return null;
     }
 
     public static AdminCategoryResponse Map(Category category, int count) =>
-        new(category.Id, category.Name, category.Slug, category.Description, category.DisplayOrder, category.IsActive, count);
+        new(category.Id, category.Name, category.Slug, category.Description, category.DisplayOrder, category.IsActive, count, category.Color);
 }
 
 public class GetAdminCategoriesUseCase(IApplicationDbContext db) : IGetAdminCategoriesUseCase
 {
     public Task<List<AdminCategoryResponse>> ExecuteAsync(CancellationToken cancellationToken = default) => db.Categories.AsNoTracking()
         .OrderBy(x => x.DisplayOrder).ThenBy(x => x.Name)
-        .Select(x => new AdminCategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder, x.IsActive, x.Products.Count))
+        .Select(x => new AdminCategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder, x.IsActive, x.Products.Count, x.Color))
         .ToListAsync(cancellationToken);
 }
 
@@ -58,7 +60,7 @@ public class GetAdminCategoryByIdUseCase(IApplicationDbContext db) : IGetAdminCa
     public async Task<AppResult<AdminCategoryResponse>> ExecuteAsync(int id, CancellationToken cancellationToken = default)
     {
         var category = await db.Categories.AsNoTracking().Where(x => x.Id == id)
-            .Select(x => new AdminCategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder, x.IsActive, x.Products.Count))
+            .Select(x => new AdminCategoryResponse(x.Id, x.Name, x.Slug, x.Description, x.DisplayOrder, x.IsActive, x.Products.Count, x.Color))
             .SingleOrDefaultAsync(cancellationToken);
         return category is null ? AppResult<AdminCategoryResponse>.Failure(AppErrorType.NotFound, "Categoría no encontrada.") : AppResult<AdminCategoryResponse>.Success(category);
     }
@@ -74,7 +76,7 @@ public class CreateCategoryUseCase(IApplicationDbContext db, IAuditContext? audi
         var name = request.Name.Trim();
         if (await db.Categories.AnyAsync(x => x.Name.ToLower() == name.ToLower(), cancellationToken)) return AppResult<AdminCategoryResponse>.Failure(AppErrorType.Conflict, "Ya existe una categoría con ese nombre.");
         if (await db.Categories.AnyAsync(x => x.Slug == slug, cancellationToken)) return AppResult<AdminCategoryResponse>.Failure(AppErrorType.Conflict, "Ya existe una categoría con ese slug.");
-        var category = new Category { Name = name, Slug = slug, Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(), DisplayOrder = request.DisplayOrder, IsActive = true };
+        var category = new Category { Name = name, Slug = slug, Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(), Color = request.Color, DisplayOrder = request.DisplayOrder, IsActive = true };
         db.Categories.Add(category);
         await db.SaveChangesAsync(cancellationToken);
         AuditTrail.Add(db, auditContext, "CategoryCreated", "Category", category.Id, null, new { category.Name, category.Slug, category.Description, category.DisplayOrder, category.IsActive });
@@ -95,9 +97,9 @@ public class UpdateCategoryUseCase(IApplicationDbContext db, IAuditContext? audi
         var name = request.Name.Trim();
         if (await db.Categories.AnyAsync(x => x.Id != id && x.Name.ToLower() == name.ToLower(), cancellationToken)) return AppResult<AdminCategoryResponse>.Failure(AppErrorType.Conflict, "Ya existe una categoría con ese nombre.");
         if (await db.Categories.AnyAsync(x => x.Id != id && x.Slug == slug, cancellationToken)) return AppResult<AdminCategoryResponse>.Failure(AppErrorType.Conflict, "Ya existe una categoría con ese slug.");
-        var oldValue = new { category.Name, category.Slug, category.Description, category.DisplayOrder };
-        category.Name = name; category.Slug = slug; category.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(); category.DisplayOrder = request.DisplayOrder;
-        AuditTrail.Add(db, auditContext, "CategoryUpdated", "Category", category.Id, oldValue, new { category.Name, category.Slug, category.Description, category.DisplayOrder });
+        var oldValue = new { category.Name, category.Slug, category.Description, category.Color, category.DisplayOrder };
+        category.Name = name; category.Slug = slug; category.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(); category.Color = request.Color; category.DisplayOrder = request.DisplayOrder;
+        AuditTrail.Add(db, auditContext, "CategoryUpdated", "Category", category.Id, oldValue, new { category.Name, category.Slug, category.Description, category.Color, category.DisplayOrder });
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<AdminCategoryResponse>.Success(CategoryRules.Map(category, category.Products.Count));
     }

@@ -8,10 +8,10 @@ export const storefront = {
   contact: { email: 'hola@gymshop.demo', phone: '+54 11 5555 0101', whatsapp: '+54 9 11 5555 0101' },
   copy: {
     catalogNav: 'Catálogo', heroEyebrow: 'EQUIPÁ TU MEJOR VERSIÓN', heroTitle: 'Entrená sin límites.',
-    heroDescription: 'Equipamiento seleccionado para construir fuerza, constancia y resultados.', heroAction: 'Ver catálogo',
+    heroDescription: 'Equipamiento seleccionado para construir fuerza, constancia y resultados.', heroAction: 'Ver catálogo', heroSecondaryAction: 'Explorar productos',
     heroImageAlt: 'Atleta entrenando con mancuernas', campaignImageAlt: 'Atleta entrenando con una kettlebell',
     featuredEyebrow: 'SELECCIÓN GYMSHOP', featuredTitle: 'Productos destacados', catalogEyebrow: 'CATÁLOGO ACTIVO',
-    catalogTitle: 'Elegí tu próximo desafío', productFallback: 'Conocé todos los detalles de este producto.',
+    catalogTitle: 'Elegí tu próximo desafío',
     featuredAction: 'Ver todos', featuredLoading: 'Cargando productos destacados…',
     featuredLoadError: 'No pudimos cargar los destacados.', featuredEmpty: 'Todavía no hay productos destacados.',
     productAction: 'Ver producto', featuredProductEyebrow: 'PRODUCTO DESTACADO',

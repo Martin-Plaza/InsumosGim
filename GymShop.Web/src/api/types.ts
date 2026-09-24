@@ -13,9 +13,9 @@ export interface UserOrderSummary { id: number; createdAt: string; total: number
 export interface AdminUserDetail extends AdminUser { orderCount: number; totalPurchased: number; lastOrderAt: string | null; ordersTotal: number; ordersPageSize: number; recentOrders: UserOrderSummary[] }
 export interface AuthResponse { token: string; user: User }
 export interface CategorySummary { id: number; name: string; slug: string }
-export interface Category extends CategorySummary { description: string | null; displayOrder: number }
+export interface Category extends CategorySummary { description: string | null; displayOrder: number; color: string | null }
 export interface AdminCategory extends Category { isActive: boolean; productCount: number }
-export interface CategoryInput { name: string; slug: string; description: string | null; displayOrder: number }
+export interface CategoryInput { name: string; slug: string; description: string | null; displayOrder: number; color: string | null }
 export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null }
 export interface CreateProductInput { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
 export interface UpdateProductInput { name: string; description: string | null; price: number; imageUrl: string | null; isActive: boolean; categoryId: number | null }

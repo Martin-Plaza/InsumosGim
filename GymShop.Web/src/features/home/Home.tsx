@@ -21,7 +21,6 @@ export function Home({ onCatalog, onProduct }: { onCatalog(category?: string): v
     }).catch(() => setLoadError(true)).finally(() => setLoading(false))
   }, [])
 
-  const heroProduct = products.find(product => product.name.toLocaleLowerCase('es').includes('mancuerna')) ?? products[0]
   const campaignProduct = products.find(product => product.name.toLocaleLowerCase('es').includes('kettlebell'))
   return <>
     <section className="home-hero">
@@ -32,7 +31,7 @@ export function Home({ onCatalog, onProduct }: { onCatalog(category?: string): v
         <p>{storefront.copy.heroDescription}</p>
         <button className="primary hero-cta" onClick={() => onCatalog()}>{storefront.copy.heroAction}</button>
       </div>
-      {heroProduct && <button className="hero-product-link" onClick={() => onProduct(heroProduct.id)}>Ver {heroProduct.name} <span>→</span></button>}
+      <button className="hero-product-link" onClick={() => onCatalog()}>{storefront.copy.heroSecondaryAction} <span>→</span></button>
     </section>
 
     <section className="category-section" aria-labelledby="category-title">
@@ -40,7 +39,7 @@ export function Home({ onCatalog, onProduct }: { onCatalog(category?: string): v
       <div className="category-grid">{categories.map((item, index) => {
         const visual = storefront.categoryVisuals[item.slug] ?? { symbol: String(index + 1).padStart(2, '0'), color: storefront.theme.colors.accent }
         const count = products.filter(product => product.category?.slug === item.slug).length
-        return <button key={item.id} className="category-tile" style={{ '--category-color': visual.color } as React.CSSProperties} onClick={() => onCatalog(item.slug)}>
+        return <button key={item.id} className="category-tile" style={{ '--category-color': item.color || visual.color } as React.CSSProperties} onClick={() => onCatalog(item.slug)}>
           <span className="category-number">{visual.symbol}</span><span className="category-copy"><strong>{item.name}</strong><small>{item.description || `${count} productos para descubrir`}</small><b>{storefront.copy.categoryAction} →</b></span>
         </button>
       })}</div>

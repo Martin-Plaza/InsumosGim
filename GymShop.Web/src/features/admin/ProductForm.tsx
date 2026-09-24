@@ -29,6 +29,7 @@ export function ProductForm({ mode, values: initialValues, categories, busy, bus
     event.preventDefault()
     if (busy) return
     const nextErrors = validateProduct(values)
+    if (!imageFile && !values.imageUrl.trim()) nextErrors.imageUrl = 'Agregá una imagen o su URL.'
     setClientErrors(nextErrors)
     if (Object.keys(nextErrors).length === 0 && !fileError) onSubmit(values, imageFile)
   }}>

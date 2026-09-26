@@ -13,13 +13,13 @@ public sealed record StockMovementQuery(
     DateTime? ToUtc = null);
 
 public sealed record ManualStockAdjustmentRequest(
-    [Required, StringLength(40)] string Type,
     int Quantity,
-    [Required, StringLength(500)] string Reason);
+    [Required, StringLength(500)] string Reason,
+    int? ProductVariantId = null);
 
 public sealed record StockMovementResponse(long Id, int ProductId, string ProductName, string Type,
     int Quantity, int PreviousStock, int ResultingStock, string Reason, int? ActorUserId,
-    string? ActorName, int? OrderId, DateTime CreatedAtUtc);
+    string? ActorName, int? OrderId, DateTime CreatedAtUtc, int? ProductVariantId = null, string? VariantSku = null);
 
 public sealed record PagedStockMovementsResponse(List<StockMovementResponse> Items, int Page, int PageSize,
     long TotalItems, int TotalPages);

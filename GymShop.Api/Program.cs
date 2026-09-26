@@ -75,7 +75,7 @@ builder.Services.AddOptions<GymShopRateLimitingOptions>()
 builder.Services.AddOptions<ReverseProxyOptions>()
     .Bind(builder.Configuration.GetSection(ReverseProxyOptions.SectionName))
     .ValidateOnStart();
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 
 var rateLimiting = builder.Configuration.GetSection(GymShopRateLimitingOptions.SectionName).Get<GymShopRateLimitingOptions>() ?? new();
 builder.Services.AddRateLimiter(options =>

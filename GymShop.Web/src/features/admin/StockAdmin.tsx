@@ -4,7 +4,6 @@ import { api } from '../../api/gymshop'
 import type { Product, StockMovement, StockMovementType } from '../../api/types'
 
 type StockFilter = 'all' | 'available' | 'low' | 'none'
-type ManualType = Extract<StockMovementType, 'ManualEntry' | 'ManualCorrection' | 'LossDamage'>
 interface MovementFilters { productId: string; type: string; from: string; to: string }
 const LOW_STOCK = 5
 const labels: Record<StockMovementType, string> = { InitialStock: 'Stock inicial', Sale: 'Venta', CancellationReturn: 'Cancelación o devolución', ManualEntry: 'Ingreso manual', ManualCorrection: 'Corrección manual', LossDamage: 'Pérdida o rotura' }
@@ -20,7 +19,12 @@ export function StockAdmin() {
     const matchesSearch = p.name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
     return matchesSearch && (filter === 'all' || (filter === 'available' && p.stock > 0) || (filter === 'low' && p.stock > 0 && p.stock <= LOW_STOCK) || (filter === 'none' && p.stock === 0))
   }), [products, search, filter])
-  const updateProduct = (id: number, stock: number) => setProducts(current => current.map(p => p.id === id ? { ...p, stock } : p))
+  const updateProduct = (id: number, stock: number, variantId?: number | null) => setProducts(current => current.map(p => {
+    if (p.id !== id) return p
+    if (!variantId) return { ...p, stock }
+    const variants = (p.variants ?? []).map(v => v.id === variantId ? { ...v, stock } : v)
+    return { ...p, variants, stock: variants.filter(v => v.isActive).reduce((sum, v) => sum + v.stock, 0) }
+  }))
 
   return <section className="admin-section stock-admin">
     <div className="admin-page-heading"><div><p className="eyebrow">INVENTARIO</p><h1>Stock</h1><p>Consultá existencias, registrá ajustes y revisá cada movimiento.</p></div></div>
@@ -29,7 +33,7 @@ export function StockAdmin() {
     {!loading && !error && filtered.length === 0 && <div className="admin-empty">No hay productos para los filtros seleccionados.</div>}
     {!loading && !error && filtered.length > 0 && <div className="stock-table-wrap"><table className="dashboard-table stock-table"><thead><tr><th>Producto</th><th>Estado</th><th>Stock actual</th><th>Acciones</th></tr></thead><tbody>{filtered.map(p => <tr key={p.id}><td><strong>{p.name}</strong>{!p.isActive && <small> Inactivo</small>}</td><td>{p.stock === 0 ? 'Sin stock' : p.stock <= LOW_STOCK ? 'Stock bajo' : 'Con stock'}</td><td><strong>{p.stock}</strong></td><td><button onClick={() => setSelected(p)}>Gestionar</button></td></tr>)}</tbody></table></div>}
     {!loading && !error && <GlobalMovements products={products} refreshSignal={movementsRefresh} />}
-    {selected && <StockDialog product={products.find(p => p.id === selected.id) || selected} onClose={() => setSelected(null)} onAdjusted={stock => { updateProduct(selected.id, stock); setMovementsRefresh(value => value + 1) }} />}
+    {selected && <StockDialog product={products.find(p => p.id === selected.id) || selected} onClose={() => setSelected(null)} onAdjusted={(stock, variantId) => { updateProduct(selected.id, stock, variantId); setMovementsRefresh(value => value + 1) }} />}
   </section>
 }
 
@@ -57,23 +61,25 @@ function GlobalMovements({ products, refreshSignal }: { products: Product[]; ref
 }
 
 function MovementTable({ movements }: { movements: StockMovement[] }) {
-  return <div className="stock-history"><table className="dashboard-table"><thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Variación</th><th>Stock</th><th>Motivo</th><th>Pedido</th><th>Responsable</th></tr></thead><tbody>{movements.map(m => <tr key={m.id}><td>{new Date(m.createdAtUtc).toLocaleString()}</td><td>{m.productName}</td><td>{labels[m.type]}</td><td className={m.quantity > 0 ? 'in-stock' : 'no-stock'}>{m.quantity > 0 ? '+' : ''}{m.quantity}</td><td>{m.previousStock} → {m.resultingStock}</td><td>{m.reason}</td><td>{m.orderId ? <Link to={`/admin/pedidos?orderId=${m.orderId}`}>#{m.orderId}</Link> : '—'}</td><td>{m.actorName || (m.actorUserId ? `Usuario #${m.actorUserId}` : 'Sistema')}</td></tr>)}</tbody></table></div>
+  return <div className="stock-history"><table className="dashboard-table"><thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Variación</th><th>Stock</th><th>Motivo</th><th>Pedido</th><th>Responsable</th></tr></thead><tbody>{movements.map(m => <tr key={m.id}><td>{new Date(m.createdAtUtc).toLocaleString()}</td><td>{m.productName}{m.variantSku ? <small> · {m.variantSku}</small> : null}</td><td>{labels[m.type]}</td><td className={m.quantity > 0 ? 'in-stock' : 'no-stock'}>{m.quantity > 0 ? '+' : ''}{m.quantity}</td><td>{m.previousStock} → {m.resultingStock}</td><td>{m.reason}</td><td>{m.orderId ? <Link to={`/admin/pedidos?orderId=${m.orderId}`}>#{m.orderId}</Link> : '—'}</td><td>{m.actorName || (m.actorUserId ? `Usuario #${m.actorUserId}` : 'Sistema')}</td></tr>)}</tbody></table></div>
 }
 
-function StockDialog({ product, onClose, onAdjusted }: { product: Product; onClose(): void; onAdjusted(stock: number): void }) {
+function StockDialog({ product, onClose, onAdjusted }: { product: Product; onClose(): void; onAdjusted(stock: number, variantId?: number | null): void }) {
   const [movements, setMovements] = useState<StockMovement[]>([]); const [historyLoading, setHistoryLoading] = useState(true); const [historyError, setHistoryError] = useState('')
   const [page, setPage] = useState(1); const [totalPages, setTotalPages] = useState(0)
-  const [type, setType] = useState<ManualType>('ManualEntry'); const [quantity, setQuantity] = useState(''); const [reason, setReason] = useState(''); const [pending, setPending] = useState(false); const [notice, setNotice] = useState('')
-  const numeric = Number(quantity); const delta = type === 'LossDamage' ? -numeric : numeric; const resulting = Number.isInteger(numeric) && numeric !== 0 ? product.stock + delta : product.stock
+  const [quantity, setQuantity] = useState(''); const [reason, setReason] = useState(''); const [pending, setPending] = useState(false); const [notice, setNotice] = useState('')
+  const activeVariants = (product.variants ?? []).filter(v => v.isActive); const [variantId, setVariantId] = useState('')
+  const variant = activeVariants.find(v => v.id === Number(variantId)); const currentStock = activeVariants.length ? variant?.stock ?? 0 : product.stock
+  const numeric = Number(quantity); const delta = numeric; const resulting = Number.isInteger(numeric) && numeric !== 0 ? currentStock + delta : currentStock
   const loadHistory = () => { setHistoryLoading(true); setHistoryError(''); api.productStockMovements(product.id, page).then(r => { setMovements(r.items); setTotalPages(r.totalPages) }).catch(e => setHistoryError(e instanceof Error ? e.message : 'No se pudo cargar el historial.')).finally(() => setHistoryLoading(false)) }
   useEffect(loadHistory, [product.id, page])
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); if (pending || !Number.isInteger(numeric) || numeric === 0 || resulting < 0 || !reason.trim()) return
+    event.preventDefault(); if (pending || (activeVariants.length > 0 && !variant) || !Number.isInteger(numeric) || numeric === 0 || resulting < 0 || !reason.trim()) return
     setPending(true); setNotice('')
-    try { const result = await api.adjustStock(product.id, { type, quantity: numeric, reason: reason.trim() }); onAdjusted(result.resultingStock); if (page === 1) setMovements(current => [result.movement, ...current].slice(0, 20)); else setPage(1); setQuantity(''); setReason(''); setNotice('Stock actualizado correctamente.') }
+    try { const result = await api.adjustStock(product.id, { quantity: numeric, reason: reason.trim(), productVariantId: variant?.id ?? null }); onAdjusted(result.resultingStock, variant?.id); if (page === 1) setMovements(current => [result.movement, ...current].slice(0, 20)); else setPage(1); setQuantity(''); setReason(''); setNotice('Stock actualizado correctamente.') }
     catch (e) { setNotice(e instanceof Error ? e.message : 'No se pudo ajustar el stock.') } finally { setPending(false) }
   }
   return <div className="modal-backdrop" role="presentation"><section className="stock-dialog" role="dialog" aria-modal="true" aria-labelledby="stock-title"><button className="modal-close" aria-label="Cerrar" onClick={onClose}>×</button><h2 id="stock-title">Stock de {product.name}</h2>
-    <form onSubmit={submit}><label>Tipo de ajuste<select value={type} onChange={e => setType(e.target.value as ManualType)}><option value="ManualEntry">Ingreso manual</option><option value="ManualCorrection">Corrección manual (+/-)</option><option value="LossDamage">Pérdida o rotura</option></select></label><label>Cantidad<input aria-label="Cantidad" type="number" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Motivo<textarea value={reason} maxLength={500} onChange={e => setReason(e.target.value)} required /></label><div className="stock-preview"><span>Anterior <strong>{product.stock}</strong></span><span>Variación <strong>{Number.isFinite(delta) && numeric !== 0 ? `${delta > 0 ? '+' : ''}${delta}` : '—'}</strong></span><span>Resultante <strong className={resulting < 0 ? 'no-stock' : ''}>{resulting}</strong></span></div>{resulting < 0 && <p className="no-stock" role="alert">El stock resultante no puede ser negativo.</p>}<button className="primary" disabled={pending || !Number.isInteger(numeric) || numeric === 0 || resulting < 0 || !reason.trim()}>{pending ? 'Guardando…' : 'Confirmar ajuste'}</button>{notice && <p role="status">{notice}</p>}</form>
+    <form onSubmit={submit}>{activeVariants.length > 0 && <label>Combinación<select aria-label="Combinación" value={variantId} onChange={e => { setVariantId(e.target.value); setQuantity(''); setNotice('') }} required><option value="">Seleccionar combinación</option>{activeVariants.map(v => <option key={v.id} value={v.id}>{Object.entries(v.attributes).map(([name, value]) => `${name}: ${value}`).join(' · ')} · {v.sku} ({v.stock})</option>)}</select></label>}<label>Cantidad (+ suma / − resta)<input aria-label="Cantidad" type="number" step="1" value={quantity} placeholder="Ej.: 5 o -2" onChange={e => setQuantity(e.target.value)} required /></label><small>Usá un número positivo para ingresar unidades o negativo para descontarlas.</small><label>Motivo<textarea value={reason} maxLength={500} onChange={e => setReason(e.target.value)} required /></label><div className="stock-preview"><span>Anterior <strong>{activeVariants.length && !variant ? '—' : currentStock}</strong></span><span>Variación <strong>{Number.isFinite(delta) && numeric !== 0 ? `${delta > 0 ? '+' : ''}${delta}` : '—'}</strong></span><span>Resultante <strong className={resulting < 0 ? 'no-stock' : ''}>{activeVariants.length && !variant ? '—' : resulting}</strong></span></div>{resulting < 0 && <p className="no-stock" role="alert">El stock resultante no puede ser negativo.</p>}<button className="primary" disabled={pending || (activeVariants.length > 0 && !variant) || !Number.isInteger(numeric) || numeric === 0 || resulting < 0 || !reason.trim()}>{pending ? 'Guardando…' : 'Confirmar ajuste'}</button>{notice && <p role="status">{notice}</p>}</form>
     <h3>Historial</h3>{historyLoading && <p role="status">Cargando historial…</p>}{historyError && <p role="alert">{historyError} <button onClick={loadHistory}>Reintentar</button></p>}{!historyLoading && !historyError && movements.length === 0 && <p className="admin-empty">Todavía no hay movimientos.</p>}{movements.length > 0 && <><MovementTable movements={movements} />{totalPages > 1 && <div className="pagination"><button disabled={page === 1 || historyLoading} onClick={() => setPage(value => value - 1)}>Anterior</button><span>Página {page} de {totalPages}</span><button disabled={page === totalPages || historyLoading} onClick={() => setPage(value => value + 1)}>Siguiente</button></div>}</>}</section></div>
 }

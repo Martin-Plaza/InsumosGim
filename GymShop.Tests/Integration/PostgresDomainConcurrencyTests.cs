@@ -69,8 +69,8 @@ public sealed class PostgresDomainConcurrencyTests
         var barrier = new ProductSaveBarrier(2);
         await using var firstDb = database.CreateContext(barrier);
         await using var secondDb = database.CreateContext(barrier);
-        var first = new AdjustStockUseCase(firstDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest("ManualCorrection", 7, "Corrección concurrente"));
-        var second = new AdjustStockUseCase(secondDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest("ManualCorrection", 17, "Corrección concurrente"));
+        var first = new AdjustStockUseCase(firstDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest(7, "Corrección concurrente"));
+        var second = new AdjustStockUseCase(secondDb).ExecuteAsync(productId, new ManualStockAdjustmentRequest(17, "Corrección concurrente"));
         await barrier.AllArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
         barrier.Release.TrySetResult();
         var results = await Task.WhenAll(first, second);

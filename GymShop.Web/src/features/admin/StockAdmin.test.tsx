@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StockAdmin } from './StockAdmin'
 
 const product = { id: 1, name: 'Mancuerna', description: null, price: 100, stock: 4, imageUrl: null, isActive: true, category: null }
+const variantProduct = { ...product, id: 2, name: 'Remera', stock: 7, variants: [{ id: 21, sku: 'REM-NEG-M', price: 100, stock: 2, isActive: true, attributes: { Color: 'Negro', Talle: 'M' } }, { id: 22, sku: 'REM-AZU-L', price: 100, stock: 5, isActive: true, attributes: { Color: 'Azul', Talle: 'L' } }] }
 const movement = { id: 4, productId: 1, productName: 'Mancuerna', type: 'InitialStock', quantity: 4, previousStock: 0, resultingStock: 4, reason: 'Stock inicial del producto', actorUserId: 2, actorName: 'Admin', orderId: null, createdAtUtc: '2026-09-21T12:00:00Z' }
 const response = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 
@@ -28,6 +29,20 @@ describe('StockAdmin', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar ajuste' }))
     expect(await screen.findByText('Stock actualizado correctamente.')).toBeInTheDocument()
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/adjustments'))).toHaveLength(1)
+  })
+
+  it('exige una combinación y envía el ajuste a la variante seleccionada', async () => {
+    let body: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/adjustments')) { body = JSON.parse(String(init?.body)); return response({ productId: 2, previousStock: 2, resultingStock: 5, movement: { ...movement, id: 11, productId: 2, productName: 'Remera', productVariantId: 21, variantSku: 'REM-NEG-M', quantity: 3, previousStock: 2, resultingStock: 5 } }) }
+      if (url.includes('/movements')) return response({ items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 })
+      return response([variantProduct])
+    })
+    render(<MemoryRouter><StockAdmin /></MemoryRouter>); await userEvent.click(await screen.findByRole('button', { name: 'Gestionar' }))
+    expect(screen.getByRole('button', { name: 'Confirmar ajuste' })).toBeDisabled()
+    await userEvent.selectOptions(screen.getByLabelText('Combinación'), '21'); await userEvent.type(screen.getByLabelText('Cantidad'), '3'); await userEvent.type(screen.getByLabelText('Motivo'), 'Reposición'); await userEvent.click(screen.getByRole('button', { name: 'Confirmar ajuste' }))
+    await waitFor(() => expect(body).toEqual(expect.objectContaining({ productVariantId: 21, quantity: 3 })))
   })
 
   it('evita doble envío y muestra el error del servidor', async () => {

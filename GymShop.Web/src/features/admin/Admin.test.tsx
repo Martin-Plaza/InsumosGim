@@ -10,7 +10,7 @@ const products = [
 ]
 const orders = [{ id: 10, userId: 7, userEmail: 'cliente@gym.com', userName: 'Cliente Gym', createdAt: '2026-09-20T12:00:00Z', updatedAt: null, total: 15000, status: 'Pending', lastPaymentStatus: null, lastPaymentId: null }]
 const orderPage = { items: orders, page: 1, pageSize: 20, totalItems: 1, totalPages: 1 }
-const orderDetail = { ...orders[0], userPhone: null, shippingAddress: 'Av. Siempre Viva 742', cancellationReason: null, items: [{ productId: 1, productName: 'Mancuerna 10kg', unitPrice: 15000, quantity: 1, subtotal: 15000 }], payments: [] }
+const orderDetail = { ...orders[0], shippingAddress: 'Av. Siempre Viva 742', cancellationReason: null, items: [{ productId: 1, productName: 'Mancuerna 10kg', unitPrice: 15000, quantity: 1, subtotal: 15000 }], payments: [] }
 const orderHistory = [
   { id: 1, action: 'OrderStatusChanged', previousStatus: 'Paid', newStatus: 'Preparing', reason: null, createdAtUtc: '2026-09-20T13:00:00Z', actorUserId: 1, actorName: 'Admin Gym', actorEmail: 'admin@gym.com', source: 'Manual' },
   { id: 2, action: 'PaymentPartialRefundFlagged', previousStatus: 'Approved', newStatus: 'Approved', reason: 'Reembolso parcial; requiere gestión manual.', createdAtUtc: '2026-09-20T14:00:00Z', actorUserId: null, actorName: null, actorEmail: null, source: 'Provider' },
@@ -111,6 +111,8 @@ describe('panel administrativo', () => {
     render(<App />)
     await userEvent.click(await screen.findByText('#10'))
     expect(await screen.findByRole('heading', { name: /15\.000,00/ })).toBeInTheDocument()
+    expect(screen.getByText(/pasará a pagado únicamente cuando el proveedor confirme el pago/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /pagado/i })).not.toBeInTheDocument()
     expect(await screen.findByText('Estado del pedido actualizado')).toBeInTheDocument()
     expect(screen.getByText('Admin Gym · admin@gym.com')).toBeInTheDocument()
     expect(screen.getByText('Reembolso parcial informado por el proveedor')).toBeInTheDocument()

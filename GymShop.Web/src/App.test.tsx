@@ -140,6 +140,37 @@ describe('flujos y permisos de la aplicación', () => {
     expect(requests.find(request => request.url.includes('/reset-password'))?.body).toEqual({ email: 'user@gym.com', code: '654321', newPassword: 'NuevaClave456' })
   })
 
+  it('completa la solicitud desplegada sin mostrar un código', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/forgot-password')
+      ? json({ message: 'Si el email corresponde a una cuenta, enviamos un codigo para restablecer la password.', expiresInSeconds: 600 })
+      : json([]))
+    render(<App />)
+    await userEvent.click(screen.getByRole('link', { name: 'Ingresar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Olvidé mi contraseña' }))
+    await userEvent.type(screen.getByLabelText('Email'), 'user@gym.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar código' }))
+    expect(await screen.findByText(/Ingresá el código de 6 dígitos/)).toBeInTheDocument()
+    expect(screen.queryByText(/Código Mock local/)).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Si el email corresponde a una cuenta')
+  })
+
+  it('muestra carga y recupera el formulario ante un error al solicitar el código', async () => {
+    let resolveRequest!: (response: Response) => void
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/forgot-password')
+      ? new Promise<Response>(resolve => { resolveRequest = resolve })
+      : json([]))
+    render(<App />)
+    await userEvent.click(screen.getByRole('link', { name: 'Ingresar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Olvidé mi contraseña' }))
+    await userEvent.type(screen.getByLabelText('Email'), 'user@gym.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar código' }))
+    expect(screen.getByRole('button', { name: 'Enviando…' })).toBeDisabled()
+    resolveRequest(await json({ message: 'Servicio temporalmente no disponible.' }, 503))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Servicio temporalmente no disponible.')
+    expect(screen.getByRole('button', { name: 'Enviar código' })).toBeEnabled()
+    expect(screen.getByLabelText('Email')).toHaveValue('user@gym.com')
+  })
+
   it('oculta controles Admin y SuperAdmin a User', async () => {
     localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' }))
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/cart') ? json({ items: [] }) : json([]))

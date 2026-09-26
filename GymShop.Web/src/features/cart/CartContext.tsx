@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { api } from '../../api/gymshop'
-import type { Cart, CartItem, Product, User } from '../../api/types'
+import type { Cart, CartItem, Product, ProductVariant, User } from '../../api/types'
 import { session } from '../../auth/session'
 import { CartContext, type CartContextValue } from './cartContextValue'
 import { guestCartStore, mergePlanStore, type MergePlan } from './guestCart'
@@ -42,11 +42,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       for (const guest of guestItems) {
         try {
           const product = await api.product(guest.productId)
-          const serverQuantity = serverCart.items.find(item => item.productId === product.id)?.quantity ?? 0
+          const variants = product.variants ?? []
+          const variant = guest.productVariantId ? variants.find(item => item.id === guest.productVariantId && item.isActive) : undefined
+          if (variants.length && !variant) { unavailable.push(guest.productName); continue }
+          const serverQuantity = serverCart.items.find(item => item.productId === product.id && (item.productVariantId ?? null) === (guest.productVariantId ?? null))?.quantity ?? 0
           const requested = serverQuantity + guest.quantity
-          const targetQuantity = Math.min(requested, product.stock)
+          const targetQuantity = Math.min(requested, variant?.stock ?? product.stock)
           if (targetQuantity < requested) capped.push(product.name)
-          if (targetQuantity > 0) planned.push({ productId: product.id, productName: product.name, guestQuantity: guest.quantity, targetQuantity })
+          if (targetQuantity > 0) planned.push({ productId: product.id, productVariantId: guest.productVariantId, productName: product.name, guestQuantity: guest.quantity, targetQuantity })
           else unavailable.push(product.name)
         } catch (value) {
           if (value instanceof ApiError && value.status === 404) unavailable.push(guest.productName)
@@ -63,13 +66,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
 
     for (const item of [...plan.items]) {
-      const current = serverCart.items.find(serverItem => serverItem.productId === item.productId)
+      const current = serverCart.items.find(serverItem => serverItem.productId === item.productId && (serverItem.productVariantId ?? null) === (item.productVariantId ?? null))
       if (current?.quantity !== item.targetQuantity) {
         serverCart = current
-          ? await api.updateCartItem(item.productId, item.targetQuantity)
-          : await api.addCartItem(item.productId, item.targetQuantity)
+          ? await api.updateCartItem(item.productId, item.targetQuantity, item.productVariantId)
+          : await api.addCartItem(item.productId, item.targetQuantity, item.productVariantId)
       }
-      guestCartStore.remove(item.productId)
+      guestCartStore.remove(item.productId, item.productVariantId)
       plan = { ...plan, items: plan.items.filter(candidate => candidate.productId !== item.productId) }
       mergePlanStore.write(plan)
     }
@@ -98,24 +101,26 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false }
   }, [mergeGuestCart, user])
 
-  const add = useCallback(async (product: Product, quantity: number) => {
+  const add = useCallback(async (product: Product, quantity: number, variant?: ProductVariant) => {
     setError('')
     setNotice('')
     const safeQuantity = Math.max(1, Math.floor(quantity))
     if (session.user()) {
-      const existing = cart.find(item => item.productId === product.id)?.quantity ?? 0
-      const accepted = Math.min(safeQuantity, Math.max(product.stock - existing, 0))
+      const existing = cart.find(item => item.productId === product.id && (item.productVariantId ?? null) === (variant?.id ?? null))?.quantity ?? 0
+      const available = variant?.stock ?? product.stock
+      const accepted = Math.min(safeQuantity, Math.max(available - existing, 0))
       if (accepted < 1) { setNotice(`Ya alcanzaste el stock disponible de ${product.name}.`); setDrawerOpen(true); return }
-      const result = await api.addCartItem(product.id, accepted)
+      const result = await api.addCartItem(product.id, accepted, variant?.id)
       acceptServerCart(result)
       if (accepted < safeQuantity) setNotice(`Sumamos ${accepted}; alcanzaste el límite de stock de ${product.name}.`)
     } else {
       const items = guestCartStore.read()
-      const existing = items.find(item => item.productId === product.id)
-      const target = Math.min((existing?.quantity ?? 0) + safeQuantity, product.stock)
+      const existing = items.find(item => item.productId === product.id && (item.productVariantId ?? null) === (variant?.id ?? null))
+      const available = variant?.stock ?? product.stock
+      const target = Math.min((existing?.quantity ?? 0) + safeQuantity, available)
       const next = existing
-        ? items.map(item => item.productId === product.id ? { ...item, quantity: target, subtotal: item.unitPrice * target, stock: product.stock } : item)
-        : [...items, guestCartStore.fromProduct(product, target)]
+        ? items.map(item => item === existing ? { ...item, quantity: target, subtotal: item.unitPrice * target, stock: available } : item)
+        : [...items, guestCartStore.fromProduct(product, target, variant)]
       guestCartStore.write(next)
       setCart(next)
       if (target < (existing?.quantity ?? 0) + safeQuantity) setNotice(`Ajustamos la cantidad al stock disponible de ${product.name}.`)
@@ -123,21 +128,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setDrawerOpen(true)
   }, [cart])
 
-  const update = useCallback(async (productId: number, quantity: number) => {
-    const item = cart.find(candidate => candidate.productId === productId)
+  const update = useCallback(async (productId: number, quantity: number, productVariantId?: number | null) => {
+    const item = cart.find(candidate => candidate.productId === productId && (candidate.productVariantId ?? null) === (productVariantId ?? null))
     if (!item) return
     const target = Math.min(Math.max(1, Math.floor(quantity)), item.stock)
-    if (session.user()) acceptServerCart(await api.updateCartItem(productId, target))
+    if (session.user()) acceptServerCart(await api.updateCartItem(productId, target, productVariantId))
     else {
-      const next = cart.map(candidate => candidate.productId === productId ? { ...candidate, quantity: target, subtotal: candidate.unitPrice * target } : candidate)
+      const next = cart.map(candidate => candidate === item ? { ...candidate, quantity: target, subtotal: candidate.unitPrice * target } : candidate)
       guestCartStore.write(next); setCart(next)
     }
     if (target !== quantity) setNotice(`La cantidad máxima disponible de ${item.productName} es ${item.stock}.`)
   }, [acceptServerCart, cart])
 
-  const remove = useCallback(async (productId: number) => {
-    if (session.user()) acceptServerCart(await api.removeCartItem(productId))
-    else setCart(guestCartStore.remove(productId))
+  const remove = useCallback(async (productId: number, productVariantId?: number | null) => {
+    if (session.user()) acceptServerCart(await api.removeCartItem(productId, productVariantId))
+    else setCart(guestCartStore.remove(productId, productVariantId))
   }, [acceptServerCart])
 
   const clear = useCallback(async () => {

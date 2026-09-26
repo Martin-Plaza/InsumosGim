@@ -3,8 +3,8 @@ export type OrderStatus = 'Pending' | 'Paid' | 'Preparing' | 'Shipped' | 'Delive
 export type PaymentStatus = 'Creating' | 'Pending' | 'CreationFailed' | 'Approved' | 'Rejected' | 'Canceled' | 'Expired' | 'Refunded'
 
 export interface User { id: number; email: string; name: string; lastName?: string | null; role: Role }
-export interface RegistrationPending { email: string; expiresInSeconds: number; developmentCode: string | null }
-export interface PasswordResetPending { message: string; expiresInSeconds: number; developmentCode: string | null }
+export interface RegistrationPending { email: string; expiresInSeconds: number; developmentCode?: string | null }
+export interface PasswordResetPending { message: string; expiresInSeconds: number; developmentCode?: string | null }
 export interface PasswordResetCompleted { message: string }
 export interface AdminUser extends User { isActive: boolean; createdAt: string }
 export interface AdminUserPage { items: AdminUser[]; page: number; pageSize: number; totalItems: number; totalPages: number }
@@ -16,21 +16,25 @@ export interface CategorySummary { id: number; name: string; slug: string }
 export interface Category extends CategorySummary { description: string | null; displayOrder: number; color: string | null }
 export interface AdminCategory extends Category { isActive: boolean; productCount: number }
 export interface CategoryInput { name: string; slug: string; description: string | null; displayOrder: number; color: string | null }
-export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null }
-export interface CreateProductInput { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null }
-export interface UpdateProductInput { name: string; description: string | null; price: number; imageUrl: string | null; isActive: boolean; categoryId: number | null }
+export type AttributePresentation = 'Button' | 'ColorSwatch'
+export interface AttributeOption { id: number; value: string; visualValue: string | null; displayOrder: number; isActive?: boolean; usageCount?: number }
+export interface ProductAttributeDefinition { id: number; name: string; presentation: AttributePresentation; displayOrder: number; isActive?: boolean; options: AttributeOption[] }
+export interface ProductVariant { id?: number; sku: string; price: number | null; stock: number; isActive: boolean; attributes: Record<string, string>; optionIds?: number[] }
+export interface Product { id: number; name: string; description: string | null; price: number; stock: number; imageUrl: string | null; isActive: boolean; category: CategorySummary | null; variants?: ProductVariant[]; colorImages?: Record<string, string>; productAttributes?: ProductAttributeDefinition[] }
+export interface CreateProductInput { name: string; description: string | null; price: number; stock: number; imageUrl: string | null; categoryId: number | null; variants: ProductVariant[]; colorImages: Record<string, string> }
+export interface UpdateProductInput { name: string; description: string | null; price: number; imageUrl: string | null; isActive: boolean; categoryId: number | null; variants: ProductVariant[]; colorImages: Record<string, string> }
 export type StockMovementType = 'InitialStock' | 'Sale' | 'CancellationReturn' | 'ManualEntry' | 'ManualCorrection' | 'LossDamage'
-export interface StockMovement { id: number; productId: number; productName: string; type: StockMovementType; quantity: number; previousStock: number; resultingStock: number; reason: string; actorUserId: number | null; actorName: string | null; orderId: number | null; createdAtUtc: string }
+export interface StockMovement { id: number; productId: number; productName: string; type: StockMovementType; quantity: number; previousStock: number; resultingStock: number; reason: string; actorUserId: number | null; actorName: string | null; orderId: number | null; createdAtUtc: string; productVariantId?: number | null; variantSku?: string | null }
 export interface StockMovementPage { items: StockMovement[]; page: number; pageSize: number; totalItems: number; totalPages: number }
 export interface StockAdjustment { productId: number; previousStock: number; resultingStock: number; movement: StockMovement }
 export interface ProductImageUpload { url: string; key: string }
-export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null }
+export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
 export interface Cart { id: number; userId: number; subtotal: number; discount: number; total: number; couponCode: string | null; items: CartItem[] }
-export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number }
+export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
 export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null }
 export type DeliveryMethod = 'StorePickup' | 'HomeDelivery'
 export interface ShippingOptions { homeDeliveryCost: number; pickupAddress: string; pickupInstructions: string; pickupHours: string }
-export interface Order { id: number; userId: number; userEmail: string | null; userName: string; userPhone: string | null; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; deliveryMethod?: DeliveryMethod; shippingCost?: number; total: number; status: OrderStatus; shippingAddress: string; pickupAddress?: string; pickupHours?: string; pickupInstructions?: string; carrier?: string | null; trackingNumber?: string | null; trackingUrl?: string | null; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
+export interface Order { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; deliveryMethod?: DeliveryMethod; shippingCost?: number; total: number; status: OrderStatus; shippingAddress: string; pickupAddress?: string; pickupHours?: string; pickupInstructions?: string; carrier?: string | null; trackingNumber?: string | null; trackingUrl?: string | null; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
 export type CouponType = 'Percentage' | 'FixedAmount'
 export interface Coupon { id: number; code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean; reservedUses: number; consumedUses: number; createdAtUtc: string; updatedAtUtc: string | null }
 export interface CouponPage { items: Coupon[]; page: number; pageSize: number; totalItems: number; totalPages: number }

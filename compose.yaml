@@ -24,6 +24,10 @@ services:
       DatabaseInitialization__Enabled: "true"
       Jwt__Secret: ${GYMSHOP_JWT_SECRET}
       GoogleAuth__ClientId: ${GYMSHOP_GOOGLE_CLIENT_ID:-}
+      Email__Provider: ${GYMSHOP_EMAIL_PROVIDER:-Mock}
+      Email__ApiKey: ${GYMSHOP_EMAIL_API_KEY:-}
+      Email__FromAddress: ${GYMSHOP_EMAIL_FROM_ADDRESS:-}
+      Email__FromName: ${GYMSHOP_EMAIL_FROM_NAME:-GymShop}
       SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
       SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
       SeedSuperAdmin__Password: ${GYMSHOP_SEED_ADMIN_PASSWORD}

@@ -62,11 +62,21 @@ public sealed class ProductImageUrlAttribute : ValidationAttribute
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter)]
 public sealed class SqlDecimalAttribute : ValidationAttribute
 {
-    private const decimal Maximum = 9999999999999999.99m;
+    internal const decimal Maximum = 9999999999999999.99m;
 
     public SqlDecimalAttribute() =>
         ErrorMessage = "El precio debe ser mayor a cero, tener hasta 16 digitos enteros y hasta 2 decimales.";
 
     public override bool IsValid(object? value) =>
-        value is decimal amount && amount > 0 && amount <= Maximum && decimal.Round(amount, 2) == amount;
+        value is null || value is decimal amount && amount > 0 && amount <= Maximum && decimal.Round(amount, 2) == amount;
+}
+
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter)]
+public sealed class NonNegativeSqlDecimalAttribute : ValidationAttribute
+{
+    public NonNegativeSqlDecimalAttribute() =>
+        ErrorMessage = "El importe no puede ser negativo, debe tener hasta 16 digitos enteros y hasta 2 decimales.";
+
+    public override bool IsValid(object? value) =>
+        value is null || value is decimal amount && amount >= 0 && amount <= SqlDecimalAttribute.Maximum && decimal.Round(amount, 2) == amount;
 }

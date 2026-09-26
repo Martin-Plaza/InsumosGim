@@ -8,6 +8,11 @@ public interface IApplicationDbContext
     DbSet<Role> Roles { get; }
     DbSet<User> Users { get; }
     DbSet<Product> Products { get; }
+    DbSet<ProductVariant> ProductVariants { get; }
+    DbSet<ProductVariantAttribute> ProductVariantAttributes { get; }
+    DbSet<ProductColorImage> ProductColorImages { get; }
+    DbSet<ProductAttribute> ProductAttributes { get; }
+    DbSet<ProductAttributeOption> ProductAttributeOptions { get; }
     DbSet<Category> Categories { get; }
     DbSet<Order> Orders { get; }
     DbSet<OrderItem> OrderItems { get; }

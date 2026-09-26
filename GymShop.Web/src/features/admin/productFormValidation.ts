@@ -1,4 +1,4 @@
-import type { CreateProductInput, Product, UpdateProductInput } from '../../api/types'
+import type { CreateProductInput, Product, ProductVariant, UpdateProductInput } from '../../api/types'
 
 export const PRODUCT_LIMITS = { name: 150, description: 1000, imageUrl: 500, maxPrice: Number('9999999999999999.99') } as const
 
@@ -10,12 +10,14 @@ export interface ProductFormValues {
   categoryId: string
   imageUrl: string
   isActive: boolean
+  variants: ProductVariant[]
+  colorImages: Record<string, string>
 }
 
-export type ProductField = keyof Omit<ProductFormValues, 'isActive'>
+export type ProductField = keyof Omit<ProductFormValues, 'isActive' | 'variants' | 'colorImages'>
 export type ProductFormErrors = Partial<Record<ProductField, string>>
 
-export const emptyProductValues = (): ProductFormValues => ({ name: '', description: '', price: '', stock: '', categoryId: '', imageUrl: '', isActive: true })
+export const emptyProductValues = (): ProductFormValues => ({ name: '', description: '', price: '', stock: '', categoryId: '', imageUrl: '', isActive: true, variants: [], colorImages: {} })
 
 export const productToFormValues = (product: Product): ProductFormValues => ({
   name: product.name,
@@ -25,6 +27,8 @@ export const productToFormValues = (product: Product): ProductFormValues => ({
   categoryId: product.category ? String(product.category.id) : '',
   imageUrl: product.imageUrl || '',
   isActive: product.isActive,
+  variants: product.variants ?? [],
+  colorImages: product.colorImages ?? {},
 })
 
 export function isValidProductImageUrl(value: string) {
@@ -57,7 +61,7 @@ export function toProductInput(values: ProductFormValues): CreateProductInput {
   return {
     name: values.name.trim(), description: values.description.trim() || null,
     price: Number(values.price), stock: Number(values.stock),
-    imageUrl: values.imageUrl.trim() || null, categoryId: Number(values.categoryId),
+    imageUrl: values.imageUrl.trim() || null, categoryId: Number(values.categoryId), variants: values.variants, colorImages: values.colorImages,
   }
 }
 
@@ -65,6 +69,6 @@ export function toUpdateProductInput(values: ProductFormValues): UpdateProductIn
   return {
     name: values.name.trim(), description: values.description.trim() || null,
     price: Number(values.price), imageUrl: values.imageUrl.trim() || null,
-    categoryId: Number(values.categoryId), isActive: values.isActive,
+    categoryId: Number(values.categoryId), isActive: values.isActive, variants: values.variants, colorImages: values.colorImages,
   }
 }

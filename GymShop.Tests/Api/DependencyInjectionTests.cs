@@ -4,6 +4,8 @@ using GymShop.Application.UseCases.Payments;
 using GymShop.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.FileProviders;
 
 namespace GymShop.Tests.Api;
 
@@ -21,7 +23,7 @@ public class DependencyInjectionTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddApplication();
-        services.AddInfrastructure(configuration);
+        services.AddInfrastructure(configuration, new TestHostEnvironment());
 
         Assert.DoesNotContain(services, descriptor =>
             descriptor.ServiceType.Namespace?.Contains("Repositories", StringComparison.Ordinal) == true);
@@ -36,5 +38,13 @@ public class DependencyInjectionTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IApplicationDbContext>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ITransactionManager>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICreatePaymentUseCase>());
+    }
+
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Development;
+        public string ApplicationName { get; set; } = "GymShop.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 }

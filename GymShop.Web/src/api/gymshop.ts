@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductImageUpload, RegistrationPending, Role, ShippingOptions, StockAdjustment, StockMovementPage, StockMovementType, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingOptions, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -12,6 +12,14 @@ export const api = {
   me: () => request<User>('/api/auth/me'),
   products: (includeInactive = false) => request<Product[]>(`/api/products${includeInactive ? '?includeInactive=true' : ''}`),
   categories: () => request<Category[]>('/api/categories'),
+  attributes: () => request<ProductAttributeDefinition[]>('/api/attributes'),
+  adminAttributes: () => request<ProductAttributeDefinition[]>('/api/attributes/admin'),
+  createAttribute: (data: { name: string; presentation: string; displayOrder: number }) => request<ProductAttributeDefinition>('/api/attributes', json('POST', data)),
+  updateAttribute: (id: number, data: { name: string; presentation: string; displayOrder: number }) => request<ProductAttributeDefinition>(`/api/attributes/${id}`, json('PUT', data)),
+  setAttributeStatus: (id: number, isActive: boolean) => request<void>(`/api/attributes/${id}/status`, json('PATCH', { isActive })),
+  addAttributeOption: (id: number, data: { value: string; visualValue: string | null; displayOrder: number }) => request(`/api/attributes/${id}/options`, json('POST', data)),
+  updateAttributeOption: (id: number, optionId: number, data: { value: string; visualValue: string | null; displayOrder: number }) => request(`/api/attributes/${id}/options/${optionId}`, json('PUT', data)),
+  setAttributeOptionStatus: (id: number, optionId: number, isActive: boolean) => request<void>(`/api/attributes/${id}/options/${optionId}/status`, json('PATCH', { isActive })),
   adminCategories: () => request<AdminCategory[]>('/api/categories/admin'),
   adminCategory: (id: number) => request<AdminCategory>(`/api/categories/${id}`),
   createCategory: (data: CategoryInput) => request<AdminCategory>('/api/categories', json('POST', data)),
@@ -31,12 +39,12 @@ export const api = {
     return request<StockMovementPage>(`/api/stock/movements?${query}`)
   },
   productStockMovements: (productId: number, page = 1) => request<StockMovementPage>(`/api/stock/products/${productId}/movements?page=${page}&pageSize=20`),
-  adjustStock: (productId: number, data: { type: Extract<StockMovementType, 'ManualEntry' | 'ManualCorrection' | 'LossDamage'>; quantity: number; reason: string }) =>
+  adjustStock: (productId: number, data: { quantity: number; reason: string; productVariantId?: number | null }) =>
     request<StockAdjustment>(`/api/stock/products/${productId}/adjustments`, json('POST', data)),
   cart: () => request<Cart>('/api/cart'),
-  addCartItem: (productId: number, quantity: number) => request<Cart>('/api/cart/items', json('POST', { productId, quantity })),
-  updateCartItem: (productId: number, quantity: number) => request<Cart>(`/api/cart/items/${productId}`, json('PUT', { quantity })),
-  removeCartItem: (productId: number) => request<Cart>(`/api/cart/items/${productId}`, json('DELETE')),
+  addCartItem: (productId: number, quantity: number, productVariantId?: number | null) => request<Cart>('/api/cart/items', json('POST', { productId, quantity, productVariantId })),
+  updateCartItem: (productId: number, quantity: number, productVariantId?: number | null) => request<Cart>(`/api/cart/items/${productId}${productVariantId ? `?productVariantId=${productVariantId}` : ''}`, json('PUT', { quantity })),
+  removeCartItem: (productId: number, productVariantId?: number | null) => request<Cart>(`/api/cart/items/${productId}${productVariantId ? `?productVariantId=${productVariantId}` : ''}`, json('DELETE')),
   clearCart: () => request<void>('/api/cart', json('DELETE')),
   applyCoupon: (code: string) => request<Cart>('/api/cart/coupon', json('POST', { code })),
   removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),

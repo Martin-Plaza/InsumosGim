@@ -12,6 +12,7 @@ import { CategoryEditorPage } from './features/admin/CategoryEditorPage'
 import { isAdmin } from './features/admin/adminConfig'
 import { ProductsAdmin } from './features/admin/ProductsAdmin'
 import { ProductEditorPage } from './features/admin/ProductEditorPage'
+import { AttributesAdmin } from './features/admin/AttributesAdmin'
 import { UsersAdmin } from './features/admin/UsersAdmin'
 import { StockAdmin } from './features/admin/StockAdmin'
 import { CouponsAdmin } from './features/admin/CouponsAdmin'
@@ -74,7 +75,7 @@ function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: Au
 
 function AdminRoutes({ user, onLogout }: { user: User | null; onLogout(): void }) {
   return <Routes><Route path="/admin" element={<AdminRoute user={user}>{user && <AdminLayout user={user} onLogout={onLogout} />}</AdminRoute>}>
-    <Route index element={<AdminDashboard />} /><Route path="productos" element={<ProductsAdmin />} /><Route path="stock" element={<StockAdmin />} /><Route path="productos/nuevo" element={<ProductEditorPage mode="create" />} /><Route path="productos/:productId/editar" element={<ProductEditorPage mode="edit" />} /><Route path="categorias" element={<CategoriesAdmin />} /><Route path="categorias/nueva" element={<CategoryEditorPage mode="create" />} /><Route path="categorias/:categoryId/editar" element={<CategoryEditorPage mode="edit" />} /><Route path="pedidos" element={<OrdersView admin />} /><Route path="cupones" element={<CouponsAdmin />} />
+    <Route index element={<AdminDashboard />} /><Route path="productos" element={<ProductsAdmin />} /><Route path="stock" element={<StockAdmin />} /><Route path="productos/nuevo" element={<ProductEditorPage mode="create" />} /><Route path="productos/:productId/editar" element={<ProductEditorPage mode="edit" />} /><Route path="categorias" element={<CategoriesAdmin />} /><Route path="atributos" element={<AttributesAdmin />} /><Route path="categorias/nueva" element={<CategoryEditorPage mode="create" />} /><Route path="categorias/:categoryId/editar" element={<CategoryEditorPage mode="edit" />} /><Route path="pedidos" element={<OrdersView admin />} /><Route path="cupones" element={<CouponsAdmin />} />
     <Route path="usuarios" element={<AdminRoute user={user} superAdmin><UsersAdmin /></AdminRoute>} /><Route path="auditoria" element={<AdminRoute user={user} superAdmin><AuditAdmin /></AdminRoute>} />
   </Route><Route path="*" element={<Navigate to="/admin" replace />} /></Routes>
 }

@@ -50,7 +50,7 @@ public class AuditUseCaseTests
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new AdjustStockUseCase(failing, new FakeAuditContext(null, "corr-fail"))
-                    .ExecuteAsync(10, new ManualStockAdjustmentRequest("ManualEntry", 4, "Reposición")));
+                    .ExecuteAsync(10, new ManualStockAdjustmentRequest(4, "Reposición")));
         }
 
         await using var verification = new GymShopDbContext(normalOptions);

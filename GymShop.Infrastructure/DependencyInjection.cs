@@ -6,12 +6,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using GymShop.Infrastructure.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using System.Net.Http.Headers;
 
 namespace GymShop.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         var connectionString = GetPostgresConnectionString(configuration);
 
@@ -30,8 +33,28 @@ public static class DependencyInjection
             ActivatorUtilities.CreateInstance<NeonProductImageStorage>(provider, configuration));
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
-        services.AddScoped<IVerificationEmailSender, MockVerificationEmailSender>();
-        services.AddScoped<IPasswordResetEmailSender, MockPasswordResetEmailSender>();
+        services.AddSingleton<IValidateOptions<EmailOptions>>(new EmailOptionsValidator(environment.EnvironmentName));
+        services.AddOptions<EmailOptions>()
+            .Bind(configuration.GetSection(EmailOptions.SectionName))
+            .ValidateOnStart();
+        var emailProvider = configuration[$"{EmailOptions.SectionName}:Provider"] ?? "Mock";
+        if (environment.IsDevelopment() && string.Equals(emailProvider, "Mock", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddScoped<IVerificationEmailSender, MockVerificationEmailSender>();
+            services.AddScoped<IPasswordResetEmailSender, MockPasswordResetEmailSender>();
+        }
+        else
+        {
+            services.AddHttpClient<ResendEmailSender>((provider, client) =>
+            {
+                var email = provider.GetRequiredService<IOptions<EmailOptions>>().Value;
+                client.BaseAddress = new Uri("https://api.resend.com/");
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", email.ApiKey);
+                client.Timeout = TimeSpan.FromSeconds(10);
+            });
+            services.AddScoped<IVerificationEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
+            services.AddScoped<IPasswordResetEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
+        }
         services.AddHttpClient<IExternalIdentityVerifier, GoogleIdentityVerifier>(client => client.BaseAddress = new Uri("https://oauth2.googleapis.com/"));
         services.AddScoped<IPaymentGateway, MockPaymentGateway>();
         services.AddHttpClient<IPaymentGateway, MercadoPagoPaymentGateway>(client =>

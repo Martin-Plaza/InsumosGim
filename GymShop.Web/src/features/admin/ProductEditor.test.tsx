@@ -240,4 +240,40 @@ describe('alta y edición administrativa de productos', () => {
     await screen.findByText(/fue actualizado correctamente/)
     expect(order).toEqual(['upload', 'save', 'delete-old'])
   })
+
+  it('asigna una sola imagen por color y la envía con todas sus variantes', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/7/editar')
+    const attributes = [
+      { id: 1, name: 'Color', presentation: 'ColorSwatch', displayOrder: 0, isActive: true, options: [{ id: 101, value: 'Negro', visualValue: '#111111', displayOrder: 0, isActive: true }] },
+      { id: 2, name: 'Talle', presentation: 'Button', displayOrder: 1, isActive: true, options: [{ id: 201, value: 'M', visualValue: null, displayOrder: 0, isActive: true }, { id: 202, value: 'L', visualValue: null, displayOrder: 1, isActive: true }] },
+    ]
+    const withVariants = { ...product, variants: [
+      { id: 11, sku: 'KET-NEG-M', price: null, stock: 2, isActive: true, attributes: { Color: 'Negro', Talle: 'M' }, optionIds: [101, 201] },
+      { id: 12, sku: 'KET-NEG-L', price: null, stock: 4, isActive: true, attributes: { Color: 'Negro', Talle: 'L' }, optionIds: [101, 202] },
+    ], colorImages: {}, productAttributes: attributes }
+    let updateBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/attributes/admin')) return json(attributes)
+      if (url.endsWith('/api/products/7') && (!init?.method || init.method === 'GET')) return json(withVariants)
+      if (url.endsWith('/api/products/images') && init?.method === 'POST') return json({ url: 'https://storage.test/negro.webp', key: 'products/7/negro.webp' }, 201)
+      if (url.endsWith('/api/products/7') && init?.method === 'PUT') { updateBody = JSON.parse(String(init.body)); return json({ ...withVariants, colorImages: { 101: 'https://storage.test/negro.webp' } }) }
+      return defaultApi(input, init)
+    })
+    render(<App />); const input = await screen.findByLabelText('Subir imagen para Negro')
+    await userEvent.upload(input, new File(['webp'], 'negro.webp', { type: 'image/webp' })); await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await screen.findByText(/fue actualizado correctamente/)
+    expect(updateBody?.colorImages).toEqual({ 101: 'https://storage.test/negro.webp' })
+    expect((updateBody?.variants as unknown[])).toHaveLength(2)
+  })
+
+  it('normaliza una variante anterior con atributos de texto usando el catálogo reutilizable', async () => {
+    signIn(); window.history.replaceState(null, '', '/admin/productos/7/editar')
+    const attributes = [{ id: 1, name: 'Color', presentation: 'ColorSwatch', displayOrder: 0, isActive: true, options: [{ id: 101, value: 'Negro', visualValue: '#111111', displayOrder: 0, isActive: true }] }]
+    const legacy = { ...product, variants: [{ id: 11, sku: 'KET-NEG', price: null, stock: 2, isActive: true, attributes: { Color: 'Negro' } }], colorImages: { Negro: '/negro.webp' } }
+    let updateBody: { variants?: Array<{ optionIds?: number[] }>; colorImages?: Record<string, string> } | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => { const url = String(input); if (url.endsWith('/api/attributes/admin')) return json(attributes); if (url.endsWith('/api/products/7') && (!init?.method || init.method === 'GET')) return json(legacy); if (url.endsWith('/api/products/7') && init?.method === 'PUT') { updateBody = JSON.parse(String(init.body)); return json(legacy) } return defaultApi(input, init) })
+    render(<App />); expect(await screen.findByLabelText('Subir imagen para Negro')).toBeInTheDocument(); await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' })); await screen.findByText(/fue actualizado correctamente/)
+    expect(updateBody?.variants?.[0].optionIds).toEqual([101]); expect(updateBody?.colorImages).toEqual({ 101: '/negro.webp' })
+  })
 })

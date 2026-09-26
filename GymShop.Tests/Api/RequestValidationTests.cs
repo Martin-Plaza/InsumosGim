@@ -17,6 +17,16 @@ public class RequestValidationTests
     }
 
     [Theory]
+    [MemberData(nameof(ValidCheckoutAmounts))]
+    public void Checkout_accepts_non_negative_shipping_and_discount(CheckoutCartRequest request) =>
+        Assert.Empty(Validate(request));
+
+    [Theory]
+    [MemberData(nameof(InvalidCheckoutAmounts))]
+    public void Checkout_rejects_invalid_amounts(CheckoutCartRequest request, string member) =>
+        AssertInvalid(request, member);
+
+    [Theory]
     [MemberData(nameof(ValuesOverDatabaseLimits))]
     public void Values_over_database_limits_are_rejected_before_controller_execution(object request, string member)
     {
@@ -70,6 +80,25 @@ public class RequestValidationTests
         { new CreatePaymentRequest(new string('P', 51), null), nameof(CreatePaymentRequest.Provider) },
         { new UpdatePaymentStatusRequest("Rejected", null, new string('R', 501)), nameof(UpdatePaymentStatusRequest.FailureReason) },
         { new CancelOrderRequest(new string('R', 501)), nameof(CancelOrderRequest.Reason) }
+    };
+
+    public static TheoryData<CheckoutCartRequest> ValidCheckoutAmounts => new()
+    {
+        // Sin cupón: el descuento cero es un importe válido.
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 100, 500, 0) },
+        // Retiro en tienda: no tiene costo de envío.
+        { new CheckoutCartRequest("StorePickup", null, 0, 500, 0) },
+        // Envío gratis a domicilio: costo cero con dirección obligatoria.
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 500, 0) }
+    };
+
+    public static TheoryData<CheckoutCartRequest, string> InvalidCheckoutAmounts => new()
+    {
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", -1, 500, 0), nameof(CheckoutCartRequest.ExpectedShippingCost) },
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 0, 0), nameof(CheckoutCartRequest.ExpectedSubtotal) },
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 500, -1), nameof(CheckoutCartRequest.ExpectedDiscount) },
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 0.001m, 500, 0), nameof(CheckoutCartRequest.ExpectedShippingCost) },
+        { new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 500, 0.001m), nameof(CheckoutCartRequest.ExpectedDiscount) }
     };
 
     private static void AssertInvalid(object request, string member)

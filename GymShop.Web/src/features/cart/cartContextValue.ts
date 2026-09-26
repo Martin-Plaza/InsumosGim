@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { CartItem, Product } from '../../api/types'
+import type { CartItem, Product, ProductVariant } from '../../api/types'
 
 export interface CartContextValue {
   items: CartItem[]
@@ -12,9 +12,9 @@ export interface CartContextValue {
   error: string
   notice: string
   drawerOpen: boolean
-  add(product: Product, quantity: number): Promise<void>
-  update(productId: number, quantity: number): Promise<void>
-  remove(productId: number): Promise<void>
+  add(product: Product, quantity: number, variant?: ProductVariant): Promise<void>
+  update(productId: number, quantity: number, productVariantId?: number | null): Promise<void>
+  remove(productId: number, productVariantId?: number | null): Promise<void>
   clear(): Promise<void>
   refresh(): Promise<void>
   applyCoupon(code: string): Promise<void>

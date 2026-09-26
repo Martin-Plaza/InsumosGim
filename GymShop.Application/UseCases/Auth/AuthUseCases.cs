@@ -78,7 +78,7 @@ internal static class Verification
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
         db.EmailVerificationCodes.Add(new EmailVerificationCode { User = user, UserId = user.Id, CodeHash = Hash(code), CreatedAtUtc = now, ExpiresAtUtc = now.AddSeconds(LifetimeSeconds) });
         await db.SaveChangesAsync(cancellationToken);
-        var developmentCode = await sender.SendAsync(user.Email, code, cancellationToken);
+        var developmentCode = await sender.SendAsync(user.Email, code, cancellationToken: cancellationToken);
         return AppResult<RegistrationPendingResponse>.Success(new(user.Email, LifetimeSeconds, developmentCode));
     }
     public static string Hash(string code) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
@@ -197,7 +197,7 @@ public sealed class RequestPasswordResetUseCase : IRequestPasswordResetUseCase
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var developmentCode = await _sender.SendAsync(email, code, cancellationToken);
+        var developmentCode = await _sender.SendAsync(email, code, deliver: user is not null, cancellationToken);
         return AppResult<PasswordResetPendingResponse>.Success(new(PasswordReset.GenericRequestMessage, PasswordReset.LifetimeSeconds, developmentCode));
     }
 }

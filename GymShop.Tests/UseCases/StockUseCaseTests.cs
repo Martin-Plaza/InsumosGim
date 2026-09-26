@@ -66,7 +66,7 @@ public sealed class StockUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var created = await new GymShop.Application.UseCases.Products.CreateProductUseCase(db)
             .ExecuteAsync(new GymShop.Application.DTOs.Products.CreateProductRequest("Banco", null, 100, 5, "/images/banco.webp"));
-        await new AdjustStockUseCase(db).ExecuteAsync(created.Value!.Id, new("ManualCorrection", -2, "Conteo físico"));
+        await new AdjustStockUseCase(db).ExecuteAsync(created.Value!.Id, new(-2, "Conteo físico"));
         Assert.Equal(db.Products.Single().Stock, db.StockMovements.Where(x => x.ProductId == created.Value.Id).Sum(x => x.Quantity));
     }
 
@@ -92,8 +92,8 @@ public sealed class StockUseCaseTests
         db.Products.Add(product); await db.SaveChangesAsync();
         var useCase = new AdjustStockUseCase(db, new FakeAuditContext(null, "stock-test"));
 
-        var missingReason = await useCase.ExecuteAsync(product.Id, new("LossDamage", 1, " "));
-        var negative = await useCase.ExecuteAsync(product.Id, new("LossDamage", 4, "Rotura"));
+        var missingReason = await useCase.ExecuteAsync(product.Id, new(-1, " "));
+        var negative = await useCase.ExecuteAsync(product.Id, new(-4, "Rotura"));
 
         Assert.False(missingReason.IsSuccess); Assert.False(negative.IsSuccess);
         Assert.Equal(3, product.Stock); Assert.Empty(db.StockMovements);
@@ -108,13 +108,29 @@ public sealed class StockUseCaseTests
         db.AddRange(actor, product); await db.SaveChangesAsync();
 
         var result = await new AdjustStockUseCase(db, new FakeAuditContext(actor.Id, "stock-test"))
-            .ExecuteAsync(product.Id, new("ManualEntry", 5, "Recepción de mercadería"));
+            .ExecuteAsync(product.Id, new(5, "Recepción de mercadería"));
 
         Assert.True(result.IsSuccess); Assert.Equal(8, product.Stock);
         var movement = Assert.Single(db.StockMovements);
         Assert.Equal(3, movement.PreviousStock); Assert.Equal(8, movement.ResultingStock);
         Assert.Equal(5, movement.Quantity); Assert.Equal(actor.Id, movement.ActorUserId);
         Assert.Equal("Recepción de mercadería", movement.Reason);
+    }
+
+    [Fact]
+    public async Task Variant_product_requires_variant_and_adjusts_only_selected_combination()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var product = new Product { Name = "Remera", Price = 10, Stock = 0, Variants = { new ProductVariant { Sku = "REM-M", Stock = 2 }, new ProductVariant { Sku = "REM-L", Stock = 5 } } };
+        db.Products.Add(product); await db.SaveChangesAsync(); var selected = product.Variants.Single(x => x.Sku == "REM-M");
+        var useCase = new AdjustStockUseCase(db);
+
+        var missing = await useCase.ExecuteAsync(product.Id, new(3, "Ingreso"));
+        var adjusted = await useCase.ExecuteAsync(product.Id, new(3, "Ingreso", selected.Id));
+
+        Assert.False(missing.IsSuccess); Assert.True(adjusted.IsSuccess); Assert.Equal(5, selected.Stock);
+        Assert.Equal(5, product.Variants.Single(x => x.Sku == "REM-L").Stock);
+        Assert.Equal(selected.Id, Assert.Single(db.StockMovements).ProductVariantId);
     }
 
     [Fact]

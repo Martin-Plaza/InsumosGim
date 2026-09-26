@@ -1121,13 +1121,13 @@ Endpoints:
 - `POST /api/auth/resend-verification`
 - `POST /api/auth/google`
 
-En esta fase `IVerificationEmailSender` usa un proveedor Mock: el codigo se muestra en la respuesta como `developmentCode` y en el log local. Esto sirve para desarrollo y tests, pero no prueba la propiedad de un correo real y debe reemplazarse antes de staging publico.
+`IVerificationEmailSender` usa Resend mediante su API HTTP en entornos desplegados. El proveedor Mock solo puede arrancar con `ASPNETCORE_ENVIRONMENT=Development`; en ese entorno el codigo se muestra como `developmentCode` y se escribe en el log local. En cualquier otro entorno la configuracion Mock es rechazada al iniciar y `developmentCode` se omite de la respuesta.
 
 El frontend conserva en `localStorage` solamente el email y el vencimiento de una verificacion pendiente para poder retomarla tras recargar o cerrar la pagina. El codigo Mock no se persiste: si ya no esta visible, hay que esperar el vencimiento y usar **Reenviar codigo** para obtener uno nuevo.
 
 ### Recuperación de contraseña
 
-La recuperación se implementa completa en desarrollo salvo por el envío real de correo:
+La recuperación usa el mismo proveedor transaccional configurable que la verificación:
 
 ```text
 Olvidé mi contraseña
@@ -1149,7 +1149,7 @@ POST /api/auth/reset-password
 { "email": "usuario@example.com", "code": "123456", "newPassword": "NuevaClave123" }
 ```
 
-`forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. En Development el proveedor Mock incluye `developmentCode` y escribe el código en el log; en staging y producción ese campo debe ser `null` y el código debe enviarse por el proveedor real.
+`forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. En Development el proveedor Mock incluye `developmentCode` y escribe el código en el log; en staging y producción la propiedad se omite y el código se envía por Resend solamente cuando la cuenta existe.
 
 Los códigos se guardan en `PasswordResetCodes`, separados de `EmailVerificationCodes`, porque activar un email y cambiar una credencial son propósitos de seguridad distintos. Solo se persiste un hash con sal mediante el servicio de hashing de credenciales, nunca sus seis dígitos. Cada solicitud invalida códigos anteriores, cada código admite como máximo cinco intentos, vence después de 600 segundos y queda consumido tras usarse.
 
@@ -1159,12 +1159,13 @@ La solicitud y la confirmación tienen límites por IP y por hash del email. El 
 
 La nueva migración `AddPasswordResetCodes` crea solamente la tabla, la clave foránea hacia `Users` con eliminación en cascada y el índice `(UserId, ExpiresAtUtc)`. No modifica usuarios ni códigos de verificación existentes.
 
-Para staging quedan pendientes:
+Configuración requerida para staging y producción (mediante variables de entorno o un proveedor de secretos, nunca en el repositorio):
 
-- sustituir `MockPasswordResetEmailSender` por un proveedor de correo real;
-- configurar remitente, dominio y secretos fuera del repositorio;
-- diseñar y probar la plantilla del mensaje;
-- validar entregabilidad, spam y tiempos reales;
+- `Email__Provider=Resend`;
+- `Email__ApiKey=<RESEND_API_KEY>`;
+- `Email__FromAddress=<REMITENTE_VERIFICADO>`;
+- `Email__FromName=GymShop` (opcional);
+- verificar el dominio/remitente en Resend y validar entregabilidad, spam y tiempos reales;
 - confirmar límites definitivos según tráfico observado.
 
 Google Identity Services requiere el mismo Client ID publico en backend y frontend:

@@ -23,12 +23,12 @@ public interface IAddCartItemUseCase
 
 public interface IUpdateCartItemUseCase
 {
-    Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, UpdateCartItemRequest request, CancellationToken cancellationToken = default);
+    Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, int? productVariantId, UpdateCartItemRequest request, CancellationToken cancellationToken = default);
 }
 
 public interface IRemoveCartItemUseCase
 {
-    Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, CancellationToken cancellationToken = default);
+    Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, int? productVariantId, CancellationToken cancellationToken = default);
 }
 
 public interface IClearCartUseCase
@@ -74,17 +74,25 @@ public class AddCartItemUseCase : IAddCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Producto y cantidad son obligatorios.");
         }
 
-        var product = await _db.Products.SingleOrDefaultAsync(x => x.Id == request.ProductId, cancellationToken);
+        var product = await _db.Products.Include(x => x.Variants).SingleOrDefaultAsync(x => x.Id == request.ProductId, cancellationToken);
         if (product is null || !product.IsActive)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado o inactivo.");
         }
 
         var cart = await CartQueries.GetOrCreateCartAsync(_db, userId, cancellationToken);
-        var existingItem = await _db.CartItems.SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == request.ProductId, cancellationToken);
+        ProductVariant? variant = null;
+        if (product.Variants.Count > 0)
+        {
+            if (!request.ProductVariantId.HasValue) return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Seleccioná una variante válida.");
+            variant = product.Variants.SingleOrDefault(x => x.Id == request.ProductVariantId && x.IsActive);
+            if (variant is null) return AppResult<CartResponse>.Failure(AppErrorType.Validation, "La variante seleccionada no existe o no está disponible.");
+        }
+        else if (request.ProductVariantId.HasValue) return AppResult<CartResponse>.Failure(AppErrorType.Validation, "Este producto no admite variantes.");
+        var existingItem = await _db.CartItems.SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == request.ProductId && x.ProductVariantId == request.ProductVariantId, cancellationToken);
         var newQuantity = (existingItem?.Quantity ?? 0) + request.Quantity;
 
-        if (product.Stock < newQuantity)
+        if ((variant?.Stock ?? product.Stock) < newQuantity)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
         }
@@ -95,6 +103,7 @@ public class AddCartItemUseCase : IAddCartItemUseCase
             {
                 Cart = cart,
                 ProductId = product.Id,
+                ProductVariantId = variant?.Id,
                 Quantity = request.Quantity
             });
         }
@@ -119,7 +128,10 @@ public class UpdateCartItemUseCase : IUpdateCartItemUseCase
         _db = db;
     }
 
-    public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, UpdateCartItemRequest request, CancellationToken cancellationToken = default)
+    public Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, UpdateCartItemRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(userId, productId, null, request, cancellationToken);
+
+    public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, int? productVariantId, UpdateCartItemRequest request, CancellationToken cancellationToken = default)
     {
         if (productId <= 0 || request.Quantity <= 0)
         {
@@ -132,13 +144,13 @@ public class UpdateCartItemUseCase : IUpdateCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.NotFound, "Carrito no encontrado.");
         }
 
-        var item = await _db.CartItems.Include(x => x.Product).SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == productId, cancellationToken);
+        var item = await _db.CartItems.Include(x => x.Product).Include(x => x.ProductVariant).SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == productId && x.ProductVariantId == productVariantId, cancellationToken);
         if (item is null)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado en el carrito.");
         }
 
-        if (!item.Product.IsActive || item.Product.Stock < request.Quantity)
+        if (!item.Product.IsActive || (item.ProductVariant is not null && !item.ProductVariant.IsActive) || (item.ProductVariant?.Stock ?? item.Product.Stock) < request.Quantity)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {item.Product.Name}.");
         }
@@ -161,7 +173,10 @@ public class RemoveCartItemUseCase : IRemoveCartItemUseCase
         _db = db;
     }
 
-    public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, CancellationToken cancellationToken = default)
+    public Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(userId, productId, null, cancellationToken);
+
+    public async Task<AppResult<CartResponse>> ExecuteAsync(int userId, int productId, int? productVariantId, CancellationToken cancellationToken = default)
     {
         var cart = await CartQueries.GetUserCartAsync(_db, userId, cancellationToken);
         if (cart is null)
@@ -169,7 +184,7 @@ public class RemoveCartItemUseCase : IRemoveCartItemUseCase
             return AppResult<CartResponse>.Failure(AppErrorType.NotFound, "Carrito no encontrado.");
         }
 
-        var item = await _db.CartItems.SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == productId, cancellationToken);
+        var item = await _db.CartItems.SingleOrDefaultAsync(x => x.CartId == cart.Id && x.ProductId == productId && x.ProductVariantId == productVariantId, cancellationToken);
         if (item is null)
         {
             return AppResult<CartResponse>.Failure(AppErrorType.NotFound, "Producto no encontrado en el carrito.");
@@ -273,6 +288,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         var productIds = cart.Items.Select(x => x.ProductId).Distinct().ToList();
         var products = await _db.Products
+            .Include(x => x.Variants).ThenInclude(x => x.Attributes)
             .Where(x => productIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, cancellationToken);
 
@@ -283,7 +299,10 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
                 return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "Uno de los productos del carrito no existe o no esta activo.");
             }
 
-            if (product.Stock < item.Quantity)
+            var variant = item.ProductVariantId.HasValue ? product.Variants.SingleOrDefault(x => x.Id == item.ProductVariantId && x.IsActive) : null;
+            if (product.Variants.Count > 0 && variant is null)
+                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"La variante de {product.Name} ya no está disponible.");
+            if ((variant?.Stock ?? product.Stock) < item.Quantity)
             {
                 return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
             }
@@ -294,11 +313,13 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             .Select(item =>
             {
                 var product = products[item.ProductId];
-                var unitPrice = product.Price;
+                var variant = item.ProductVariantId.HasValue ? product.Variants.Single(x => x.Id == item.ProductVariantId) : null;
+                var unitPrice = variant?.Price ?? product.Price;
 
                 return new
                 {
                     Product = product,
+                    Variant = variant,
                     ProductId = product.Id,
                     ProductName = product.Name,
                     UnitPrice = unitPrice,
@@ -352,16 +373,20 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             {
                 ProductId = line.ProductId,
                 ProductName = line.ProductName,
+                ProductVariantId = line.Variant?.Id,
+                VariantSku = line.Variant?.Sku,
+                VariantAttributesJson = line.Variant is null ? null : System.Text.Json.JsonSerializer.Serialize(line.Variant.Attributes.OrderBy(x => x.Name).ToDictionary(x => x.Name, x => x.Value)),
                 UnitPrice = line.UnitPrice,
                 Quantity = line.Quantity,
                 Subtotal = line.Subtotal
             });
 
-            var previousStock = line.Product.Stock;
-            line.Product.Stock -= line.Quantity;
+            var previousStock = line.Variant?.Stock ?? line.Product.Stock;
+            if (line.Variant is not null) line.Variant.Stock -= line.Quantity;
+            else line.Product.Stock -= line.Quantity;
             line.Product.UpdatedAt = DateTime.UtcNow;
             StockMovementRecorder.Add(_db, line.Product, StockMovementType.Sale, -line.Quantity, previousStock,
-                "Reserva de stock al crear el pedido.", order: order);
+                "Reserva de stock al crear el pedido.", order: order, variant: line.Variant);
         }
 
         _db.Orders.Add(order);
@@ -421,6 +446,7 @@ internal static class CartQueries
         var cart = await db.Carts
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Items).ThenInclude(x => x.ProductVariant!).ThenInclude(x => x.Attributes)
             .Include(x => x.Coupon)
             .SingleAsync(x => x.Id == cartId, cancellationToken);
 
@@ -429,11 +455,14 @@ internal static class CartQueries
             .Select(x => new CartItemResponse(
                 x.ProductId,
                 x.Product.Name,
-                x.Product.Price,
+                x.ProductVariant?.Price ?? x.Product.Price,
                 x.Quantity,
-                x.Product.Price * x.Quantity,
-                x.Product.Stock,
-                x.Product.ImageUrl
+                (x.ProductVariant?.Price ?? x.Product.Price) * x.Quantity,
+                x.ProductVariant?.Stock ?? x.Product.Stock,
+                x.Product.ImageUrl,
+                x.ProductVariantId,
+                x.ProductVariant?.Sku,
+                x.ProductVariant?.Attributes.ToDictionary(a => a.Name, a => a.Value)
             ))
             .ToList();
 

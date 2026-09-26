@@ -134,6 +134,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                     b.Property<int>("ProductId")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ProductVariantId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
@@ -144,8 +147,15 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
 
                     b.HasIndex("ProductId");
 
+                    b.HasIndex("ProductVariantId");
+
                     b.HasIndex("CartId", "ProductId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"ProductVariantId\" IS NULL");
+
+                    b.HasIndex("CartId", "ProductId", "ProductVariantId")
+                        .IsUnique()
+                        .HasFilter("\"ProductVariantId\" IS NOT NULL");
 
                     b.ToTable("CartItems", null, t =>
                         {
@@ -465,6 +475,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
 
+                    b.Property<int?>("ProductVariantId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
@@ -476,11 +489,20 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<string>("VariantAttributesJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("VariantSku")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OrderId");
 
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("ProductVariantId");
 
                     b.ToTable("OrderItems", null, t =>
                         {
@@ -674,6 +696,189 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         });
                 });
 
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductAttribute", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Presentation")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("ProductAttributes", (string)null);
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductAttributeOption", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("ProductAttributeId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("VisualValue")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductAttributeId", "Value")
+                        .IsUnique();
+
+                    b.ToTable("ProductAttributeOptions", (string)null);
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductColorImage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ImageUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int?>("ProductAttributeOptionId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ProductId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductAttributeOptionId");
+
+                    b.HasIndex("ProductId", "Color")
+                        .IsUnique();
+
+                    b.HasIndex("ProductId", "ProductAttributeOptionId")
+                        .IsUnique()
+                        .HasFilter("\"ProductAttributeOptionId\" IS NOT NULL");
+
+                    b.ToTable("ProductColorImages", (string)null);
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductVariant", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("Price")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("ProductId")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("Stock")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Sku")
+                        .IsUnique();
+
+                    b.HasIndex("ProductId", "IsActive");
+
+                    b.ToTable("ProductVariants", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductVariants_Stock_NonNegative", "\"Stock\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductVariantAttribute", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<int?>("ProductAttributeOptionId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ProductVariantId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductAttributeOptionId");
+
+                    b.HasIndex("ProductVariantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("ProductVariantAttributes", (string)null);
+                });
+
             modelBuilder.Entity("GymShop.Domain.Entities.Role", b =>
                 {
                     b.Property<int>("Id")
@@ -744,6 +949,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                     b.Property<int>("ProductId")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ProductVariantId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
@@ -764,13 +972,21 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
 
                     b.HasIndex("ActorUserId");
 
+                    b.HasIndex("ProductVariantId");
+
                     b.HasIndex("CreatedAtUtc", "Id");
 
                     b.HasIndex("OrderId", "ProductId", "Type")
                         .IsUnique()
-                        .HasFilter("\"OrderId\" IS NOT NULL");
+                        .HasDatabaseName("UX_StockMovements_Order_Product_Simple_Type")
+                        .HasFilter("\"OrderId\" IS NOT NULL AND \"ProductVariantId\" IS NULL");
 
                     b.HasIndex("ProductId", "CreatedAtUtc", "Id");
+
+                    b.HasIndex("OrderId", "ProductId", "ProductVariantId", "Type")
+                        .IsUnique()
+                        .HasDatabaseName("UX_StockMovements_Order_Product_Variant_Type")
+                        .HasFilter("\"OrderId\" IS NOT NULL AND \"ProductVariantId\" IS NOT NULL");
 
                     b.ToTable("StockMovements", null, t =>
                         {
@@ -928,9 +1144,16 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("GymShop.Domain.Entities.ProductVariant", "ProductVariant")
+                        .WithMany("CartItems")
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Cart");
 
                     b.Navigation("Product");
+
+                    b.Navigation("ProductVariant");
                 });
 
             modelBuilder.Entity("GymShop.Domain.Entities.CouponRedemption", b =>
@@ -996,9 +1219,16 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("GymShop.Domain.Entities.ProductVariant", "ProductVariant")
+                        .WithMany("OrderItems")
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Order");
 
                     b.Navigation("Product");
+
+                    b.Navigation("ProductVariant");
                 });
 
             modelBuilder.Entity("GymShop.Domain.Entities.PasswordResetCode", b =>
@@ -1033,6 +1263,64 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                     b.Navigation("Category");
                 });
 
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductAttributeOption", b =>
+                {
+                    b.HasOne("GymShop.Domain.Entities.ProductAttribute", "ProductAttribute")
+                        .WithMany("Options")
+                        .HasForeignKey("ProductAttributeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ProductAttribute");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductColorImage", b =>
+                {
+                    b.HasOne("GymShop.Domain.Entities.ProductAttributeOption", "ProductAttributeOption")
+                        .WithMany("ColorImages")
+                        .HasForeignKey("ProductAttributeOptionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("GymShop.Domain.Entities.Product", "Product")
+                        .WithMany("ColorImages")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Product");
+
+                    b.Navigation("ProductAttributeOption");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductVariant", b =>
+                {
+                    b.HasOne("GymShop.Domain.Entities.Product", "Product")
+                        .WithMany("Variants")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductVariantAttribute", b =>
+                {
+                    b.HasOne("GymShop.Domain.Entities.ProductAttributeOption", "ProductAttributeOption")
+                        .WithMany("VariantAttributes")
+                        .HasForeignKey("ProductAttributeOptionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("GymShop.Domain.Entities.ProductVariant", "ProductVariant")
+                        .WithMany("Attributes")
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ProductAttributeOption");
+
+                    b.Navigation("ProductVariant");
+                });
+
             modelBuilder.Entity("GymShop.Domain.Entities.StockMovement", b =>
                 {
                     b.HasOne("GymShop.Domain.Entities.User", "ActorUser")
@@ -1051,11 +1339,18 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("GymShop.Domain.Entities.ProductVariant", "ProductVariant")
+                        .WithMany("StockMovements")
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("ActorUser");
 
                     b.Navigation("Order");
 
                     b.Navigation("Product");
+
+                    b.Navigation("ProductVariant");
                 });
 
             modelBuilder.Entity("GymShop.Domain.Entities.User", b =>
@@ -1106,6 +1401,33 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
 
             modelBuilder.Entity("GymShop.Domain.Entities.Product", b =>
                 {
+                    b.Navigation("CartItems");
+
+                    b.Navigation("ColorImages");
+
+                    b.Navigation("OrderItems");
+
+                    b.Navigation("StockMovements");
+
+                    b.Navigation("Variants");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductAttribute", b =>
+                {
+                    b.Navigation("Options");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductAttributeOption", b =>
+                {
+                    b.Navigation("ColorImages");
+
+                    b.Navigation("VariantAttributes");
+                });
+
+            modelBuilder.Entity("GymShop.Domain.Entities.ProductVariant", b =>
+                {
+                    b.Navigation("Attributes");
+
                     b.Navigation("CartItems");
 
                     b.Navigation("OrderItems");

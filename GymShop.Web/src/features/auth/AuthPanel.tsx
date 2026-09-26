@@ -131,7 +131,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
         <button type="button" disabled={busy || seconds > 0} onClick={() => void execute(async () => {
           const result = await api.resendVerification(pending.email)
           setPending(savePendingRegistration(result.email, result.expiresInSeconds))
-          setDevelopmentCode(result.developmentCode)
+          setDevelopmentCode(result.developmentCode ?? null)
           setNotice('Te enviamos un código nuevo.')
         })}>{busy ? 'Enviando…' : 'Reenviar código'}</button>
         <button type="button" className="link" disabled={busy} onClick={() => {
@@ -165,7 +165,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
     return <section className="auth-card">
       <div><p className="eyebrow">RECUPERÁ TU CUENTA</p><h1>¿Olvidaste tu contraseña?</h1><p>Ingresá tu email. Si corresponde a una cuenta, enviaremos un código de 6 dígitos válido durante 10 minutos.</p></div>
       <form onSubmit={event => { event.preventDefault(); const email = String(new FormData(event.currentTarget).get('email')).trim().toLowerCase(); void execute(async () => {
-        const result = await api.forgotPassword(email); setResetEmail(email); setResetSeconds(result.expiresInSeconds); setDevelopmentCode(result.developmentCode); setNotice(result.message)
+        const result = await api.forgotPassword(email); setResetEmail(email); setResetSeconds(result.expiresInSeconds); setDevelopmentCode(result.developmentCode ?? null); setNotice(result.message)
       }) }}>
         {notice && <div className="notice" role="status">{notice}</div>}{error && <div className="error" role="alert">{error}</div>}
         <fieldset disabled={busy}><label>Email<input name="email" type="email" required maxLength={256} autoComplete="email" autoFocus /></label></fieldset>
@@ -194,7 +194,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
             password: String(data.get('password')),
           })
           setPending(savePendingRegistration(result.email, result.expiresInSeconds))
-          setDevelopmentCode(result.developmentCode)
+          setDevelopmentCode(result.developmentCode ?? null)
           setNotice('Cuenta creada. Ingresá el código para activar tu cuenta.')
         } else {
           complete(await api.login({ email, password: String(data.get('password')) }))

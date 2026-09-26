@@ -80,15 +80,15 @@ public class CartController : ApiControllerBase
     }
 
     [HttpPut("items/{productId:int}")]
-    public async Task<ActionResult<CartResponse>> UpdateItem(int productId, UpdateCartItemRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<CartResponse>> UpdateItem(int productId, [FromQuery] int? productVariantId, UpdateCartItemRequest request, CancellationToken cancellationToken)
     {
-        return FromResult(await _updateCartItem.ExecuteAsync(_currentUser.UserId, productId, request, cancellationToken));
+        return FromResult(await _updateCartItem.ExecuteAsync(_currentUser.UserId, productId, productVariantId, request, cancellationToken));
     }
 
     [HttpDelete("items/{productId:int}")]
-    public async Task<ActionResult<CartResponse>> RemoveItem(int productId, CancellationToken cancellationToken)
+    public async Task<ActionResult<CartResponse>> RemoveItem(int productId, [FromQuery] int? productVariantId, CancellationToken cancellationToken)
     {
-        return FromResult(await _removeCartItem.ExecuteAsync(_currentUser.UserId, productId, cancellationToken));
+        return FromResult(await _removeCartItem.ExecuteAsync(_currentUser.UserId, productId, productVariantId, cancellationToken));
     }
 
     [HttpDelete]

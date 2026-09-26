@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using GymShop.Application.Common;
+using System.Text.Json.Serialization;
 
 namespace GymShop.Application.DTOs.Auth;
 
@@ -9,7 +10,10 @@ public record RegisterRequest(
     [Required, EmailAddress, StringLength(ValidationLimits.Email)] string Email,
     [Required, StrongPassword] string Password);
 
-public record RegistrationPendingResponse(string Email, int ExpiresInSeconds, string? DevelopmentCode);
+public record RegistrationPendingResponse(
+    string Email,
+    int ExpiresInSeconds,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DevelopmentCode);
 
 public record VerifyEmailRequest(
     [Required, EmailAddress, StringLength(ValidationLimits.Email)] string Email,
@@ -27,7 +31,10 @@ public record LoginRequest(
 public record RequestPasswordResetRequest(
     [Required, EmailAddress, StringLength(ValidationLimits.Email)] string Email);
 
-public record PasswordResetPendingResponse(string Message, int ExpiresInSeconds, string? DevelopmentCode);
+public record PasswordResetPendingResponse(
+    string Message,
+    int ExpiresInSeconds,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DevelopmentCode);
 
 public record ConfirmPasswordResetRequest(
     [Required, EmailAddress, StringLength(ValidationLimits.Email)] string Email,

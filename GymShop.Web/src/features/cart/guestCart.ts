@@ -1,4 +1,4 @@
-import type { CartItem, Product } from '../../api/types'
+import type { CartItem, Product, ProductVariant } from '../../api/types'
 
 const CART_KEY = 'gymshop.guest-cart.v1'
 const MERGE_KEY = 'gymshop.cart-merge.v1'
@@ -7,6 +7,7 @@ export type GuestCartItem = CartItem
 
 export interface MergePlanItem {
   productId: number
+  productVariantId?: number | null
   productName: string
   guestQuantity: number
   targetQuantity: number
@@ -29,20 +30,23 @@ function readJson<T>(key: string, fallback: T): T {
 export const guestCartStore = {
   read: () => readJson<GuestCartItem[]>(CART_KEY, []),
   write: (items: GuestCartItem[]) => localStorage.setItem(CART_KEY, JSON.stringify(items)),
-  remove: (productId: number) => {
-    const items = guestCartStore.read().filter(item => item.productId !== productId)
+  remove: (productId: number, productVariantId?: number | null) => {
+    const items = guestCartStore.read().filter(item => !(item.productId === productId && (item.productVariantId ?? null) === (productVariantId ?? null)))
     guestCartStore.write(items)
     return items
   },
   clear: () => localStorage.removeItem(CART_KEY),
-  fromProduct: (product: Product, quantity: number): GuestCartItem => ({
+  fromProduct: (product: Product, quantity: number, variant?: ProductVariant): GuestCartItem => ({
     productId: product.id,
     productName: product.name,
-    unitPrice: product.price,
+    unitPrice: variant?.price ?? product.price,
     quantity,
-    subtotal: product.price * quantity,
-    stock: product.stock,
+    subtotal: (variant?.price ?? product.price) * quantity,
+    stock: variant?.stock ?? product.stock,
     imageUrl: product.imageUrl,
+    productVariantId: variant?.id ?? null,
+    variantSku: variant?.sku ?? null,
+    variantAttributes: variant?.attributes ?? null,
   }),
 }
 

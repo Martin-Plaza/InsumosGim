@@ -29,7 +29,6 @@ public record OrderResponse(
     int UserId,
     string? UserEmail,
     string UserName,
-    string? UserPhone,
     DateTime CreatedAt,
     decimal Subtotal,
     string? CouponCode,
@@ -89,7 +88,10 @@ public record OrderItemResponse(
     string ProductName,
     decimal UnitPrice,
     int Quantity,
-    decimal Subtotal
+    decimal Subtotal,
+    int? ProductVariantId = null,
+    string? VariantSku = null,
+    Dictionary<string, string>? VariantAttributes = null
 );
 
 public record OrderPaymentResponse(

@@ -251,6 +251,7 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             .Include(x => x.User)
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Items).ThenInclude(x => x.ProductVariant)
             .Include(x => x.Payments)
             .Include(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -309,6 +310,7 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
         var orders = await _db.Orders
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Items).ThenInclude(x => x.ProductVariant)
             .Include(x => x.Payments)
             .Include(x => x.CouponRedemption)
             .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff)
@@ -350,11 +352,12 @@ internal static class OrderCompensation
 
         foreach (var item in order.Items)
         {
-            var previousStock = item.Product.Stock;
-            item.Product.Stock += item.Quantity;
+            var previousStock = item.ProductVariant?.Stock ?? item.Product.Stock;
+            if (item.ProductVariant is not null) item.ProductVariant.Stock += item.Quantity;
+            else item.Product.Stock += item.Quantity;
             item.Product.UpdatedAt = DateTime.UtcNow;
             StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
-                previousStock, reason, actorUserId, order);
+                previousStock, reason, actorUserId, order, item.ProductVariant);
         }
 
         CouponRedemptionLifecycle.Release(order);
@@ -377,11 +380,12 @@ internal static class OrderCompensation
         {
             foreach (var item in order.Items)
             {
-                var previousStock = item.Product.Stock;
-                item.Product.Stock += item.Quantity;
+                var previousStock = item.ProductVariant?.Stock ?? item.Product.Stock;
+                if (item.ProductVariant is not null) item.ProductVariant.Stock += item.Quantity;
+                else item.Product.Stock += item.Quantity;
                 item.Product.UpdatedAt = DateTime.UtcNow;
                 StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
-                    previousStock, reason, actorUserId, order);
+                    previousStock, reason, actorUserId, order, item.ProductVariant);
             }
         }
 
@@ -410,6 +414,7 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
         var order = await _db.Orders
             .Include(x => x.Items)
             .ThenInclude(x => x.Product)
+            .Include(x => x.Items).ThenInclude(x => x.ProductVariant)
             .Include(x => x.Payments)
             .Include(x => x.CouponRedemption)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -531,7 +536,6 @@ internal static class OrderMapper
             order.UserId,
             order.User.Email,
             $"{order.User.Name} {order.User.LastName}".Trim(),
-            order.User.Phone,
             order.CreatedAt,
             order.Subtotal,
             order.CouponCode,
@@ -551,7 +555,8 @@ internal static class OrderMapper
             order.UpdatedAt,
             order.Items
                 .OrderBy(x => x.Id)
-                .Select(x => new OrderItemResponse(x.ProductId, x.ProductName, x.UnitPrice, x.Quantity, x.Subtotal))
+                .Select(x => new OrderItemResponse(x.ProductId, x.ProductName, x.UnitPrice, x.Quantity, x.Subtotal,
+                    x.ProductVariantId, x.VariantSku, string.IsNullOrWhiteSpace(x.VariantAttributesJson) ? null : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(x.VariantAttributesJson)))
                 .ToList(),
             order.Payments
                 .OrderByDescending(x => x.Id)

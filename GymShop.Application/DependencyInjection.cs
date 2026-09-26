@@ -10,6 +10,7 @@ using GymShop.Application.UseCases.Products;
 using GymShop.Application.UseCases.Stock;
 using GymShop.Application.UseCases.Users;
 using GymShop.Application.UseCases.Coupons;
+using GymShop.Application.UseCases.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GymShop.Application;
@@ -32,6 +33,7 @@ public static class DependencyInjection
         services.AddScoped<IGetDashboardStatisticsUseCase, GetDashboardStatisticsUseCase>();
 
         services.AddScoped<IGetProductsUseCase, GetProductsUseCase>();
+        services.AddScoped<IAttributeAdminService, AttributeAdminService>();
         services.AddScoped<IGetCategoriesUseCase, GetCategoriesUseCase>();
         services.AddScoped<IGetAdminCategoriesUseCase, GetAdminCategoriesUseCase>();
         services.AddScoped<IGetAdminCategoryByIdUseCase, GetAdminCategoryByIdUseCase>();

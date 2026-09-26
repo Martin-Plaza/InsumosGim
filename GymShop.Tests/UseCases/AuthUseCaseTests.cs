@@ -180,7 +180,7 @@ public class AuthUseCaseTests
     }
 
     private static RegisterUserUseCase Register(IApplicationDbContext db, FakeSender sender) => new(db, new PasswordHasher(), sender, TimeProvider.System);
-    private sealed class FakeSender : IVerificationEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
-    private sealed class FakePasswordResetSender : IPasswordResetEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
+    private sealed class FakeSender : IVerificationEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
+    private sealed class FakePasswordResetSender : IPasswordResetEmailSender { public string? Code { get; private set; } public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default) { Code = code; return Task.FromResult<string?>(code); } }
     private sealed class FakeExternalVerifier(ExternalIdentity? identity) : IExternalIdentityVerifier { public Task<ExternalIdentity?> VerifyGoogleAsync(string credential, CancellationToken cancellationToken = default) => Task.FromResult(identity); }
 }

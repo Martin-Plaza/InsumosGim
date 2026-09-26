@@ -14,6 +14,11 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+    public DbSet<ProductVariantAttribute> ProductVariantAttributes => Set<ProductVariantAttribute>();
+    public DbSet<ProductColorImage> ProductColorImages => Set<ProductColorImage>();
+    public DbSet<ProductAttribute> ProductAttributes => Set<ProductAttribute>();
+    public DbSet<ProductAttributeOption> ProductAttributeOptions => Set<ProductAttributeOption>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
@@ -67,8 +72,14 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(x => new { x.ProductId, x.CreatedAtUtc, x.Id });
             entity.HasIndex(x => new { x.OrderId, x.ProductId, x.Type })
                 .IsUnique()
-                .HasFilter("\"OrderId\" IS NOT NULL");
+                .HasDatabaseName("UX_StockMovements_Order_Product_Simple_Type")
+                .HasFilter("\"OrderId\" IS NOT NULL AND \"ProductVariantId\" IS NULL");
+            entity.HasIndex(x => new { x.OrderId, x.ProductId, x.ProductVariantId, x.Type })
+                .IsUnique()
+                .HasDatabaseName("UX_StockMovements_Order_Product_Variant_Type")
+                .HasFilter("\"OrderId\" IS NOT NULL AND \"ProductVariantId\" IS NOT NULL");
             entity.HasOne(x => x.Product).WithMany(x => x.StockMovements).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ProductVariant).WithMany(x => x.StockMovements).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -175,6 +186,57 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
+        modelBuilder.Entity<ProductVariant>(entity =>
+        {
+            entity.ToTable("ProductVariants", table => table.HasCheckConstraint("CK_ProductVariants_Stock_NonNegative", "\"Stock\" >= 0"));
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Sku).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Price).HasPrecision(18, 2);
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => x.Sku).IsUnique();
+            entity.HasIndex(x => new { x.ProductId, x.IsActive });
+            entity.HasOne(x => x.Product).WithMany(x => x.Variants).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProductVariantAttribute>(entity =>
+        {
+            entity.ToTable("ProductVariantAttributes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(60).IsRequired();
+            entity.Property(x => x.Value).HasMaxLength(100).IsRequired();
+            entity.HasIndex(x => new { x.ProductVariantId, x.Name }).IsUnique();
+            entity.HasOne(x => x.ProductVariant).WithMany(x => x.Attributes).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.ProductAttributeOption).WithMany(x => x.VariantAttributes).HasForeignKey(x => x.ProductAttributeOptionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ProductAttribute>(entity =>
+        {
+            entity.ToTable("ProductAttributes"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Presentation).HasMaxLength(30).IsRequired();
+            entity.HasIndex(x => x.Name).IsUnique();
+        });
+        modelBuilder.Entity<ProductAttributeOption>(entity =>
+        {
+            entity.ToTable("ProductAttributeOptions"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.Value).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.VisualValue).HasMaxLength(100);
+            entity.HasIndex(x => new { x.ProductAttributeId, x.Value }).IsUnique();
+            entity.HasOne(x => x.ProductAttribute).WithMany(x => x.Options).HasForeignKey(x => x.ProductAttributeId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ProductColorImage>(entity =>
+        {
+            entity.ToTable("ProductColorImages");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Color).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.ImageUrl).HasMaxLength(500).IsRequired();
+            entity.HasIndex(x => new { x.ProductId, x.Color }).IsUnique();
+            entity.HasOne(x => x.Product).WithMany(x => x.ColorImages).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.ProductAttributeOption).WithMany(x => x.ColorImages).HasForeignKey(x => x.ProductAttributeOptionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => new { x.ProductId, x.ProductAttributeOptionId }).IsUnique().HasFilter("\"ProductAttributeOptionId\" IS NOT NULL");
+        });
+
         modelBuilder.Entity<Order>(entity =>
         {
             entity.ToTable("Orders");
@@ -268,7 +330,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.HasIndex(x => new { x.CartId, x.ProductId }).IsUnique();
+            entity.HasIndex(x => new { x.CartId, x.ProductId }).IsUnique().HasFilter("\"ProductVariantId\" IS NULL");
+            entity.HasIndex(x => new { x.CartId, x.ProductId, x.ProductVariantId }).IsUnique().HasFilter("\"ProductVariantId\" IS NOT NULL");
 
             entity
                 .HasOne(x => x.Cart)
@@ -281,6 +344,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .WithMany(x => x.CartItems)
                 .HasForeignKey(x => x.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ProductVariant).WithMany(x => x.CartItems).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.Restrict);
         });
 
 
@@ -328,6 +392,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.ProductName).HasMaxLength(150).IsRequired();
+            entity.Property(x => x.VariantSku).HasMaxLength(100);
+            entity.Property(x => x.VariantAttributesJson).HasColumnType("jsonb");
             entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
             entity.Property(x => x.Subtotal).HasPrecision(18, 2);
 
@@ -342,6 +408,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .WithMany(x => x.OrderItems)
                 .HasForeignKey(x => x.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ProductVariant).WithMany(x => x.OrderItems).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

@@ -178,7 +178,7 @@ public class ProductUseCaseTests
         await db.SaveChangesAsync();
         var auditContext = new FakeAuditContext(actor.Id, "corr-product");
 
-        var stock = await new AdjustStockUseCase(db, auditContext).ExecuteAsync(product.Id, new ManualStockAdjustmentRequest("ManualEntry", 3, "Reposición"));
+        var stock = await new AdjustStockUseCase(db, auditContext).ExecuteAsync(product.Id, new ManualStockAdjustmentRequest(3, "Reposición"));
         var status = await new UpdateProductStatusUseCase(db, auditContext).ExecuteAsync(product.Id, new UpdateProductStatusRequest(false));
 
         Assert.True(stock.IsSuccess);
@@ -193,7 +193,7 @@ public class ProductUseCaseTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var result = await new AdjustStockUseCase(db, new FakeAuditContext(1, "corr-failed"))
-            .ExecuteAsync(999999, new ManualStockAdjustmentRequest("ManualEntry", 4, "Reposición"));
+            .ExecuteAsync(999999, new ManualStockAdjustmentRequest(4, "Reposición"));
 
         Assert.False(result.IsSuccess);
         Assert.Empty(db.AuditEntries);

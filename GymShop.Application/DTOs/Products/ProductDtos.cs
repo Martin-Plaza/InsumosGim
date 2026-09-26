@@ -11,8 +11,17 @@ public record ProductResponse(
     int Stock,
     string? ImageUrl,
     bool IsActive,
-    CategorySummaryResponse? Category
+    CategorySummaryResponse? Category,
+    List<ProductVariantResponse>? Variants = null,
+    Dictionary<string, string>? ColorImages = null,
+    List<ProductAttributeSelectionResponse>? ProductAttributes = null
 );
+
+public record ProductAttributeOptionSelectionResponse(int Id, string Value, string? VisualValue, int DisplayOrder);
+public record ProductAttributeSelectionResponse(int Id, string Name, string Presentation, int DisplayOrder, List<ProductAttributeOptionSelectionResponse> Options);
+public record ProductVariantResponse(int Id, string Sku, decimal Price, int Stock, bool IsActive, Dictionary<string, string> Attributes, List<int>? OptionIds = null);
+public record ProductVariantInput(int? Id, [Required, StringLength(100)] string Sku, [SqlDecimal] decimal? Price,
+    [Range(0, int.MaxValue)] int Stock, bool IsActive, Dictionary<string, string>? Attributes = null, List<int>? OptionIds = null);
 
 public record CategorySummaryResponse(int Id, string Name, string Slug);
 
@@ -32,7 +41,9 @@ public record CreateProductRequest(
     [SqlDecimal] decimal Price,
     [Range(0, int.MaxValue)] int Stock,
     [Required(ErrorMessage = "Agregá una imagen o su URL."), StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
-    int? CategoryId = null
+    int? CategoryId = null,
+    List<ProductVariantInput>? Variants = null,
+    Dictionary<string, string>? ColorImages = null
 );
 
 public record UpdateProductRequest(
@@ -41,7 +52,9 @@ public record UpdateProductRequest(
     [SqlDecimal] decimal Price,
     [StringLength(ValidationLimits.ImageUrl), ProductImageUrl] string? ImageUrl,
     bool IsActive,
-    int? CategoryId = null
+    int? CategoryId = null,
+    List<ProductVariantInput>? Variants = null,
+    Dictionary<string, string>? ColorImages = null
 );
 
 public record UpdateProductStatusRequest(bool IsActive);

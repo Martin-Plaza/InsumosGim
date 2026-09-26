@@ -65,7 +65,10 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
                 ["Jwt:ExpirationMinutes"] = "60",
                 ["RateLimiting:Enabled"] = "false",
                 ["MercadoPago:Enabled"] = "false",
-                ["ReverseProxy:Enabled"] = "false"
+                ["ReverseProxy:Enabled"] = "false",
+                ["Email:Provider"] = "Resend",
+                ["Email:ApiKey"] = "test-api-key",
+                ["Email:FromAddress"] = "test@gymshop.invalid"
             };
             foreach (var item in _overrides) values[item.Key] = item.Value;
             configuration.AddInMemoryCollection(values);

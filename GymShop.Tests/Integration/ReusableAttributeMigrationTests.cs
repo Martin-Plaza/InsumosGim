@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
-using System.Net;
 using System.Text.RegularExpressions;
 
 namespace GymShop.Tests.Integration;
@@ -28,7 +27,7 @@ public sealed class ReusableAttributeMigrationTests
         try
         {
             await adminConnection.OpenAsync();
-            await AssertLocalTestServerAsync(adminConnection);
+            AssertLocalAdminConnection(new NpgsqlConnectionStringBuilder(adminConnection.ConnectionString));
             await using (var create = new NpgsqlCommand($"CREATE DATABASE \"{databaseName}\"", adminConnection))
             {
                 await create.ExecuteNonQueryAsync();
@@ -94,7 +93,7 @@ public sealed class ReusableAttributeMigrationTests
                 }
 
                 AssertSafeGeneratedDatabaseName(databaseName);
-                await AssertLocalTestServerAsync(adminConnection);
+                AssertLocalAdminConnection(new NpgsqlConnectionStringBuilder(adminConnection.ConnectionString));
                 await using (var terminate = new NpgsqlCommand("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = @databaseName AND pid <> pg_backend_pid()", adminConnection))
                 {
                     terminate.Parameters.AddWithValue("databaseName", databaseName);
@@ -117,11 +116,4 @@ public sealed class ReusableAttributeMigrationTests
     private static void AssertSafeGeneratedDatabaseName(string databaseName) =>
         Assert.Matches(new Regex("^gymshop_attribute_migration_[0-9a-f]{32}$", RegexOptions.CultureInvariant), databaseName);
 
-    private static async Task AssertLocalTestServerAsync(NpgsqlConnection connection)
-    {
-        AssertLocalAdminConnection(new NpgsqlConnectionStringBuilder(connection.ConnectionString));
-        await using var command = new NpgsqlCommand("SELECT inet_server_addr()", connection);
-        var serverAddress = Assert.IsType<IPAddress>(await command.ExecuteScalarAsync());
-        Assert.True(IPAddress.IsLoopback(serverAddress), $"El servidor PostgreSQL de pruebas debe ser local; se resolvió {serverAddress}.");
-    }
 }

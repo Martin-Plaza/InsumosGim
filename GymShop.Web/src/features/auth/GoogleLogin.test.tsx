@@ -7,6 +7,7 @@ const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.
   status,
   headers: { 'Content-Type': 'application/json' },
 }))
+const emptyCart = { items: [], subtotal: 0, discount: 0, total: 0, couponCode: null }
 
 function installGoogle(clientId: string) {
   vi.stubEnv('VITE_GOOGLE_CLIENT_ID', clientId)
@@ -42,9 +43,11 @@ describe('inicio de sesión con Google', () => {
 
   it('completa el acceso y conserva el rol devuelto por la API', async () => {
     const respond = installGoogle('success-client.apps.googleusercontent.com')
-    vi.spyOn(globalThis, 'fetch').mockImplementation(input => String(input).includes('/auth/google')
-      ? json({ token: 'google-jwt', user: { id: 10, email: 'new@test.com', name: 'Nueva', role: 'User' } })
-      : json([]))
+    vi.spyOn(globalThis, 'fetch').mockImplementation(input => {
+      const url = String(input)
+      if (url.includes('/auth/google')) return json({ token: 'google-jwt', user: { id: 10, email: 'new@test.com', name: 'Nueva', role: 'User' } })
+      return url.includes('/cart') ? json(emptyCart) : json([])
+    })
     await openLogin()
 
     respond({ credential: 'valid-google-id-token' })
@@ -90,7 +93,7 @@ describe('inicio de sesión con Google', () => {
           : json({ message: 'Se requiere vinculación.', code: 'google_link_required' }, 409)
       }
       if (url.includes('/auth/login')) return json({ token: 'local-jwt', user: { id: 12, email: 'member@example.com', name: 'Member', role: 'User' } })
-      return json([])
+      return url.includes('/cart') ? json(emptyCart) : json([])
     })
     await openLogin()
 

@@ -77,6 +77,33 @@ describe('inicio de sesión con Google', () => {
     expect(localStorage.getItem('gymshop.token')).toBeNull()
   })
 
+  it('vincula un email externo después de validar la contraseña local una sola vez', async () => {
+    const respond = installGoogle('link-client.apps.googleusercontent.com')
+    const googleRequests: RequestInit[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/auth/google')) {
+        googleRequests.push(init ?? {})
+        const authorization = new Headers(init?.headers).get('Authorization')
+        return authorization === 'Bearer local-jwt'
+          ? json({ token: 'linked-jwt', user: { id: 12, email: 'member@example.com', name: 'Member', role: 'User' } })
+          : json({ message: 'Se requiere vinculación.', code: 'google_link_required' }, 409)
+      }
+      if (url.includes('/auth/login')) return json({ token: 'local-jwt', user: { id: 12, email: 'member@example.com', name: 'Member', role: 'User' } })
+      return json([])
+    })
+    await openLogin()
+
+    respond({ credential: 'external-email-google-token' })
+    expect(await screen.findByRole('status')).toHaveTextContent('Ingresá su contraseña una única vez')
+    await userEvent.type(screen.getByLabelText('Email'), 'member@example.com')
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'clave123')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Ingresar' }).at(-1)!)
+
+    await waitFor(() => expect(localStorage.getItem('gymshop.token')).toBe('linked-jwt'))
+    expect(googleRequests).toHaveLength(2)
+  })
+
   it('explica cómo habilitar Google cuando falta la configuración', async () => {
     vi.stubEnv('VITE_GOOGLE_CLIENT_ID', '')
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))

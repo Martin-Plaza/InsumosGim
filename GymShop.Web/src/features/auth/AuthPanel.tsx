@@ -3,6 +3,7 @@ import { api } from '../../api/gymshop'
 import type { AuthResponse } from '../../api/types'
 import { storefront } from '../../config/storefront'
 import { authErrorMessage } from './authMessages'
+import { ApiError } from '../../api/client'
 import {
   clearPendingRegistration,
   loadPendingRegistration,
@@ -39,6 +40,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
   const busyRef = useRef(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState(() => pending ? 'Retomamos tu verificación pendiente.' : '')
+  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null)
   const googleButton = useRef<HTMLDivElement>(null)
   const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID && !import.meta.env.VITE_GOOGLE_CLIENT_ID.startsWith('<'))
 
@@ -92,7 +94,18 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
             setNotice('Cancelaste el acceso con Google. Podés intentarlo nuevamente o ingresar con email y contraseña.')
             return
           }
-          void execute(async () => complete(await api.googleLogin(credential)))
+          void execute(async () => {
+            try {
+              complete(await api.googleLogin(credential))
+            } catch (value) {
+              if (value instanceof ApiError && value.code === 'google_link_required') {
+                setPendingGoogleCredential(credential)
+                setNotice('Tu email ya tiene una cuenta. Ingresá su contraseña una única vez para vincular Google.')
+                return
+              }
+              throw value
+            }
+          })
         }
         if (initializedGoogleClientId !== clientId) {
           window.google.accounts.id.initialize({
@@ -204,7 +217,12 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
           setDevelopmentCode(result.developmentCode ?? null)
           setNotice('Cuenta creada. Solicitamos el envío del código para activarla.')
         } else {
-          complete(await api.login({ email, password: String(data.get('password')) }))
+          const localAuth = await api.login({ email, password: String(data.get('password')) })
+          if (pendingGoogleCredential) {
+            complete(await api.googleLogin(pendingGoogleCredential, localAuth.token))
+          } else {
+            complete(localAuth)
+          }
         }
       })
     }}>

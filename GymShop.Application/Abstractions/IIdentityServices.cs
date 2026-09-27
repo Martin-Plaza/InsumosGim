@@ -29,7 +29,14 @@ public interface IPasswordResetEmailSender
     Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
 }
 
-public sealed record ExternalIdentity(string Provider, string Subject, string Email, bool EmailVerified, string FirstName, string? LastName);
+public sealed record ExternalIdentity(
+    string Provider,
+    string Subject,
+    string Email,
+    bool EmailVerified,
+    string FirstName,
+    string? LastName,
+    bool EmailAuthoritative = false);
 
 public interface IExternalIdentityVerifier
 {

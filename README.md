@@ -300,7 +300,7 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Flujo esperado:** se verifica criptograficamente la identidad externa; se reutiliza el vinculo existente por `sub`; si no existe usuario se crea uno activo con rol `User`; finalmente se emite un JWT.
 
-**Reglas de negocio:** una cuenta inactiva no puede ingresar; una coincidencia de email nunca vincula por si sola una cuenta local; la vinculacion exige una sesion local valida del mismo usuario y el mismo email; el email de una cuenta nueva se considera verificado por Google.
+**Reglas de negocio:** una cuenta inactiva no puede ingresar; Gmail y Google Workspace pueden vincular por email porque Google es autoridad sobre esas direcciones; otros dominios exigen una sesion local valida del mismo usuario y el mismo email; el email de una cuenta nueva se considera verificado por Google.
 
 **Resultado:** devuelve el JWT y los datos del usuario.
 
@@ -1177,7 +1177,7 @@ GoogleAuth__ClientId=<GOOGLE_CLIENT_ID_PUBLICO>
 VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
 ```
 
-El backend valida firma, emisor, audiencia y vencimiento con la biblioteca oficial `Google.Apis.Auth`, exige `email_verified=true` y reconoce el vinculo por el identificador estable `sub`. `tokeninfo` no participa del flujo productivo. Si el email ya pertenece a una cuenta manual, responde `409 google_link_required`: para vincularla hay que repetir el mismo `POST /api/auth/google` con el JWT local vigente en `Authorization: Bearer`, y el email de Google debe coincidir. La vinculacion conserva el rol, estado y version de sesion; una cuenta nueva siempre nace con rol `User`. No se usa ni se expone un Client Secret en el navegador.
+El backend valida firma, emisor, audiencia y vencimiento con la biblioteca oficial `Google.Apis.Auth`, exige `email_verified=true` y reconoce el vinculo por el identificador estable `sub`. `tokeninfo` no participa del flujo productivo. Si una cuenta manual usa Gmail o un dominio Google Workspace confirmado mediante `hd`, el primer acceso vincula la identidad automáticamente. Para otros proveedores responde `409 google_link_required`; el frontend conserva temporalmente la credencial, solicita la contraseña local una única vez y repite el mismo `POST /api/auth/google` con el JWT local. La vinculacion conserva contraseña, rol, estado y version de sesion; una cuenta nueva siempre nace con rol `User` y puede establecer una contraseña mediante recuperación. No se usa ni se expone un Client Secret en el navegador.
 
 La API no accede directamente a la persistencia. La logica se concentra en casos de uso de Application, con EF Core y servicios externos implementados en Infrastructure.
 

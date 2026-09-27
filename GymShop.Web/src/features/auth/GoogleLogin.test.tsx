@@ -7,6 +7,7 @@ const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.
   status,
   headers: { 'Content-Type': 'application/json' },
 }))
+const emptyCart = { items: [], subtotal: 0, discount: 0, total: 0, couponCode: null }
 
 function installGoogle(clientId: string) {
   vi.stubEnv('VITE_GOOGLE_CLIENT_ID', clientId)
@@ -42,9 +43,11 @@ describe('inicio de sesión con Google', () => {
 
   it('completa el acceso y conserva el rol devuelto por la API', async () => {
     const respond = installGoogle('success-client.apps.googleusercontent.com')
-    vi.spyOn(globalThis, 'fetch').mockImplementation(input => String(input).includes('/auth/google')
-      ? json({ token: 'google-jwt', user: { id: 10, email: 'new@test.com', name: 'Nueva', role: 'User' } })
-      : json([]))
+    vi.spyOn(globalThis, 'fetch').mockImplementation(input => {
+      const url = String(input)
+      if (url.includes('/auth/google')) return json({ token: 'google-jwt', user: { id: 10, email: 'new@test.com', name: 'Nueva', role: 'User' } })
+      return url.includes('/cart') ? json(emptyCart) : json([])
+    })
     await openLogin()
 
     respond({ credential: 'valid-google-id-token' })
@@ -75,6 +78,33 @@ describe('inicio de sesión con Google', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('La credencial de Google no es valida.')
     expect(localStorage.getItem('gymshop.token')).toBeNull()
+  })
+
+  it('vincula un email externo después de validar la contraseña local una sola vez', async () => {
+    const respond = installGoogle('link-client.apps.googleusercontent.com')
+    const googleRequests: RequestInit[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/auth/google')) {
+        googleRequests.push(init ?? {})
+        const authorization = new Headers(init?.headers).get('Authorization')
+        return authorization === 'Bearer local-jwt'
+          ? json({ token: 'linked-jwt', user: { id: 12, email: 'member@example.com', name: 'Member', role: 'User' } })
+          : json({ message: 'Se requiere vinculación.', code: 'google_link_required' }, 409)
+      }
+      if (url.includes('/auth/login')) return json({ token: 'local-jwt', user: { id: 12, email: 'member@example.com', name: 'Member', role: 'User' } })
+      return url.includes('/cart') ? json(emptyCart) : json([])
+    })
+    await openLogin()
+
+    respond({ credential: 'external-email-google-token' })
+    expect(await screen.findByRole('status')).toHaveTextContent('Ingresá su contraseña una única vez')
+    await userEvent.type(screen.getByLabelText('Email'), 'member@example.com')
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'clave123')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Ingresar' }).at(-1)!)
+
+    await waitFor(() => expect(localStorage.getItem('gymshop.token')).toBe('linked-jwt'))
+    expect(googleRequests).toHaveLength(2)
   })
 
   it('explica cómo habilitar Google cuando falta la configuración', async () => {

@@ -161,6 +161,19 @@ public class AuthUseCaseTests
     }
 
     [Fact]
+    public async Task Google_login_automatically_links_existing_account_when_google_is_email_authority()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync(); var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "cliente@gmail.com", "clave123");
+        var verifier = new FakeExternalVerifier(new ExternalIdentity("Google", "gmail-subject", "CLIENTE@GMAIL.COM", true, "Cliente", null, true));
+
+        var result = await new GoogleLoginUseCase(db, verifier, new FakeJwtTokenService(), TimeProvider.System).ExecuteAsync(new GoogleLoginRequest("credential"));
+
+        Assert.True(result.IsSuccess); Assert.Equal(user.Id, result.Value!.User.Id); Assert.Single(db.Users); Assert.Single(db.UserExternalLogins);
+        Assert.True(hasher.Verify("clave123", db.Users.Single().PasswordHash));
+    }
+
+    [Fact]
     public async Task Google_login_rejects_deactivated_linked_account()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

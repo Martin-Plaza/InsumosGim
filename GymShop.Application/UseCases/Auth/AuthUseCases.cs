@@ -157,7 +157,7 @@ public sealed class GoogleLoginUseCase : IGoogleLoginUseCase
             _db.Users.Add(user);
         }
         else if (!user.IsActive) return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "La cuenta no esta activa.");
-        else if (linkingUserId is null)
+        else if (linkingUserId is null && !identity.EmailAuthoritative)
             return AppResult<AuthResponse>.Failure(AppErrorType.Conflict, "Ya existe una cuenta con ese email. Inicia sesion con tu password para vincular Google de forma segura.", "google_link_required");
         else if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
             return AppResult<AuthResponse>.Failure(AppErrorType.Conflict, "La cuenta de Google debe usar el mismo email que tu cuenta local.", "google_email_mismatch");

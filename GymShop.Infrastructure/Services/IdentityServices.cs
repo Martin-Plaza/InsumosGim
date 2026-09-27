@@ -96,7 +96,16 @@ public sealed class GoogleIdentityVerifier(IConfiguration configuration) : IExte
             });
             cancellationToken.ThrowIfCancellationRequested();
             if (!token.EmailVerified || string.IsNullOrWhiteSpace(token.Subject) || string.IsNullOrWhiteSpace(token.Email)) return null;
-            return new ExternalIdentity("Google", token.Subject, token.Email, true, token.GivenName ?? token.Email.Split('@')[0], token.FamilyName);
+            var emailAuthoritative = token.Email.EndsWith("@gmail.com", StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrWhiteSpace(token.HostedDomain);
+            return new ExternalIdentity(
+                "Google",
+                token.Subject,
+                token.Email,
+                true,
+                token.GivenName ?? token.Email.Split('@')[0],
+                token.FamilyName,
+                emailAuthoritative);
         }
         catch (InvalidJwtException)
         {

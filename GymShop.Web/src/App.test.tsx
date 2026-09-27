@@ -85,6 +85,25 @@ describe('flujos y permisos de la aplicación', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Nueva')
   })
 
+  it('mantiene el formulario de registro disponible si falla la solicitud de email', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/auth/register')
+      ? json({ message: 'No pudimos solicitar el envío del código. Intentá nuevamente.', code: 'email_send_failed' }, 503)
+      : json([]))
+    render(<App />)
+    await userEvent.click(screen.getByRole('link', { name: 'Ingresar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Quiero registrarme' }))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nueva')
+    await userEvent.type(screen.getByLabelText('Apellido'), 'Persona')
+    await userEvent.type(screen.getByLabelText('Email'), 'retry@gym.com')
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'Clave1234')
+    await userEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos solicitar el envío del código')
+    expect(screen.getByRole('button', { name: 'Crear cuenta' })).toBeEnabled()
+    expect(screen.getByLabelText('Email')).toHaveValue('retry@gym.com')
+    expect(localStorage.getItem('gymshop.pending-registration')).toBeNull()
+  })
+
   it('retoma una verificación pendiente después de volver a abrir el frontend', async () => {
     localStorage.setItem('gymshop.pending-registration', JSON.stringify({ email: 'pendiente@gym.com', expiresAt: Date.now() + 60_000 }))
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))

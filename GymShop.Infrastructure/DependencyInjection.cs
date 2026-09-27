@@ -55,7 +55,7 @@ public static class DependencyInjection
             services.AddScoped<IVerificationEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
             services.AddScoped<IPasswordResetEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
         }
-        services.AddHttpClient<IExternalIdentityVerifier, GoogleIdentityVerifier>(client => client.BaseAddress = new Uri("https://oauth2.googleapis.com/"));
+        services.AddScoped<IExternalIdentityVerifier>(_ => new GoogleIdentityVerifier(configuration));
         services.AddScoped<IPaymentGateway, MockPaymentGateway>();
         services.AddHttpClient<IPaymentGateway, MercadoPagoPaymentGateway>(client =>
         {

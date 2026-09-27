@@ -79,10 +79,10 @@ public sealed class PasswordResetHttpTests
     {
         public string? Code { get; private set; }
 
-        public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
+        public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
         {
             if (deliver) Code = code;
-            return Task.FromResult<string?>(null);
+            return Task.FromResult(EmailSendResult.Accepted());
         }
     }
 
@@ -90,10 +90,10 @@ public sealed class PasswordResetHttpTests
     {
         public string? Code { get; private set; }
 
-        public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
+        public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
         {
             Code = code;
-            return Task.FromResult<string?>(null);
+            return Task.FromResult(EmailSendResult.Accepted());
         }
     }
 }

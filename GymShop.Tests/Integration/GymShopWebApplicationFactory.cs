@@ -135,8 +135,15 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
     public async Task<string> LoginAsync(HttpClient client, string email, string password = "clave123")
     {
         var response = await client.PostAsJsonAsync("/api/auth/login", new { email, password });
-        response.EnsureSuccessStatusCode();
-        using var json = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Login failed with {(int)response.StatusCode} ({response.StatusCode}). Response: {body}",
+                null,
+                response.StatusCode);
+        }
+        using var json = System.Text.Json.JsonDocument.Parse(body);
         return json.RootElement.GetProperty("token").GetString()!;
     }
 }

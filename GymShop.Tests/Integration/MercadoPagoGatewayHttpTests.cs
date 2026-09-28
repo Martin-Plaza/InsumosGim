@@ -30,6 +30,7 @@ public sealed class MercadoPagoGatewayHttpTests
         Assert.Equal("idem-http-1", handler.Requests.Single().Headers.GetValues("X-Idempotency-Key").Single());
         Assert.Equal("Bearer", handler.Requests.Single().Headers.Authorization?.Scheme);
         Assert.Contains("order-42-payment-99", requestBody);
+        Assert.DoesNotContain("\"payer\"", requestBody);
     }
 
     [Fact]

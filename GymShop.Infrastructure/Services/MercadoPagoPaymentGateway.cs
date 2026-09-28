@@ -41,10 +41,6 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
                 currency_id = "ARS",
                 unit_price = item.UnitPrice
             }).ToList(),
-            ["payer"] = new
-            {
-                email = order.User.Email
-            },
             ["external_reference"] = string.IsNullOrWhiteSpace(externalReference) ? $"order-{order.Id}" : externalReference
         };
 

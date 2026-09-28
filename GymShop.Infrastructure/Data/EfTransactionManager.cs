@@ -49,6 +49,33 @@ public sealed class EfTransactionManager : ITransactionManager
         catch { await transaction.DisposeAsync(); throw; }
     }
 
+    public async Task<IApplicationTransaction> BeginPasswordResetActivationTransactionAsync(int userId, CancellationToken cancellationToken = default)
+    {
+        // The test host replaces Npgsql with EF's in-memory provider while retaining
+        // relational services in its service collection, so IsRelational() is not a
+        // reliable capability check there.
+        if (_db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+            return new NoopApplicationTransaction();
+        var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // Serialize activation only for the affected account across all API instances.
+            await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(87324521, {userId})", cancellationToken);
+            return new EfApplicationTransaction(transaction);
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+    }
+
+    private sealed class NoopApplicationTransaction : IApplicationTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class EfApplicationTransaction : IApplicationTransaction
     {
         private readonly IDbContextTransaction _transaction;

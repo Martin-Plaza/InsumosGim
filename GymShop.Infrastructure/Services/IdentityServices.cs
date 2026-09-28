@@ -1,5 +1,5 @@
 using System.Net.Http.Json;
-using System.Text.Json.Serialization;
+using Google.Apis.Auth;
 using GymShop.Application.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -10,19 +10,19 @@ namespace GymShop.Infrastructure.Services;
 
 public sealed class MockVerificationEmailSender(ILogger<MockVerificationEmailSender> logger) : IVerificationEmailSender
 {
-    public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
+    public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
     {
         logger.LogInformation("Mock verification email generated for {Email}. Code: {VerificationCode}", email, code);
-        return Task.FromResult<string?>(code);
+        return Task.FromResult(EmailSendResult.Accepted(code));
     }
 }
 
 public sealed class MockPasswordResetEmailSender(ILogger<MockPasswordResetEmailSender> logger) : IPasswordResetEmailSender
 {
-    public Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
+    public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
     {
         logger.LogInformation("Mock password-reset email generated for {Email}. Code: {PasswordResetCode}", email, code);
-        return Task.FromResult<string?>(code);
+        return Task.FromResult(EmailSendResult.Accepted(code));
     }
 }
 
@@ -33,13 +33,13 @@ public sealed class ResendEmailSender(
 {
     private readonly EmailOptions _options = options.Value;
 
-    Task<string?> IVerificationEmailSender.SendAsync(string email, string code, bool deliver, CancellationToken cancellationToken) =>
-        deliver ? SendAsync(email, "Verificá tu email en GymShop", "Código de verificación", code, cancellationToken) : Task.FromResult<string?>(null);
+    Task<EmailSendResult> IVerificationEmailSender.SendAsync(string email, string code, bool deliver, CancellationToken cancellationToken) =>
+        deliver ? SendAsync(email, "verification", "Verificá tu email en GymShop", "Código de verificación", code, cancellationToken) : Task.FromResult(EmailSendResult.NotAttempted());
 
-    Task<string?> IPasswordResetEmailSender.SendAsync(string email, string code, bool deliver, CancellationToken cancellationToken) =>
-        deliver ? SendAsync(email, "Recuperá tu contraseña de GymShop", "Código de recuperación", code, cancellationToken) : Task.FromResult<string?>(null);
+    Task<EmailSendResult> IPasswordResetEmailSender.SendAsync(string email, string code, bool deliver, CancellationToken cancellationToken) =>
+        deliver ? SendAsync(email, "password-reset", "Recuperá tu contraseña de GymShop", "Código de recuperación", code, cancellationToken) : Task.FromResult(EmailSendResult.NotAttempted());
 
-    private async Task<string?> SendAsync(string email, string subject, string heading, string code, CancellationToken cancellationToken)
+    private async Task<EmailSendResult> SendAsync(string email, string purpose, string subject, string heading, string code, CancellationToken cancellationToken)
     {
         var from = string.IsNullOrWhiteSpace(_options.FromName)
             ? _options.FromAddress
@@ -57,40 +57,59 @@ public sealed class ResendEmailSender(
             using var response = await client.PostAsJsonAsync("emails", payload, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("Transactional email delivery failed with HTTP status {StatusCode}.", (int)response.StatusCode);
+                logger.LogError("Transactional email request failed. Provider {Provider}; Purpose {Purpose}; FailureType {FailureType}; StatusCode {StatusCode}.",
+                    "Resend", purpose, EmailSendFailureType.HttpRejected, (int)response.StatusCode);
+                return EmailSendResult.Failed(EmailSendFailureType.HttpRejected, (int)response.StatusCode);
             }
+
+            logger.LogInformation("Transactional email request accepted by provider. Provider {Provider}; Purpose {Purpose}; StatusCode {StatusCode}.",
+                "Resend", purpose, (int)response.StatusCode);
+            return EmailSendResult.Accepted();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            logger.LogError("Transactional email delivery timed out.");
+            logger.LogError("Transactional email request failed. Provider {Provider}; Purpose {Purpose}; FailureType {FailureType}.",
+                "Resend", purpose, EmailSendFailureType.Timeout);
+            return EmailSendResult.Failed(EmailSendFailureType.Timeout);
         }
         catch (HttpRequestException exception)
         {
-            logger.LogError(exception, "Transactional email delivery failed.");
+            logger.LogError("Transactional email request failed. Provider {Provider}; Purpose {Purpose}; FailureType {FailureType}; ExceptionType {ExceptionType}.",
+                "Resend", purpose, EmailSendFailureType.Network, exception.GetType().Name);
+            return EmailSendResult.Failed(EmailSendFailureType.Network);
         }
-
-        return null;
     }
 }
 
-public sealed class GoogleIdentityVerifier(HttpClient client, IConfiguration configuration) : IExternalIdentityVerifier
+public sealed class GoogleIdentityVerifier(IConfiguration configuration) : IExternalIdentityVerifier
 {
     public async Task<ExternalIdentity?> VerifyGoogleAsync(string credential, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(credential)) return null;
-        using var response = await client.GetAsync($"tokeninfo?id_token={Uri.EscapeDataString(credential)}", cancellationToken);
-        if (!response.IsSuccessStatusCode) return null;
-        var token = await response.Content.ReadFromJsonAsync<GoogleTokenInfo>(cancellationToken: cancellationToken);
         var clientId = configuration["GoogleAuth:ClientId"];
-        if (token is null || string.IsNullOrWhiteSpace(clientId) || token.Audience != clientId || token.EmailVerified != "true" || string.IsNullOrWhiteSpace(token.Subject) || string.IsNullOrWhiteSpace(token.Email)) return null;
-        return new ExternalIdentity("Google", token.Subject, token.Email, true, token.GivenName ?? token.Email.Split('@')[0], token.FamilyName);
-    }
+        if (string.IsNullOrWhiteSpace(credential) || string.IsNullOrWhiteSpace(clientId)) return null;
 
-    private sealed record GoogleTokenInfo(
-        [property: JsonPropertyName("aud")] string? Audience,
-        [property: JsonPropertyName("sub")] string? Subject,
-        [property: JsonPropertyName("email")] string? Email,
-        [property: JsonPropertyName("email_verified")] string? EmailVerified,
-        [property: JsonPropertyName("given_name")] string? GivenName,
-        [property: JsonPropertyName("family_name")] string? FamilyName);
+        try
+        {
+            var token = await GoogleJsonWebSignature.ValidateAsync(credential, new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = [clientId]
+            });
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!token.EmailVerified || string.IsNullOrWhiteSpace(token.Subject) || string.IsNullOrWhiteSpace(token.Email)) return null;
+            var emailAuthoritative = token.Email.EndsWith("@gmail.com", StringComparison.OrdinalIgnoreCase)
+                || !string.IsNullOrWhiteSpace(token.HostedDomain);
+            return new ExternalIdentity(
+                "Google",
+                token.Subject,
+                token.Email,
+                true,
+                token.GivenName ?? token.Email.Split('@')[0],
+                token.FamilyName,
+                emailAuthoritative);
+        }
+        catch (InvalidJwtException)
+        {
+            return null;
+        }
+    }
 }

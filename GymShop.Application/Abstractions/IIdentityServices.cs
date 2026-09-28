@@ -1,16 +1,42 @@
 namespace GymShop.Application.Abstractions;
 
+public enum EmailSendFailureType
+{
+    HttpRejected,
+    Timeout,
+    Network
+}
+
+public sealed record EmailSendResult(
+    bool AcceptedByProvider,
+    string? DevelopmentCode = null,
+    EmailSendFailureType? FailureType = null,
+    int? ProviderStatusCode = null)
+{
+    public static EmailSendResult Accepted(string? developmentCode = null) => new(true, developmentCode);
+    public static EmailSendResult Failed(EmailSendFailureType failureType, int? providerStatusCode = null) =>
+        new(false, FailureType: failureType, ProviderStatusCode: providerStatusCode);
+    public static EmailSendResult NotAttempted() => new(false);
+}
+
 public interface IVerificationEmailSender
 {
-    Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
+    Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
 }
 
 public interface IPasswordResetEmailSender
 {
-    Task<string?> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
+    Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
 }
 
-public sealed record ExternalIdentity(string Provider, string Subject, string Email, bool EmailVerified, string FirstName, string? LastName);
+public sealed record ExternalIdentity(
+    string Provider,
+    string Subject,
+    string Email,
+    bool EmailVerified,
+    string FirstName,
+    string? LastName,
+    bool EmailAuthoritative = false);
 
 public interface IExternalIdentityVerifier
 {

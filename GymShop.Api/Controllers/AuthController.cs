@@ -5,6 +5,7 @@ using GymShop.Api.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Security.Claims;
 
 namespace GymShop.Api.Controllers;
 
@@ -81,8 +82,12 @@ public class AuthController : ApiControllerBase
 
     [HttpPost("google")]
     [EnableRateLimiting(RateLimitPolicies.LoginIp)]
-    public async Task<ActionResult<AuthResponse>> Google(GoogleLoginRequest request, CancellationToken cancellationToken) =>
-        FromResult(await _googleLogin.ExecuteAsync(request, cancellationToken));
+    public async Task<ActionResult<AuthResponse>> Google(GoogleLoginRequest request, CancellationToken cancellationToken)
+    {
+        var subject = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var linkingUserId = int.TryParse(subject, out var userId) ? userId : (int?)null;
+        return FromResult(await _googleLogin.ExecuteAsync(request, linkingUserId, cancellationToken));
+    }
 
 
 

@@ -36,6 +36,7 @@ public abstract class ApiControllerBase : ControllerBase
             AppErrorType.Forbidden => Forbid(),
             AppErrorType.NotFound => NotFound(body),
             AppErrorType.Conflict => Conflict(body),
+            AppErrorType.Unavailable => StatusCode(StatusCodes.Status503ServiceUnavailable, body),
             _ => BadRequest(body)
         };
     }

@@ -298,13 +298,13 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Precondiciones:** la credencial debe ser valida y el email informado por Google debe estar verificado.
 
-**Flujo esperado:** se verifica la identidad externa; se reutiliza el vinculo existente o se vincula por email; si no existe usuario se crea uno activo con rol `User`; finalmente se emite un JWT.
+**Flujo esperado:** se verifica criptograficamente la identidad externa; se reutiliza el vinculo existente por `sub`; si no existe usuario se crea uno activo con rol `User`; finalmente se emite un JWT.
 
-**Reglas de negocio:** una cuenta inactiva no puede ingresar; una cuenta local con el mismo email se vincula a la identidad externa; el email se considera verificado por Google.
+**Reglas de negocio:** una cuenta inactiva no puede ingresar; Gmail y Google Workspace pueden vincular por email porque Google es autoridad sobre esas direcciones; otros dominios exigen una sesion local valida del mismo usuario y el mismo email; el email de una cuenta nueva se considera verificado por Google.
 
 **Resultado:** devuelve el JWT y los datos del usuario.
 
-**Errores esperados:** `400 Bad Request` si falta la credencial y `401 Unauthorized` si es invalida, el email no esta verificado o la cuenta esta inactiva.
+**Errores esperados:** `400 Bad Request` si falta la credencial, `401 Unauthorized` si es invalida, el email no esta verificado o la cuenta esta inactiva, y `409 Conflict` si una cuenta local debe vincularse de forma autenticada.
 
 **Que queda explicitamente fuera:** no permite elegir rol, no almacena una password de Google y no gestiona la cuenta en Google.
 
@@ -1151,6 +1151,8 @@ POST /api/auth/reset-password
 
 `forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. En Development el proveedor Mock incluye `developmentCode` y escribe el código en el log; en staging y producción la propiedad se omite y el código se envía por Resend solamente cuando la cuenta existe.
 
+Un HTTP 2xx de Resend significa que el proveedor aceptó la solicitud, no que el correo llegó a destino. Los rechazos HTTP, timeouts y errores de red se registran por tipo y propósito sin incluir destinatario, código ni credenciales. En registro esos fallos devuelven `503` y revierten la cuenta pendiente para permitir repetir el alta. En recuperación se conserva la respuesta genérica para no revelar cuentas registradas y el código cuyo envío falló se invalida inmediatamente.
+
 Los códigos se guardan en `PasswordResetCodes`, separados de `EmailVerificationCodes`, porque activar un email y cambiar una credencial son propósitos de seguridad distintos. Solo se persiste un hash con sal mediante el servicio de hashing de credenciales, nunca sus seis dígitos. Cada solicitud invalida códigos anteriores, cada código admite como máximo cinco intentos, vence después de 600 segundos y queda consumido tras usarse.
 
 Al confirmar se aplican las mismas reglas de contraseña fuerte que en registro, se actualiza `PasswordHash` y se incrementa `TokenVersion`. Por eso todos los JWT emitidos previamente reciben `401`; el frontend no inicia sesión automáticamente y vuelve al formulario de login. Una cuenta creada inicialmente con Google también puede establecer una contraseña manual mediante este flujo si controla el correo asociado.
@@ -1175,7 +1177,7 @@ GoogleAuth__ClientId=<GOOGLE_CLIENT_ID_PUBLICO>
 VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
 ```
 
-El backend valida la credencial con Google, exige `email_verified=true` y vincula por el identificador estable `sub`. Si el email ya pertenece a una cuenta manual activa, agrega la identidad externa a ese mismo usuario; no crea un usuario duplicado. No se usa ni se expone un Client Secret en el navegador.
+El backend valida firma, emisor, audiencia y vencimiento con la biblioteca oficial `Google.Apis.Auth`, exige `email_verified=true` y reconoce el vinculo por el identificador estable `sub`. `tokeninfo` no participa del flujo productivo. Si una cuenta manual usa Gmail o un dominio Google Workspace confirmado mediante `hd`, el primer acceso vincula la identidad automáticamente. Para otros proveedores responde `409 google_link_required`; el frontend conserva temporalmente la credencial, solicita la contraseña local una única vez y repite el mismo `POST /api/auth/google` con el JWT local. La vinculacion conserva contraseña, rol, estado y version de sesion; una cuenta nueva siempre nace con rol `User` y puede establecer una contraseña mediante recuperación. No se usa ni se expone un Client Secret en el navegador.
 
 La API no accede directamente a la persistencia. La logica se concentra en casos de uso de Application, con EF Core y servicios externos implementados en Infrastructure.
 

@@ -15,7 +15,7 @@ namespace GymShop.Application.UseCases.Auth;
 public interface IRegisterUserUseCase { Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(RegisterRequest request, CancellationToken cancellationToken = default); }
 public interface IVerifyEmailUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default); }
 public interface IResendVerificationUseCase { Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default); }
-public interface IGoogleLoginUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(GoogleLoginRequest request, CancellationToken cancellationToken = default); }
+public interface IGoogleLoginUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(GoogleLoginRequest request, int? linkingUserId = null, CancellationToken cancellationToken = default); }
 public interface ILoginUserUseCase { Task<AppResult<AuthResponse>> ExecuteAsync(LoginRequest request, CancellationToken cancellationToken = default); }
 public interface IRequestPasswordResetUseCase { Task<AppResult<PasswordResetPendingResponse>> ExecuteAsync(RequestPasswordResetRequest request, CancellationToken cancellationToken = default); }
 public interface IConfirmPasswordResetUseCase { Task<AppResult<PasswordResetCompletedResponse>> ExecuteAsync(ConfirmPasswordResetRequest request, CancellationToken cancellationToken = default); }
@@ -63,23 +63,37 @@ public sealed class RegisterUserUseCase : IRegisterUserUseCase
             IsActive = true };
         _db.Users.Add(user);
 
-        return await Verification.CreateAsync(_db, _sender, _time, user, cancellationToken);
+        var result = await Verification.CreateAsync(_db, _sender, _time, user, cancellationToken);
+        if (!result.IsSuccess)
+        {
+            _db.Users.Remove(user);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        return result;
     }
 }
 
 internal static class Verification
 {
     public const int LifetimeSeconds = 60;
+    public const string SendFailureMessage = "No pudimos solicitar el envío del código. Intentá nuevamente.";
     public static async Task<AppResult<RegistrationPendingResponse>> CreateAsync(IApplicationDbContext db, IVerificationEmailSender sender, TimeProvider time, User user, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
         var active = await db.EmailVerificationCodes.Where(x => x.UserId == user.Id && x.ConsumedAtUtc == null).ToListAsync(cancellationToken);
         foreach (var item in active) item.ConsumedAtUtc = now;
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
-        db.EmailVerificationCodes.Add(new EmailVerificationCode { User = user, UserId = user.Id, CodeHash = Hash(code), CreatedAtUtc = now, ExpiresAtUtc = now.AddSeconds(LifetimeSeconds) });
+        var verification = new EmailVerificationCode { User = user, UserId = user.Id, CodeHash = Hash(code), CreatedAtUtc = now, ExpiresAtUtc = now.AddSeconds(LifetimeSeconds) };
+        db.EmailVerificationCodes.Add(verification);
         await db.SaveChangesAsync(cancellationToken);
-        var developmentCode = await sender.SendAsync(user.Email, code, cancellationToken: cancellationToken);
-        return AppResult<RegistrationPendingResponse>.Success(new(user.Email, LifetimeSeconds, developmentCode));
+        var send = await sender.SendAsync(user.Email, code, cancellationToken: cancellationToken);
+        if (!send.AcceptedByProvider)
+        {
+            verification.ConsumedAtUtc = time.GetUtcNow().UtcDateTime;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Unavailable, SendFailureMessage, "email_send_failed");
+        }
+        return AppResult<RegistrationPendingResponse>.Success(new(user.Email, LifetimeSeconds, send.DevelopmentCode));
     }
     public static string Hash(string code) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
 }
@@ -124,21 +138,29 @@ public sealed class GoogleLoginUseCase : IGoogleLoginUseCase
 {
     private readonly IApplicationDbContext _db; private readonly IExternalIdentityVerifier _verifier; private readonly IJwtTokenService _jwt; private readonly TimeProvider _time;
     public GoogleLoginUseCase(IApplicationDbContext db, IExternalIdentityVerifier verifier, IJwtTokenService jwt, TimeProvider time) => (_db, _verifier, _jwt, _time) = (db, verifier, jwt, time);
-    public async Task<AppResult<AuthResponse>> ExecuteAsync(GoogleLoginRequest request, CancellationToken cancellationToken = default)
+    public async Task<AppResult<AuthResponse>> ExecuteAsync(GoogleLoginRequest request, int? linkingUserId = null, CancellationToken cancellationToken = default)
     {
         var identity = await _verifier.VerifyGoogleAsync(request.Credential, cancellationToken);
         if (identity is null || !identity.EmailVerified) return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "La credencial de Google no es valida.");
         var external = await _db.UserExternalLogins.Include(x => x.User).ThenInclude(x => x.Role).SingleOrDefaultAsync(x => x.Provider == identity.Provider && x.ProviderSubject == identity.Subject, cancellationToken);
         if (external is not null) return external.User.IsActive ? AppResult<AuthResponse>.Success(AuthMapping.Auth(external.User, _jwt)) : AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "La cuenta no esta activa.");
-        var email = identity.Email.Trim().ToLowerInvariant(); var user = await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
+        var email = identity.Email.Trim().ToLowerInvariant();
+        var user = linkingUserId is null
+            ? await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Email == email, cancellationToken)
+            : await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Id == linkingUserId.Value, cancellationToken);
         if (user is null)
         {
+            if (linkingUserId is not null)
+                return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "La sesion local no es valida.");
             var role = await _db.Roles.SingleAsync(x => x.Name == "User", cancellationToken);
             user = new User { Email = email, Name = identity.FirstName, LastName = identity.LastName, PasswordHash = string.Empty, Role = role, RoleId = role.Id, IsActive = true, EmailVerifiedAt = _time.GetUtcNow().UtcDateTime };
             _db.Users.Add(user);
         }
         else if (!user.IsActive) return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "La cuenta no esta activa.");
-        else if (user.EmailVerifiedAt is null) user.EmailVerifiedAt = _time.GetUtcNow().UtcDateTime;
+        else if (linkingUserId is null && !identity.EmailAuthoritative)
+            return AppResult<AuthResponse>.Failure(AppErrorType.Conflict, "Ya existe una cuenta con ese email. Inicia sesion con tu password para vincular Google de forma segura.", "google_link_required");
+        else if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+            return AppResult<AuthResponse>.Failure(AppErrorType.Conflict, "La cuenta de Google debe usar el mismo email que tu cuenta local.", "google_email_mismatch");
         _db.UserExternalLogins.Add(new UserExternalLogin { User = user, Provider = identity.Provider, ProviderSubject = identity.Subject, CreatedAtUtc = _time.GetUtcNow().UtcDateTime });
         await _db.SaveChangesAsync(cancellationToken);
         return AppResult<AuthResponse>.Success(AuthMapping.Auth(user, _jwt));
@@ -161,7 +183,7 @@ internal static class PasswordReset
 {
     public const int LifetimeSeconds = 600;
     public const int MaximumAttempts = 5;
-    public const string GenericRequestMessage = "Si el email corresponde a una cuenta, enviamos un codigo para restablecer la password.";
+    public const string GenericRequestMessage = "Si el email corresponde a una cuenta, solicitamos el envio de un codigo para restablecer la password.";
     public const string GenericInvalidCodeMessage = "El codigo no es valido, vencio o ya fue utilizado.";
 }
 
@@ -171,9 +193,10 @@ public sealed class RequestPasswordResetUseCase : IRequestPasswordResetUseCase
     private readonly IPasswordResetEmailSender _sender;
     private readonly IPasswordHasher _hasher;
     private readonly TimeProvider _time;
+    private readonly ITransactionManager? _transactionManager;
 
-    public RequestPasswordResetUseCase(IApplicationDbContext db, IPasswordResetEmailSender sender, IPasswordHasher hasher, TimeProvider time) =>
-        (_db, _sender, _hasher, _time) = (db, sender, hasher, time);
+    public RequestPasswordResetUseCase(IApplicationDbContext db, IPasswordResetEmailSender sender, IPasswordHasher hasher, TimeProvider time, ITransactionManager? transactionManager = null) =>
+        (_db, _sender, _hasher, _time, _transactionManager) = (db, sender, hasher, time, transactionManager);
 
     public async Task<AppResult<PasswordResetPendingResponse>> ExecuteAsync(RequestPasswordResetRequest request, CancellationToken cancellationToken = default)
     {
@@ -181,24 +204,57 @@ public sealed class RequestPasswordResetUseCase : IRequestPasswordResetUseCase
         var now = _time.GetUtcNow().UtcDateTime;
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
         var user = await _db.Users.SingleOrDefaultAsync(x => x.Email == email && x.IsActive, cancellationToken);
+        PasswordResetCode? newCode = null;
+        var tokenVersionAtRequest = user?.TokenVersion;
 
         if (user is not null)
         {
-            var active = await _db.PasswordResetCodes.Where(x => x.UserId == user.Id && x.ConsumedAtUtc == null).ToListAsync(cancellationToken);
-            foreach (var item in active) item.ConsumedAtUtc = now;
-            _db.PasswordResetCodes.Add(new PasswordResetCode
+            newCode = new PasswordResetCode
             {
                 User = user,
                 UserId = user.Id,
                 CodeHash = _hasher.Hash(code),
                 CreatedAtUtc = now,
-                ExpiresAtUtc = now.AddSeconds(PasswordReset.LifetimeSeconds)
-            });
+                ExpiresAtUtc = now.AddSeconds(PasswordReset.LifetimeSeconds),
+                // A persisted code is not usable until the provider accepts the request.
+                ConsumedAtUtc = now
+            };
+            _db.PasswordResetCodes.Add(newCode);
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var developmentCode = await _sender.SendAsync(email, code, deliver: user is not null, cancellationToken);
-        return AppResult<PasswordResetPendingResponse>.Success(new(PasswordReset.GenericRequestMessage, PasswordReset.LifetimeSeconds, developmentCode));
+        var send = await _sender.SendAsync(email, code, deliver: user is not null, cancellationToken);
+        if (newCode is not null && send.AcceptedByProvider)
+        {
+            // Do not abandon an accepted provider request because the HTTP client disconnected.
+            var activationCancellation = CancellationToken.None;
+            await using var transaction = _transactionManager is null
+                ? null
+                : await _transactionManager.BeginPasswordResetActivationTransactionAsync(user!.Id, activationCancellation);
+            var completedAt = _time.GetUtcNow().UtcDateTime;
+            var currentTokenVersion = await _db.Users.AsNoTracking()
+                .Where(x => x.Id == user!.Id)
+                .Select(x => x.TokenVersion)
+                .SingleAsync(activationCancellation);
+            if (currentTokenVersion != tokenVersionAtRequest)
+            {
+                // A password change completed while delivery was pending. The request
+                // belongs to the previous credential generation and must stay inactive.
+                if (transaction is not null) await transaction.CommitAsync(activationCancellation);
+                return AppResult<PasswordResetPendingResponse>.Success(new(PasswordReset.GenericRequestMessage, PasswordReset.LifetimeSeconds, send.DevelopmentCode));
+            }
+            var activeCodes = await _db.PasswordResetCodes
+                .Where(x => x.UserId == user!.Id && x.ConsumedAtUtc == null)
+                .ToListAsync(activationCancellation);
+            foreach (var activeCode in activeCodes)
+            {
+                activeCode.ConsumedAtUtc = completedAt;
+            }
+            newCode.ConsumedAtUtc = null;
+            await _db.SaveChangesAsync(activationCancellation);
+            if (transaction is not null) await transaction.CommitAsync(activationCancellation);
+        }
+        return AppResult<PasswordResetPendingResponse>.Success(new(PasswordReset.GenericRequestMessage, PasswordReset.LifetimeSeconds, send.DevelopmentCode));
     }
 }
 
@@ -207,9 +263,10 @@ public sealed class ConfirmPasswordResetUseCase : IConfirmPasswordResetUseCase
     private readonly IApplicationDbContext _db;
     private readonly IPasswordHasher _hasher;
     private readonly TimeProvider _time;
+    private readonly ITransactionManager? _transactionManager;
 
-    public ConfirmPasswordResetUseCase(IApplicationDbContext db, IPasswordHasher hasher, TimeProvider time) =>
-        (_db, _hasher, _time) = (db, hasher, time);
+    public ConfirmPasswordResetUseCase(IApplicationDbContext db, IPasswordHasher hasher, TimeProvider time, ITransactionManager? transactionManager = null) =>
+        (_db, _hasher, _time, _transactionManager) = (db, hasher, time, transactionManager);
 
     public async Task<AppResult<PasswordResetCompletedResponse>> ExecuteAsync(ConfirmPasswordResetRequest request, CancellationToken cancellationToken = default)
     {
@@ -218,6 +275,10 @@ public sealed class ConfirmPasswordResetUseCase : IConfirmPasswordResetUseCase
 
         var email = request.Email.Trim().ToLowerInvariant();
         var now = _time.GetUtcNow().UtcDateTime;
+        var userId = await _db.Users.Where(x => x.Email == email && x.IsActive).Select(x => (int?)x.Id).SingleOrDefaultAsync(cancellationToken);
+        await using var transaction = userId is not null && _transactionManager is not null
+            ? await _transactionManager.BeginPasswordResetActivationTransactionAsync(userId.Value, cancellationToken)
+            : null;
         var user = await _db.Users.Include(x => x.PasswordResetCodes).SingleOrDefaultAsync(x => x.Email == email && x.IsActive, cancellationToken);
         var reset = user?.PasswordResetCodes.Where(x => x.ConsumedAtUtc == null).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
         if (reset is null || reset.ExpiresAtUtc <= now || reset.FailedAttempts >= PasswordReset.MaximumAttempts)
@@ -227,6 +288,7 @@ public sealed class ConfirmPasswordResetUseCase : IConfirmPasswordResetUseCase
         {
             reset.FailedAttempts++;
             await _db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
             return AppResult<PasswordResetCompletedResponse>.Failure(AppErrorType.Validation, PasswordReset.GenericInvalidCodeMessage);
         }
 
@@ -235,6 +297,7 @@ public sealed class ConfirmPasswordResetUseCase : IConfirmPasswordResetUseCase
         user.TokenVersion++;
         user.UpdatedAt = now;
         await _db.SaveChangesAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return AppResult<PasswordResetCompletedResponse>.Success(new("La password fue actualizada. Ya podes iniciar sesion."));
     }
 }

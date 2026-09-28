@@ -3,6 +3,7 @@ import { api } from '../../api/gymshop'
 import type { AuthResponse } from '../../api/types'
 import { storefront } from '../../config/storefront'
 import { authErrorMessage } from './authMessages'
+import { ApiError } from '../../api/client'
 import {
   clearPendingRegistration,
   loadPendingRegistration,
@@ -16,7 +17,7 @@ interface AuthPanelProps {
 }
 
 let initializedGoogleClientId: string | null = null
-let googleCredentialHandler: ((credential: string) => void) | null = null
+let googleCredentialHandler: ((credential?: string) => void) | null = null
 
 function PasswordVisibilityIcon({ visible }: { visible: boolean }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -39,6 +40,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
   const busyRef = useRef(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState(() => pending ? 'Retomamos tu verificación pendiente.' : '')
+  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null)
   const googleButton = useRef<HTMLDivElement>(null)
   const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID && !import.meta.env.VITE_GOOGLE_CLIENT_ID.startsWith('<'))
 
@@ -86,7 +88,25 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
       if (cancelled) return
       if (window.google && googleButton.current) {
         googleButton.current.replaceChildren()
-        googleCredentialHandler = credential => void execute(async () => complete(await api.googleLogin(credential)))
+        googleCredentialHandler = credential => {
+          if (!credential) {
+            setError('')
+            setNotice('Cancelaste el acceso con Google. Podés intentarlo nuevamente o ingresar con email y contraseña.')
+            return
+          }
+          void execute(async () => {
+            try {
+              complete(await api.googleLogin(credential))
+            } catch (value) {
+              if (value instanceof ApiError && value.code === 'google_link_required') {
+                setPendingGoogleCredential(credential)
+                setNotice('Tu email ya tiene una cuenta. Ingresá su contraseña una única vez para vincular Google.')
+                return
+              }
+              throw value
+            }
+          })
+        }
         if (initializedGoogleClientId !== clientId) {
           window.google.accounts.id.initialize({
             client_id: clientId,
@@ -132,7 +152,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
           const result = await api.resendVerification(pending.email)
           setPending(savePendingRegistration(result.email, result.expiresInSeconds))
           setDevelopmentCode(result.developmentCode ?? null)
-          setNotice('Te enviamos un código nuevo.')
+          setNotice('Solicitamos el envío de un código nuevo.')
         })}>{busy ? 'Enviando…' : 'Reenviar código'}</button>
         <button type="button" className="link" disabled={busy} onClick={() => {
           clearPendingRegistration()
@@ -195,9 +215,14 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
           })
           setPending(savePendingRegistration(result.email, result.expiresInSeconds))
           setDevelopmentCode(result.developmentCode ?? null)
-          setNotice('Cuenta creada. Ingresá el código para activar tu cuenta.')
+          setNotice('Cuenta creada. Solicitamos el envío del código para activarla.')
         } else {
-          complete(await api.login({ email, password: String(data.get('password')) }))
+          const localAuth = await api.login({ email, password: String(data.get('password')) })
+          if (pendingGoogleCredential) {
+            complete(await api.googleLogin(pendingGoogleCredential, localAuth.token))
+          } else {
+            complete(localAuth)
+          }
         }
       })
     }}>
@@ -220,7 +245,9 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
       {!register && <button type="button" className="link" disabled={busy} onClick={() => { setForgot(true); setError(''); setNotice('') }}>Olvidé mi contraseña</button>}
       <button type="button" className="link" disabled={busy} onClick={() => { setRegister(value => !value); setError(''); setNotice('') }}>{register ? 'Ya tengo cuenta' : 'Quiero registrarme'}</button>
       <div className="auth-divider"><span>o</span></div>
-      <div ref={googleButton} className="google-button">{!googleConfigured && <small>Google no está configurado en este ambiente.</small>}</div>
+      <div ref={googleButton} className="google-button" aria-label="Acceso con Google">
+        {!googleConfigured && <small>Google no está configurado en este ambiente. Definí VITE_GOOGLE_CLIENT_ID para habilitarlo.</small>}
+      </div>
     </form>
   </section>
 }

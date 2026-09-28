@@ -6,7 +6,8 @@ public enum AppErrorType
     Unauthorized,
     Forbidden,
     NotFound,
-    Conflict
+    Conflict,
+    Unavailable
 }
 
 public sealed record AppError(AppErrorType Type, string Message, string? Code = null);

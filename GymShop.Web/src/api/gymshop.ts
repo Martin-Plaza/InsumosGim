@@ -6,7 +6,10 @@ export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
   verifyEmail: (data: { email: string; code: string }) => request<AuthResponse>('/api/auth/verify-email', json('POST', data)),
   resendVerification: (email: string) => request<RegistrationPending>('/api/auth/resend-verification', json('POST', { email })),
-  googleLogin: (credential: string) => request<AuthResponse>('/api/auth/google', json('POST', { credential })),
+  googleLogin: (credential: string, localToken?: string) => request<AuthResponse>('/api/auth/google', {
+    ...json('POST', { credential }),
+    headers: localToken ? { Authorization: `Bearer ${localToken}` } : undefined,
+  }),
   login: (data: { email: string; password: string }) => request<AuthResponse>('/api/auth/login', json('POST', data)),
   forgotPassword: (email: string) => request<PasswordResetPending>('/api/auth/forgot-password', json('POST', { email })),
   resetPassword: (data: { email: string; code: string; newPassword: string }) => request<PasswordResetCompleted>('/api/auth/reset-password', json('POST', data)),

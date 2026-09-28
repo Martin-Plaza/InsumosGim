@@ -1,5 +1,6 @@
 import { json, request } from './client'
 import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingOptions, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
   register: (data: { name: string; lastName: string; email: string; password: string }) => request<RegistrationPending>('/api/auth/register', json('POST', data)),
@@ -63,10 +64,12 @@ export const api = {
   orderHistory: (id: number) => request<OrderHistoryEvent[]>(`/api/orders/${id}/history`),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
   setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null, tracking?: { carrier: string; trackingNumber: string; trackingUrl: string }) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt, ...tracking })),
-  createPayment: (orderId: number, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider: 'Mock', idempotencyKey })),
+  createPayment: (orderId: number, provider: PaymentProvider, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider, idempotencyKey })),
+  bankTransferDetails: () => request<BankTransferDetails>('/api/payments/bank-transfer-details'),
+  paymentMethods: () => request<PaymentMethods>('/api/payments/methods'),
   payment: (id: number) => request<Payment>(`/api/payments/${id}`),
   orderPayments: (orderId: number) => request<Payment[]>(`/api/payments/orders/${orderId}`),
-  setPaymentStatus: (id: number, status: string, failureReason?: string) => request<Payment>(`/api/payments/${id}/status`, json('POST', { status, failureReason: failureReason || null, providerPaymentId: null })),
+  setPaymentStatus: (id: number, status: string, reason?: string) => request<Payment>(`/api/payments/${id}/status`, json('POST', { status, failureReason: reason || null, providerPaymentId: null })),
   users: (filters: AdminUserFilters = {}) => {
     const query = new URLSearchParams()
     Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)) })
@@ -104,4 +107,13 @@ export function rotatePaymentKey(orderId: number) {
   const value = crypto.randomUUID()
   localStorage.setItem(key, value)
   return value
+}
+
+export function savePaymentProvider(orderId: number, provider: PaymentProvider) {
+  localStorage.setItem(`gymshop.payment-provider.${orderId}`, provider)
+}
+
+export function savedPaymentProvider(orderId: number): PaymentProvider | null {
+  const value = localStorage.getItem(`gymshop.payment-provider.${orderId}`)
+  return value === 'BankTransfer' || value === 'MercadoPago' ? value : null
 }

@@ -69,12 +69,12 @@ describe('cliente HTTP y contrato GymShop', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('/api/cart/checkout')
   })
 
-  it('crea pagos por orderId con Mock e idempotencia estable', async () => {
+  it('crea pagos por orderId con el medio elegido e idempotencia estable', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ id: 7, status: 'Creating', checkoutUrl: null }))
-    const payment = await api.createPayment(42, 'stable-key')
+    const payment = await api.createPayment(42, 'BankTransfer', 'stable-key')
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/orders/42/payments')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('/api/payments/current')
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ provider: 'Mock', idempotencyKey: 'stable-key' })
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ provider: 'BankTransfer', idempotencyKey: 'stable-key' })
     expect(payment).toMatchObject({ status: 'Creating', checkoutUrl: null })
   })
 })

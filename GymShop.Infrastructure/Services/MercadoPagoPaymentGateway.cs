@@ -22,7 +22,7 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
     public bool CanHandle(string provider) =>
         _options.Enabled && string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
 
-    public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
+    public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
     {
         ConfigureAuthorization();
 
@@ -45,7 +45,7 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
             {
                 email = order.User.Email
             },
-            ["external_reference"] = $"order-{order.Id}"
+            ["external_reference"] = string.IsNullOrWhiteSpace(externalReference) ? $"order-{order.Id}" : externalReference
         };
 
         if (IsPublicCallbackUrl(notificationUrl))

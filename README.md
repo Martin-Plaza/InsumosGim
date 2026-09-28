@@ -1730,6 +1730,12 @@ El segundo comando usa el servicio PostgreSQL de CI, ejecuta la suite completa, 
 
 ## Notas de seguridad
 
+## Transferencia bancaria
+
+Los datos mostrados al cliente se configuran en el backend, nunca en componentes React. Definir `BankTransfer:BankName`, `BankTransfer:AccountHolder`, `BankTransfer:Cbu`, `BankTransfer:Alias` y `BankTransfer:Cuit` mediante variables de entorno (`BankTransfer__Alias`, etc.), User Secrets o el gestor de secretos del entorno. Los valores de `appsettings.json` quedan vacíos deliberadamente.
+
+La transferencia crea un pago pendiente. Un Admin o SuperAdmin debe comprobar la acreditación bancaria e ingresar una referencia o motivo antes de confirmarla. Cargar un comprobante o iniciar una transferencia no aprueba el pedido. `Mock` solo se registra en Development. Mercado Pago permanece deshabilitado hasta configurar credenciales de prueba y su webhook verificado.
+
 - No commitear tokens, passwords ni secretos.
 - Usar User Secrets en desarrollo.
 - Usar variables de entorno o secret manager en produccion.

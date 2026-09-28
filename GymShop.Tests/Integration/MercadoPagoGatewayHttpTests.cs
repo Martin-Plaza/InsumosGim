@@ -15,16 +15,21 @@ public sealed class MercadoPagoGatewayHttpTests
     [Fact]
     public async Task Successful_preference_sends_authorization_and_idempotency_key()
     {
-        var handler = new StubHttpHandler(_ => Json(HttpStatusCode.Created,
-            """{"id":"pref-http-1","sandbox_init_point":"https://sandbox.example/checkout"}"""));
+        string? requestBody = null;
+        var handler = new StubHttpHandler(request =>
+        {
+            requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.Created, """{"id":"pref-http-1","sandbox_init_point":"https://sandbox.example/checkout"}""");
+        });
         var gateway = CreateGateway(handler);
 
-        var result = await gateway.CreatePreferenceAsync(CreateOrder(), "idem-http-1");
+        var result = await gateway.CreatePreferenceAsync(CreateOrder(), "idem-http-1", "order-42-payment-99");
 
         Assert.Equal("pref-http-1", result.ProviderPreferenceId);
         Assert.Equal("https://sandbox.example/checkout", result.CheckoutUrl);
         Assert.Equal("idem-http-1", handler.Requests.Single().Headers.GetValues("X-Idempotency-Key").Single());
         Assert.Equal("Bearer", handler.Requests.Single().Headers.Authorization?.Scheme);
+        Assert.Contains("order-42-payment-99", requestBody);
     }
 
     [Fact]

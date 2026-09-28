@@ -1,5 +1,6 @@
 using System.Reflection;
 using GymShop.Api.Controllers;
+using GymShop.Infrastructure.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -50,6 +51,15 @@ public class ControllerAuthorizationTests
         Assert.False(isValid);
     }
 
+    [Theory]
+    [InlineData(false, "token", false)]
+    [InlineData(true, "", false)]
+    [InlineData(true, "token", true)]
+    public void MercadoPago_availability_requires_enabled_integration_and_credentials(bool enabled, string token, bool expected)
+    {
+        Assert.Equal(expected, PaymentsController.IsMercadoPagoAvailable(new MercadoPagoOptions { Enabled = enabled, AccessToken = token }));
+    }
+
     [Fact]
     public void Payment_creation_exposes_only_explicit_order_route()
     {
@@ -78,7 +88,7 @@ public class ControllerAuthorizationTests
     [Fact]
     public void Order_administration_is_restricted_to_admins()
     {
-        var methods = new[] { nameof(OrdersController.GetAll), nameof(OrdersController.GetHistory), nameof(OrdersController.UpdateStatus), nameof(OrdersController.ExpirePending) };
+        var methods = new[] { nameof(OrdersController.GetAll), nameof(OrdersController.GetHistory), nameof(OrdersController.UpdateStatus), nameof(OrdersController.Cancel), nameof(OrdersController.ExpirePending) };
         foreach (var name in methods)
         {
             var authorize = typeof(OrdersController).GetMethod(name)!.GetCustomAttribute<AuthorizeAttribute>();

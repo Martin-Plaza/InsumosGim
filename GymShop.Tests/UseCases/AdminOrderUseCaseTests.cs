@@ -132,8 +132,8 @@ public class AdminOrderUseCaseTests
         Assert.Equal(3, product.Stock);
 
         var useCase = new CancelOrderUseCase(db);
-        var first = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Cliente no pago"));
-        var second = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Reintento"));
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Cliente no pago"));
+        var second = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Reintento"));
 
         Assert.True(first.IsSuccess);
         Assert.True(second.IsSuccess);
@@ -155,7 +155,7 @@ public class AdminOrderUseCaseTests
         await db.SaveChangesAsync();
 
         var useCase = new CancelOrderUseCase(db);
-        var result = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("No deberia"));
+        var result = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No deberia"));
 
         Assert.False(result.IsSuccess);
         Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
@@ -170,8 +170,8 @@ public class AdminOrderUseCaseTests
         var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
         var useCase = new CancelOrderUseCase(db);
 
-        var first = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Cambio de decision"));
-        var repeated = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("No reemplazar"));
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Cambio de decision"));
+        var repeated = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No reemplazar"));
 
         Assert.True(first.IsSuccess);
         Assert.True(repeated.IsSuccess);
@@ -189,10 +189,13 @@ public class AdminOrderUseCaseTests
         var oldPending = await SeedOrderAsync(db, user.Id, stock: 10, quantity: 2, price: 100);
         var recentPending = await SeedOrderAsync(db, user.Id, stock: 10, quantity: 2, price: 100);
         var oldPaid = await SeedOrderAsync(db, user.Id, stock: 10, quantity: 2, price: 100);
+        var oldMercadoPago = await SeedOrderAsync(db, user.Id, stock: 10, quantity: 2, price: 100);
         oldPending.CreatedAt = DateTime.UtcNow.AddHours(-2);
         recentPending.CreatedAt = DateTime.UtcNow;
         oldPaid.CreatedAt = DateTime.UtcNow.AddHours(-2);
         oldPaid.Status = OrderStatus.Paid;
+        oldMercadoPago.CreatedAt = DateTime.UtcNow.AddHours(-2);
+        db.Payments.Add(new Payment { OrderId = oldMercadoPago.Id, Provider = "MercadoPago", ExternalReference = $"order-{oldMercadoPago.Id}", Amount = oldMercadoPago.Total, Currency = "ARS", Status = PaymentStatus.Pending });
         await db.SaveChangesAsync();
 
         var useCase = new ExpirePendingOrdersUseCase(db);
@@ -203,6 +206,7 @@ public class AdminOrderUseCaseTests
         Assert.Equal(OrderStatus.Canceled, oldPending.Status);
         Assert.Equal(OrderStatus.Pending, recentPending.Status);
         Assert.Equal(OrderStatus.Paid, oldPaid.Status);
+        Assert.Equal(OrderStatus.Pending, oldMercadoPago.Status);
         var audit = Assert.Single(db.AuditEntries);
         Assert.Equal("OrderExpiredAdministratively", audit.Action);
         Assert.Equal(oldPending.Id.ToString(), audit.EntityId);
@@ -259,10 +263,10 @@ public class AdminOrderUseCaseTests
         };
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
-        var useCase = new UpdateOrderStatusUseCase(db);
+        var useCase = new CancelOrderUseCase(db);
 
-        var first = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Canceled"));
-        var second = await useCase.ExecuteAsync(order.Id, new UpdateOrderStatusRequest("Canceled"));
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Cancelacion administrativa del pedido."));
+        var second = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No debe duplicar"));
 
         Assert.True(first.IsSuccess);
         Assert.True(second.IsSuccess);
@@ -270,7 +274,7 @@ public class AdminOrderUseCaseTests
         Assert.Equal(PaymentStatus.Canceled, payment.Status);
         Assert.Equal("Cancelacion administrativa del pedido.", payment.FailureReason);
         Assert.Equal(5, product.Stock);
-        Assert.Equal("OrderStatusChanged", Assert.Single(db.AuditEntries).Action);
+        Assert.Equal("OrderCanceled", Assert.Single(db.AuditEntries).Action);
     }
 
     [Fact]

@@ -77,6 +77,7 @@ public class OrdersController : ApiControllerBase
         return FromResult(await _updateOrderStatus.ExecuteAsync(id, request, cancellationToken));
     }
 
+    [Authorize(Roles = "Admin,SuperAdmin")]
     [HttpPost("{id:int}/cancel")]
     [ProducesResponseType(typeof(OrderResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]

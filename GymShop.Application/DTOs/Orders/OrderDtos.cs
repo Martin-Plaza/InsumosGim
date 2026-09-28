@@ -101,7 +101,9 @@ public record OrderPaymentResponse(
     string Currency,
     string Status,
     DateTime CreatedAt,
-    DateTime? PaidAt
+    DateTime? PaidAt,
+    string? FailureReason,
+    bool RequiresReview
 );
 
 

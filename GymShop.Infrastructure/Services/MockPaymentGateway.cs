@@ -7,7 +7,7 @@ public class MockPaymentGateway : IPaymentGateway
 {
     public bool CanHandle(string provider) => string.Equals(provider, "Mock", StringComparison.OrdinalIgnoreCase);
 
-    public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
+    public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(new PaymentPreferenceResult(
             "Mock",

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { api, paymentKey, rotatePaymentKey } from '../../api/gymshop'
+import { api, paymentKey, rotatePaymentKey, savePaymentProvider, savedPaymentProvider } from '../../api/gymshop'
 import { money } from '../../config/storefront'
 import { orderStatusLabel } from '../orders/orderPresentation'
-import type { Order, Payment } from '../../api/types'
+import type { BankTransferDetails, Order, Payment, PaymentMethods, PaymentProvider } from '../../api/types'
 import { checkoutErrorMessage, paymentExplanation, paymentLabels, terminalRetryablePayments } from './checkoutPresentation'
 
 
@@ -14,6 +14,9 @@ export function CheckoutResultPage({ canRefreshPayment }: { canRefreshPayment: b
   const id = Number(orderId)
   const [order, setOrder] = useState<Order | null>(null)
   const [payments, setPayments] = useState<Payment[]>([])
+  const [bankDetails, setBankDetails] = useState<BankTransferDetails | null>(null)
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethods | null>(null)
+  const [selectedProvider, setSelectedProvider] = useState<PaymentProvider | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(initialState?.paymentError ?? '')
@@ -23,8 +26,13 @@ export function CheckoutResultPage({ canRefreshPayment }: { canRefreshPayment: b
     if (!Number.isInteger(id) || id < 1) { setError('La orden solicitada no es válida.'); setLoading(false); return }
     setLoading(true)
     try {
-      const [currentOrder, currentPayments] = await Promise.all([api.order(id), api.orderPayments(id)])
-      setOrder(currentOrder); setPayments([...currentPayments].sort((a, b) => b.id - a.id))
+      const [currentOrder, currentPayments, details, methods] = await Promise.all([api.order(id), api.orderPayments(id), api.bankTransferDetails().catch(() => null), api.paymentMethods().catch(() => ({ bankTransferAvailable: true, mercadoPagoAvailable: false, mercadoPagoUnavailableReason: 'No pudimos verificar la disponibilidad de Mercado Pago.' }))])
+      const sortedPayments = [...currentPayments].sort((a, b) => b.id - a.id)
+      setOrder(currentOrder); setPayments(sortedPayments)
+      setBankDetails(details)
+      setPaymentMethods(methods)
+      const persisted = savedPaymentProvider(id)
+      setSelectedProvider(sortedPayments[0]?.provider === 'MercadoPago' ? 'MercadoPago' : sortedPayments[0]?.provider === 'BankTransfer' ? 'BankTransfer' : persisted)
     } catch (value) { setError(checkoutErrorMessage(value)) }
     finally { setLoading(false) }
   }, [id])
@@ -39,18 +47,14 @@ export function CheckoutResultPage({ canRefreshPayment }: { canRefreshPayment: b
         await load()
         return
       }
+      const provider = latest?.provider === 'MercadoPago' ? 'MercadoPago' : latest?.provider === 'BankTransfer' ? 'BankTransfer' : selectedProvider
+      if (!provider) { setError('Seleccioná un medio de pago antes de continuar.'); return }
+      if (provider === 'MercadoPago' && !paymentMethods?.mercadoPagoAvailable) { setError(paymentMethods?.mercadoPagoUnavailableReason || 'Mercado Pago no está disponible.'); return }
+      savePaymentProvider(order.id, provider)
       const key = latest && terminalRetryablePayments.includes(latest.status) ? rotatePaymentKey(order.id) : paymentKey(order.id)
-      await api.createPayment(order.id, key)
+      await api.createPayment(order.id, provider, key)
       await load()
     } catch (value) { setError(checkoutErrorMessage(value)) }
-    finally { actionInProgress.current = false; setBusy(false) }
-  }
-
-  const cancel = async () => {
-    if (!order || actionInProgress.current) return
-    actionInProgress.current = true; setBusy(true); setError('')
-    try { setOrder(await api.cancelOrder(order.id, 'Cancelada por el usuario desde checkout')); setPayments(await api.orderPayments(order.id)) }
-    catch (value) { setError(checkoutErrorMessage(value)) }
     finally { actionInProgress.current = false; setBusy(false) }
   }
 
@@ -66,8 +70,8 @@ export function CheckoutResultPage({ canRefreshPayment }: { canRefreshPayment: b
     <div className={`result-hero ${paid ? 'success' : pending ? 'pending' : ''}`}><p className="eyebrow">ORDEN #{order.id}</p><h1>{paid ? '¡Pago aprobado!' : order.status === 'Canceled' ? 'Orden cancelada' : pending ? 'Estamos confirmando tu pago' : 'Orden creada'}</h1><p>{paid ? 'La compra quedó confirmada.' : pending ? 'El proveedor todavía no informó el resultado. Podés salir y volver a consultar esta orden.' : 'La orden permanece pendiente hasta que se apruebe un pago.'}</p></div>
     {error && <div className="error" role="alert">{error}</div>}
     <div className="checkout-result-layout"><div className="order-summary-card"><h2>Resumen de la orden</h2>{order.items.map(item => <div className="result-line" key={item.productId}><span>{item.quantity} × {item.productName}</span><strong>{money(item.subtotal)}</strong></div>)}{Boolean(order.shippingCost) && <div className="result-line"><span>Envío</span><strong>{money(order.shippingCost || 0)}</strong></div>}<div className="checkout-total"><span>Total</span><strong>{money(order.total)}</strong></div><p><strong>Entrega:</strong><br />{order.deliveryMethod === 'StorePickup' ? 'Retiro en tienda' : 'Envío a domicilio'}{order.shippingAddress && <><br />{order.shippingAddress}</>}</p>{order.deliveryMethod === 'StorePickup' && <div className="pickup-details"><strong>{order.pickupAddress}</strong>{order.pickupHours && <span>{order.pickupHours}</span>}{order.pickupInstructions && <p>{order.pickupInstructions}</p>}</div>}{order.deliveryMethod !== 'StorePickup' && order.carrier && <p><strong>Transportista:</strong> {order.carrier}<br /><strong>Seguimiento:</strong> {order.trackingNumber}</p>}{order.deliveryMethod !== 'StorePickup' && order.trackingUrl && <a className="link-button primary" href={order.trackingUrl} target="_blank" rel="noopener noreferrer">Seguir mi paquete</a>}<p><strong>Estado:</strong> {orderStatusLabel(order.status, order.deliveryMethod)}</p></div>
-      <div className="payment-card"><div className="payment-card-title"><h2>Estado del pago</h2></div>{!latest ? <p>Todavía no hay intentos de pago.</p> : <><span className={`status status-${latest.status.toLowerCase()}`}>{paymentLabels[latest.status]}</span><p>{paymentExplanation(latest.status, Boolean(latest.checkoutUrl))}</p><p><strong>{money(latest.amount, latest.currency)}</strong></p>{latest.failureReason && <p className="payment-failure">{latest.failureReason}</p>}{latest.checkoutUrl && /^https?:\/\//i.test(latest.checkoutUrl) && <a className="primary link-button" href={latest.checkoutUrl}>Continuar con el proveedor</a>}</>}
-        <div className="result-actions">{canPay && (!latest || terminalRetryablePayments.includes(latest.status) || canRefreshPayment) && <button className="primary" disabled={busy} onClick={() => void handlePaymentAction()}>{busy ? 'Procesando…' : latest && terminalRetryablePayments.includes(latest.status) ? 'Intentar pagar nuevamente' : latest ? 'Actualizar estado' : 'Iniciar pago'}</button>}{order.status === 'Pending' && <button disabled={busy} onClick={() => void cancel()}>Cancelar orden</button>}</div>
+      <div className="payment-card"><div className="payment-card-title"><h2>Estado del pago</h2></div>{!latest ? <><p>Todavía no hay intentos de pago. Elegí cómo continuar:</p><fieldset className="payment-methods"><legend>Medio de pago</legend><label><input type="radio" name="retryProvider" checked={selectedProvider === 'BankTransfer'} onChange={() => { setSelectedProvider('BankTransfer'); savePaymentProvider(order.id, 'BankTransfer') }} /> Transferencia bancaria</label><label><input type="radio" name="retryProvider" checked={selectedProvider === 'MercadoPago'} disabled={!paymentMethods?.mercadoPagoAvailable} onChange={() => { setSelectedProvider('MercadoPago'); savePaymentProvider(order.id, 'MercadoPago') }} /> Mercado Pago<small>{paymentMethods?.mercadoPagoAvailable ? 'Disponible' : paymentMethods?.mercadoPagoUnavailableReason || 'No disponible.'}</small></label></fieldset></> : <><span className={`status status-${latest.status.toLowerCase()}`}>{paymentLabels[latest.status]}</span><p>{latest.provider === 'BankTransfer' && latest.status === 'Pending' ? 'Transferí el monto exacto usando el pedido como referencia. Enviar un comprobante o iniciar la transferencia no confirma el pago: la orden se aprobará después de verificar la acreditación.' : paymentExplanation(latest.status, Boolean(latest.checkoutUrl))}</p><p><strong>{money(latest.amount, latest.currency)}</strong></p>{latest.provider === 'BankTransfer' && bankDetails && <dl className="bank-details"><div><dt>Referencia</dt><dd>Pedido #{order.id}</dd></div><div><dt>Banco</dt><dd>{bankDetails.bankName || 'A configurar'}</dd></div><div><dt>Titular</dt><dd>{bankDetails.accountHolder || 'A configurar'}</dd></div><div><dt>CBU</dt><dd>{bankDetails.cbu || 'A configurar'}</dd></div><div><dt>Alias</dt><dd>{bankDetails.alias || 'A configurar'}</dd></div>{bankDetails.cuit && <div><dt>CUIT</dt><dd>{bankDetails.cuit}</dd></div>}</dl>}{latest.failureReason && <p className="payment-failure">{latest.failureReason}</p>}{latest.checkoutUrl && /^https?:\/\//i.test(latest.checkoutUrl) && <a className="primary link-button" href={latest.checkoutUrl}>Continuar con el proveedor</a>}</>}
+        <div className="result-actions">{canPay && (!latest || terminalRetryablePayments.includes(latest.status) || canRefreshPayment) && <button className="primary" disabled={busy} onClick={() => void handlePaymentAction()}>{busy ? 'Procesando…' : latest && terminalRetryablePayments.includes(latest.status) ? 'Intentar pagar nuevamente' : latest ? 'Actualizar estado' : 'Iniciar pago'}</button>}</div>
       </div></div>
     <div className="result-navigation"><Link to="/ordenes">Ver todas mis órdenes</Link><Link to="/catalogo">Seguir comprando</Link></div>
   </section>

@@ -20,7 +20,7 @@ public record ProviderPaymentResult(
 public interface IPaymentGateway
 {
     bool CanHandle(string provider);
-    Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default);
+    Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default);
     Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default);
 }
 

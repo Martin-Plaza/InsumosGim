@@ -16,3 +16,7 @@ public record PaymentResponse(int Id, int OrderId, string Provider, string Exter
     string? ProviderPreferenceId, string? ProviderPaymentId, string? IdempotencyKey,
     decimal Amount, string Currency, string Status, string? CheckoutUrl, string? FailureReason,
     DateTime CreatedAt, DateTime? UpdatedAt, DateTime? PaidAt);
+
+public record BankTransferDetailsResponse(string BankName, string AccountHolder, string Cbu, string Alias, string Cuit);
+
+public record PaymentMethodsResponse(bool BankTransferAvailable, bool MercadoPagoAvailable, string? MercadoPagoUnavailableReason);

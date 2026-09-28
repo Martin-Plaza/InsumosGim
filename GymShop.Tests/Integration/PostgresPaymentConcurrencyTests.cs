@@ -203,7 +203,7 @@ public sealed class PostgresPaymentConcurrencyTests
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool CanHandle(string provider) => provider == "Mock";
 
-        public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
+        public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _calls);
             Entered.TrySetResult();
@@ -221,7 +221,7 @@ public sealed class PostgresPaymentConcurrencyTests
         public string? LastIdempotencyKey { get; private set; }
         public bool CanHandle(string provider) => provider == "Mock";
 
-        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
+        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
         {
             Calls++;
             LastIdempotencyKey = idempotencyKey;
@@ -235,7 +235,7 @@ public sealed class PostgresPaymentConcurrencyTests
     private sealed class FailingGateway : IPaymentGateway
     {
         public bool CanHandle(string provider) => provider == "Mock";
-        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default) =>
+        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default) =>
             throw new PaymentGatewayException("Gateway de prueba no disponible.");
         public Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

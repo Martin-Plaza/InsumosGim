@@ -5,6 +5,7 @@ using GymShop.Application.UseCases.Orders;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace GymShop.Application.UseCases.Payments;
 
@@ -267,10 +268,12 @@ internal static class PaymentCreator
         Payment reservation,
         CancellationToken cancellationToken)
     {
+        reservation.ExternalReference = PaymentExternalReferences.Build(order.Id, reservation.Id);
+        await db.SaveChangesAsync(cancellationToken);
         PaymentPreferenceResult preference;
         try
         {
-            preference = await gateway.CreatePreferenceAsync(order, reservation.IdempotencyKey, cancellationToken);
+            preference = await gateway.CreatePreferenceAsync(order, reservation.IdempotencyKey, reservation.ExternalReference, cancellationToken);
         }
         catch (PaymentGatewayException ex)
         {
@@ -413,6 +416,17 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Pago no encontrado.");
         }
 
+        if ((newStatus is PaymentStatus.Approved or PaymentStatus.Rejected or PaymentStatus.Canceled or PaymentStatus.Expired) &&
+            string.Equals(payment.Provider, "MercadoPago", StringComparison.OrdinalIgnoreCase))
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Mercado Pago solo puede resolverse mediante una notificacion verificada del proveedor.");
+        }
+
+        if (newStatus == PaymentStatus.Approved && string.Equals(payment.Provider, "BankTransfer", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(request.FailureReason))
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La referencia o motivo de la acreditacion es obligatorio.");
+        }
+
         return await PaymentStatusApplier.ApplyAsync(
             _db,
             payment,
@@ -467,21 +481,52 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La referencia externa del pago no corresponde a una orden valida.");
         }
 
-        var payment = await _db.Payments
+        var paymentQuery = _db.Payments
             .Include(x => x.Order)
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
             .Include(x => x.Order)
             .ThenInclude(x => x.CouponRedemption)
-            .SingleOrDefaultAsync(x =>
-                x.Provider == provider &&
-                (x.ProviderPaymentId == providerPayment.ProviderPaymentId ||
-                 (x.OrderId == orderId.Value && x.Status == PaymentStatus.Pending)),
-                cancellationToken);
+            .Where(x => x.Provider == provider);
+
+        var payment = await paymentQuery.SingleOrDefaultAsync(
+            x => x.ProviderPaymentId == providerPayment.ProviderPaymentId,
+            cancellationToken);
 
         if (payment is null)
         {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Pago local no encontrado para la notificacion.");
+            var referenceMatches = await paymentQuery
+                .Where(x => x.ExternalReference == providerPayment.ExternalReference)
+                .ToListAsync(cancellationToken);
+            if (referenceMatches.Count != 1)
+            {
+                var reason = referenceMatches.Count == 0
+                    ? "La notificacion de Mercado Pago no coincide con ningun intento local."
+                    : "La referencia legacy de Mercado Pago coincide con multiples intentos; requiere revision manual.";
+                var incident = new
+                {
+                    providerPayment.ProviderPaymentId,
+                    providerPayment.ExternalReference,
+                    matches = referenceMatches.Count
+                };
+                if (!await HasUnmatchedIncidentAsync(orderId.Value, incident.ProviderPaymentId, incident.ExternalReference, incident.matches, cancellationToken))
+                {
+                    AuditTrail.Add(_db, _auditContext, "PaymentWebhookUnmatched", "Order", orderId.Value,
+                        null,
+                        incident,
+                        reason);
+                    await _db.SaveChangesAsync(cancellationToken);
+                }
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, reason);
+            }
+
+            payment = referenceMatches[0];
+        }
+
+        if (payment.ProviderPaymentId is not null &&
+            !string.Equals(payment.ProviderPaymentId, providerPayment.ProviderPaymentId, StringComparison.Ordinal))
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La notificacion no corresponde al intento de pago original.");
         }
 
         if (payment.ProviderPaymentId is null)
@@ -531,6 +576,52 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             _auditContext,
             cancellationToken);
     }
+
+    private async Task<bool> HasUnmatchedIncidentAsync(
+        int orderId,
+        string providerPaymentId,
+        string externalReference,
+        int matches,
+        CancellationToken cancellationToken)
+    {
+        var recordedValues = await _db.AuditEntries
+            .AsNoTracking()
+            .Where(x => x.Action == "PaymentWebhookUnmatched" &&
+                        x.EntityType == "Order" &&
+                        x.EntityId == orderId.ToString() &&
+                        x.NewValue != null)
+            .Select(x => x.NewValue!)
+            .ToListAsync(cancellationToken);
+
+        return recordedValues.Any(value => IsSameUnmatchedIncident(
+            value,
+            providerPaymentId,
+            externalReference,
+            matches));
+    }
+
+    private static bool IsSameUnmatchedIncident(
+        string value,
+        string providerPaymentId,
+        string externalReference,
+        int matches)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            var root = document.RootElement;
+            return root.TryGetProperty("providerPaymentId", out var recordedPaymentId) &&
+                   string.Equals(recordedPaymentId.GetString(), providerPaymentId, StringComparison.Ordinal) &&
+                   root.TryGetProperty("externalReference", out var recordedReference) &&
+                   string.Equals(recordedReference.GetString(), externalReference, StringComparison.Ordinal) &&
+                   root.TryGetProperty("matches", out var recordedMatches) &&
+                   recordedMatches.TryGetInt32(out var count) && count == matches;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 }
 
 internal static class PaymentQueries
@@ -561,6 +652,24 @@ internal static class PaymentStatusApplier
     {
         if (payment.Status == newStatus)
         {
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+        }
+
+        if (isProviderNotification && newStatus == PaymentStatus.Approved &&
+            payment.Status == PaymentStatus.Canceled && payment.Order.Status == OrderStatus.Canceled)
+        {
+            var canceledPaymentStatus = payment.Status;
+            const string incident = "Mercado Pago informo una aprobacion despues de la cancelacion administrativa; requiere revision y devolucion.";
+            payment.Status = PaymentStatus.Approved;
+            payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
+            payment.FailureReason = incident;
+            payment.PaidAt = DateTime.UtcNow;
+            payment.UpdatedAt = DateTime.UtcNow;
+            AuditTrail.Add(db, auditContext, "PaymentApprovedAfterOrderCancellation", "Payment", payment.Id,
+                new { paymentStatus = canceledPaymentStatus.ToString(), orderStatus = payment.Order.Status.ToString() },
+                new { paymentStatus = payment.Status.ToString(), orderStatus = payment.Order.Status.ToString(), incident = true },
+                incident);
+            await db.SaveChangesAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
@@ -620,7 +729,8 @@ internal static class PaymentStatusApplier
         var previousOrderStatus = payment.Order.Status;
         payment.Status = newStatus;
         payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
-        payment.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
+        var resolutionReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
+        payment.FailureReason = resolutionReason;
         payment.UpdatedAt = DateTime.UtcNow;
 
         if (newStatus == PaymentStatus.Approved)
@@ -647,7 +757,7 @@ internal static class PaymentStatusApplier
             "Payment", payment.Id,
             new { paymentStatus = previousPaymentStatus.ToString(), orderStatus = previousOrderStatus.ToString() },
             new { paymentStatus = payment.Status.ToString(), orderStatus = payment.Order.Status.ToString() },
-            payment.FailureReason);
+            resolutionReason);
 
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
@@ -683,11 +793,16 @@ internal static class PaymentStatusMapper
 
 internal static class PaymentExternalReferences
 {
+    public static string Build(int orderId, int paymentId) => $"order-{orderId}-payment-{paymentId}";
+
     public static int? TryGetOrderId(string externalReference)
     {
         const string prefix = "order-";
-        return externalReference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-               int.TryParse(externalReference[prefix.Length..], out var orderId)
+        if (!externalReference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var value = externalReference[prefix.Length..];
+        var separator = value.IndexOf("-payment-", StringComparison.OrdinalIgnoreCase);
+        if (separator >= 0) value = value[..separator];
+        return int.TryParse(value, out var orderId)
             ? orderId
             : null;
     }

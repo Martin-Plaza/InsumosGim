@@ -8,7 +8,7 @@ const product = { id: 4, name: 'Kettlebell 16kg', price: 42000, stock: 12, image
 const cart = { id: 1, userId: 7, subtotal: 84000, discount: 0, couponCode: null, total: 84000, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000, stock: product.stock, imageUrl: product.imageUrl }] }
 const emptyCart = { ...cart, total: 0, items: [] }
 const order: Order = { id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', createdAt: '2026-08-11T10:00:00Z', updatedAt: null, total: 84000, status: 'Pending', shippingAddress: 'Av. Siempre Viva 742, Córdoba', cancellationReason: null, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000 }], payments: [] }
-const payment = (status: Payment['status']): Payment => ({ id: 91, orderId: 81, provider: 'Mock', externalReference: 'order-81', providerPreferenceId: null, providerPaymentId: null, idempotencyKey: 'key', amount: 84000, currency: 'ARS', status, checkoutUrl: null, failureReason: status === 'Rejected' ? 'Rechazado por Mock.' : null, createdAt: '2026-08-11T10:00:01Z', updatedAt: null, paidAt: null })
+const payment = (status: Payment['status']): Payment => ({ id: 91, orderId: 81, provider: 'BankTransfer', externalReference: 'order-81', providerPreferenceId: null, providerPaymentId: null, idempotencyKey: 'key', amount: 84000, currency: 'ARS', status, checkoutUrl: null, failureReason: status === 'Rejected' ? 'Transferencia rechazada.' : null, createdAt: '2026-08-11T10:00:01Z', updatedAt: null, paidAt: null })
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } }))
 
 function authenticate() {
@@ -19,7 +19,84 @@ function authenticate() {
 describe('checkout y pago por orderId', () => {
   beforeEach(() => { localStorage.clear(); sessionStorage.clear(); window.history.replaceState(null, '', '/checkout'); vi.restoreAllMocks(); authenticate() })
 
-  it('revisa, crea una sola orden y crea el pago Mock por orderId con clave estable', async () => {
+  it('permite elegir Mercado Pago sin ofrecer Mock como medio comercial', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: true, mercadoPagoUnavailableReason: null })
+      if (url.endsWith('/api/cart')) return json(cart)
+      return json([])
+    })
+    render(<App />)
+    const mercadoPago = await screen.findByRole('radio', { name: /Mercado Pago/ })
+    expect(screen.getByRole('radio', { name: /Transferencia bancaria/ })).toBeChecked()
+    expect(screen.queryByRole('radio', { name: /Mock/ })).not.toBeInTheDocument()
+    await userEvent.click(mercadoPago)
+    expect(mercadoPago).toBeChecked()
+  })
+
+  it('informa y deshabilita Mercado Pago cuando la API lo declara no disponible antes de crear el pedido', async () => {
+    let checkoutPosts = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); const method = init?.method || 'GET'
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: false, mercadoPagoUnavailableReason: 'Mercado Pago no está disponible en este momento.' })
+      if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkoutPosts++; return json(order) }
+      if (url.endsWith('/api/cart')) return json(cart)
+      return json([])
+    })
+    render(<App />)
+    const mercadoPago = await screen.findByRole('radio', { name: /Mercado Pago/ })
+    expect(mercadoPago).toBeDisabled()
+    expect(screen.getByText('Mercado Pago no está disponible en este momento.')).toBeInTheDocument()
+    expect(checkoutPosts).toBe(0)
+  })
+
+  it('recupera Mercado Pago tras una recarga cuando la creación falló antes de guardar un intento', async () => {
+    let checkedOut = false
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); const method = init?.method || 'GET'
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : cart)
+      if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; return json(order) }
+      if (url.endsWith('/api/orders/81/payments') && method === 'POST') return json({ detail: 'No se pudo crear la preferencia.' }, 503)
+      if (url.endsWith('/api/orders/81')) return json(order)
+      if (url.endsWith('/api/payments/orders/81')) return json([])
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: true, mercadoPagoUnavailableReason: null })
+      if (url.endsWith('/api/payments/bank-transfer-details')) return json({ bankName: '', accountHolder: '', cbu: '', alias: '', cuit: '' })
+      return json([])
+    })
+    const first = render(<App />)
+    await userEvent.click(await screen.findByRole('radio', { name: /Mercado Pago/ }))
+    await userEvent.type(screen.getByLabelText('Dirección completa'), order.shippingAddress)
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
+    expect(await screen.findByRole('radio', { name: /Mercado Pago/ })).toBeChecked()
+    expect(localStorage.getItem('gymshop.payment-provider.81')).toBe('MercadoPago')
+    first.unmount()
+    render(<App />)
+    expect(await screen.findByRole('radio', { name: /Mercado Pago/ })).toBeChecked()
+  })
+
+  it('desde Mis órdenes pide elegir el medio si no existe un intento ni una elección recuperable', async () => {
+    window.history.replaceState(null, '', '/ordenes')
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart')) return json(emptyCart)
+      if (url.endsWith('/api/orders/my')) return json([{ id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', createdAt: order.createdAt, total: order.total, status: 'Pending', updatedAt: null, lastPaymentStatus: null, lastPaymentId: null }])
+      if (url.endsWith('/api/orders/81')) return json(order)
+      if (url.endsWith('/api/payments/orders/81')) return json([])
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: true, mercadoPagoUnavailableReason: null })
+      return json([])
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /#81/ }))
+    await userEvent.click(await screen.findByRole('link', { name: /Crear \/ consultar pago/ }))
+    expect(await screen.findByText('Todavía no hay intentos de pago. Elegí cómo continuar:')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Transferencia bancaria/ })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: /Mercado Pago/ })).not.toBeChecked()
+  })
+
+  it('revisa, crea una sola orden y crea la transferencia por orderId con clave estable', async () => {
     let checkedOut = false
     const calls: Array<{ url: string; method: string; body: string | null }> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
@@ -44,7 +121,7 @@ describe('checkout y pago por orderId', () => {
     expect(JSON.parse(checkoutCall!.body || '{}')).toMatchObject({ deliveryMethod: 'HomeDelivery', expectedShippingCost: 6500, expectedSubtotal: 84000, expectedDiscount: 0 })
     const paymentCall = calls.find(call => call.url.endsWith('/api/orders/81/payments') && call.method === 'POST')
     expect(paymentCall).toBeTruthy()
-    expect(JSON.parse(paymentCall!.body || '{}').provider).toBe('Mock')
+    expect(JSON.parse(paymentCall!.body || '{}').provider).toBe('BankTransfer')
     expect(JSON.parse(paymentCall!.body || '{}').idempotencyKey).toBe(localStorage.getItem('gymshop.payment-key.81'))
     expect(calls.some(call => call.url.includes('/api/payments/current'))).toBe(false)
   })
@@ -244,7 +321,7 @@ describe('checkout y pago por orderId', () => {
     render(<App />)
     await screen.findAllByText('Pendiente')
     expect(screen.queryByRole('button', { name: 'Actualizar estado' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cancelar orden' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancelar orden' })).not.toBeInTheDocument()
   })
 
   it('muestra el snapshot de retiro en el detalle de Mis órdenes', async () => {

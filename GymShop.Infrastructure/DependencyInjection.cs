@@ -56,7 +56,9 @@ public static class DependencyInjection
             services.AddScoped<IPasswordResetEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
         }
         services.AddHttpClient<IExternalIdentityVerifier, GoogleIdentityVerifier>(client => client.BaseAddress = new Uri("https://oauth2.googleapis.com/"));
-        services.AddScoped<IPaymentGateway, MockPaymentGateway>();
+        services.Configure<BankTransferOptions>(configuration.GetSection(BankTransferOptions.SectionName));
+        services.AddScoped<IPaymentGateway, BankTransferPaymentGateway>();
+        if (environment.IsDevelopment()) services.AddScoped<IPaymentGateway, MockPaymentGateway>();
         services.AddHttpClient<IPaymentGateway, MercadoPagoPaymentGateway>(client =>
         {
             client.BaseAddress = new Uri("https://api.mercadopago.com/");

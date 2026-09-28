@@ -95,7 +95,7 @@ public sealed class HttpWebhookTests : IAsyncLifetime
         public string ExternalReference { get; set; } = string.Empty;
         public int GetCalls { get; private set; }
         public bool CanHandle(string provider) => provider.Equals("MercadoPago", StringComparison.OrdinalIgnoreCase);
-        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default) =>
+        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default)
         {

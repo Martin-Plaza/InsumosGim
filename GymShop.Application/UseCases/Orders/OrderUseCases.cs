@@ -160,8 +160,8 @@ public class GetOrdersUseCase : IGetOrdersUseCase
 
 public sealed class GetOrderHistoryUseCase : IGetOrderHistoryUseCase
 {
-    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively"];
-    private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged"];
+    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively", "PaymentWebhookUnmatched"];
+    private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged", "PaymentApprovedAfterOrderCancellation"];
     private readonly IApplicationDbContext _db;
 
     public GetOrderHistoryUseCase(IApplicationDbContext db) => _db = db;
@@ -261,9 +261,9 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
         }
 
-        if (order.UserId != userId && !canManageAll)
+        if (!canManageAll)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Forbidden, "No tenes permisos para cancelar este pedido.");
+            return AppResult<OrderResponse>.Failure(AppErrorType.Forbidden, "Solo un administrador puede cancelar pedidos.");
         }
 
         if (order.Status == OrderStatus.Canceled)
@@ -276,9 +276,10 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Solo se pueden cancelar pedidos pendientes desde este flujo.");
         }
 
-        var reason = string.IsNullOrWhiteSpace(request.Reason)
-            ? "Cancelacion solicitada para el pedido."
-            : request.Reason.Trim();
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El motivo de cancelacion es obligatorio.");
+
+        var reason = request.Reason.Trim();
         OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
         AuditTrail.Add(_db, _auditContext, "OrderCanceled", "Order", order.Id,
             new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() }, reason);
@@ -313,7 +314,9 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
             .Include(x => x.Items).ThenInclude(x => x.ProductVariant)
             .Include(x => x.Payments)
             .Include(x => x.CouponRedemption)
-            .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff)
+            .Where(x => x.Status == OrderStatus.Pending && x.CreatedAt <= cutoff &&
+                        !x.Payments.Any(payment => payment.Provider == "MercadoPago" &&
+                            (payment.Status == PaymentStatus.Creating || payment.Status == PaymentStatus.Pending)))
             .ToListAsync(cancellationToken);
 
         foreach (var order in orders)
@@ -427,6 +430,9 @@ public class UpdateOrderStatusUseCase : IUpdateOrderStatusUseCase
         {
             return AppResult.Failure(AppErrorType.Conflict, "Transicion de estado invalida. Los pagos y reembolsos deben resolverse desde su flujo especifico.");
         }
+
+        if (status == OrderStatus.Canceled)
+            return AppResult.Failure(AppErrorType.Validation, "Usa el flujo de cancelacion con motivo obligatorio.");
 
         var trackingResult = ValidateTracking(order, status, request);
         if (trackingResult is not null) return trackingResult;
@@ -560,7 +566,10 @@ internal static class OrderMapper
                 .ToList(),
             order.Payments
                 .OrderByDescending(x => x.Id)
-                .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt))
+                .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt,
+                    x.FailureReason,
+                    order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved &&
+                    string.Equals(x.Provider, "MercadoPago", StringComparison.OrdinalIgnoreCase)))
                 .ToList()
         );
     }

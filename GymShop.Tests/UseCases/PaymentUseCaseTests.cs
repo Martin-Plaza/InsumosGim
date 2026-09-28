@@ -86,6 +86,7 @@ public class PaymentUseCaseTests
         Assert.Equal("pref-123", result.Value?.ProviderPreferenceId);
         Assert.Equal("https://sandbox.mercadopago.test/checkout", result.Value?.CheckoutUrl);
         Assert.Equal("idem-1", db.Payments.Single().IdempotencyKey);
+        Assert.Equal($"order-{order.Id}-payment-{result.Value?.Id}", gateway.LastExternalReference);
     }
 
     [Fact]
@@ -460,6 +461,149 @@ public class PaymentUseCaseTests
         return user;
     }
 
+    [Fact]
+    public async Task Bank_transfer_approval_requires_reference_and_is_idempotent()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "BankTransfer");
+        var useCase = new UpdatePaymentStatusUseCase(db, new FakeAuditContext(user.Id, "bank-confirmation"));
+
+        var missingReference = await useCase.ExecuteAsync(payment.Id, new UpdatePaymentStatusRequest("Approved", null, null));
+        Assert.False(missingReference.IsSuccess);
+
+        var first = await useCase.ExecuteAsync(payment.Id, new UpdatePaymentStatusRequest("Approved", null, "Movimiento 7788 acreditado"));
+        var duplicate = await useCase.ExecuteAsync(payment.Id, new UpdatePaymentStatusRequest("Approved", null, "Movimiento 7788 acreditado"));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(duplicate.IsSuccess);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        var audit = Assert.Single(db.AuditEntries);
+        Assert.Equal("Movimiento 7788 acreditado", audit.Reason);
+        Assert.Equal(user.Id, audit.ActorUserId);
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Rejected")]
+    [InlineData("Canceled")]
+    [InlineData("Expired")]
+    public async Task MercadoPago_cannot_be_resolved_manually(string status)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+
+        var result = await new UpdatePaymentStatusUseCase(db).ExecuteAsync(
+            payment.Id, new UpdatePaymentStatusRequest(status, null, "No permitido"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+    }
+
+    [Fact]
+    public async Task Admin_cancel_with_pending_MercadoPago_restores_stock_once_and_late_approval_creates_idempotent_incident()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var mercadoPagoPayment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        mercadoPagoPayment.ProviderPaymentId = "mp-after-admin-attempt";
+        await db.SaveChangesAsync();
+
+        var deniedClient = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Cliente"));
+        Assert.False(deniedClient.IsSuccess);
+        var missingReason = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest(null));
+        Assert.False(missingReason.IsSuccess);
+
+        var cancellationUseCase = new CancelOrderUseCase(db, new FakeAuditContext(user.Id, "admin-cancel"));
+        var cancellation = await cancellationUseCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Pedido duplicado confirmado por soporte"));
+        var duplicateCancellation = await cancellationUseCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Pedido duplicado confirmado por soporte"));
+        Assert.True(cancellation.IsSuccess);
+        Assert.True(duplicateCancellation.IsSuccess);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(5, db.Products.Single().Stock);
+        Assert.Single(db.StockMovements);
+
+        var gateway = new FakeMercadoPagoGateway { PaymentStatus = "approved", Amount = order.Total, ExternalReference = $"order-{order.Id}" };
+        var webhook = new HandlePaymentWebhookUseCase(db, [gateway]);
+        var mismatched = await webhook.ExecuteAsync("MercadoPago", "different-payment");
+        Assert.False(mismatched.IsSuccess);
+        Assert.Equal(PaymentStatus.Canceled, mercadoPagoPayment.Status);
+        var approval = await webhook.ExecuteAsync("MercadoPago", "mp-after-admin-attempt");
+        var duplicateApproval = await webhook.ExecuteAsync("MercadoPago", "mp-after-admin-attempt");
+
+        Assert.True(approval.IsSuccess);
+        Assert.True(duplicateApproval.IsSuccess);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(PaymentStatus.Approved, db.Payments.Single().Status);
+        Assert.Equal(5, db.Products.Single().Stock);
+        Assert.Single(db.StockMovements);
+        Assert.Contains("requiere revision", db.Payments.Single().FailureReason);
+        Assert.Single(db.AuditEntries.Where(x => x.Action == "PaymentApprovedAfterOrderCancellation"));
+    }
+
+    [Fact]
+    public async Task Webhook_matches_each_of_two_canceled_MercadoPago_attempts_by_unique_external_reference()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        var first = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        first.ExternalReference = $"order-{order.Id}-payment-{first.Id}";
+        await db.SaveChangesAsync();
+        var canceled = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Fraude detectado"));
+        Assert.True(canceled.IsSuccess);
+
+        var second = new Payment
+        {
+            OrderId = order.Id, Provider = "MercadoPago", ExternalReference = "temporary",
+            Amount = order.Total, Currency = "ARS", Status = PaymentStatus.Canceled
+        };
+        db.Payments.Add(second);
+        await db.SaveChangesAsync();
+        second.ExternalReference = $"order-{order.Id}-payment-{second.Id}";
+        await db.SaveChangesAsync();
+
+        var gateway = new FakeMercadoPagoGateway { PaymentStatus = "approved", Amount = order.Total };
+        var webhook = new HandlePaymentWebhookUseCase(db, [gateway]);
+        gateway.ExternalReference = $"order-{order.Id}-payment-999999";
+        var unknown = await webhook.ExecuteAsync("MercadoPago", "unknown-provider-id");
+        var duplicateUnknown = await webhook.ExecuteAsync("MercadoPago", "unknown-provider-id");
+        Assert.False(unknown.IsSuccess);
+        Assert.False(duplicateUnknown.IsSuccess);
+        Assert.All(new[] { first, second }, payment => Assert.Equal(PaymentStatus.Canceled, payment.Status));
+
+        gateway.ExternalReference = first.ExternalReference;
+        Assert.True((await webhook.ExecuteAsync("MercadoPago", "provider-first")).IsSuccess);
+        Assert.Equal(PaymentStatus.Approved, first.Status);
+        Assert.Equal(PaymentStatus.Canceled, second.Status);
+
+        gateway.ExternalReference = second.ExternalReference;
+        Assert.True((await webhook.ExecuteAsync("MercadoPago", "provider-second")).IsSuccess);
+        Assert.True((await webhook.ExecuteAsync("MercadoPago", "provider-second")).IsSuccess);
+        Assert.Equal(PaymentStatus.Approved, second.Status);
+        var legacyOne = new Payment { OrderId = order.Id, Provider = "MercadoPago", ExternalReference = $"order-{order.Id}", Amount = order.Total, Currency = "ARS", Status = PaymentStatus.Canceled };
+        var legacyTwo = new Payment { OrderId = order.Id, Provider = "MercadoPago", ExternalReference = $"order-{order.Id}", Amount = order.Total, Currency = "ARS", Status = PaymentStatus.Canceled };
+        db.Payments.AddRange(legacyOne, legacyTwo);
+        await db.SaveChangesAsync();
+        gateway.ExternalReference = $"order-{order.Id}";
+        var ambiguousLegacy = await webhook.ExecuteAsync("MercadoPago", "legacy-provider-id");
+        var duplicateAmbiguousLegacy = await webhook.ExecuteAsync("MercadoPago", "legacy-provider-id");
+        Assert.False(ambiguousLegacy.IsSuccess);
+        Assert.False(duplicateAmbiguousLegacy.IsSuccess);
+        Assert.Equal(PaymentStatus.Canceled, legacyOne.Status);
+        Assert.Equal(PaymentStatus.Canceled, legacyTwo.Status);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(5, db.Products.Single().Stock);
+        Assert.Single(db.StockMovements);
+        Assert.Equal(2, db.AuditEntries.Count(x => x.Action == "PaymentApprovedAfterOrderCancellation"));
+        Assert.Equal(2, db.AuditEntries.Count(x => x.Action == "PaymentWebhookUnmatched"));
+    }
+
     private static async Task<Order> SeedOrderAsync(GymShop.Infrastructure.Data.GymShopDbContext db, int userId, int stock, int quantity, decimal price)
     {
         var product = new Product
@@ -523,12 +667,14 @@ public class PaymentUseCaseTests
         public string PaymentStatus { get; set; } = "approved";
         public string ExternalReference { get; set; } = "order-1";
         public decimal Amount { get; set; } = 200;
+        public string? LastExternalReference { get; private set; }
 
         public bool CanHandle(string provider) => string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
 
-        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, CancellationToken cancellationToken = default)
+        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
         {
             CreatePreferenceCalls++;
+            LastExternalReference = externalReference;
             return Task.FromResult(new PaymentPreferenceResult("MercadoPago", "pref-123", "https://sandbox.mercadopago.test/checkout"));
         }
 

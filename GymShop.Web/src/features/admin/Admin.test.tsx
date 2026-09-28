@@ -28,6 +28,7 @@ function apiMock(input: RequestInfo | URL, init?: RequestInit) {
   if (url.includes('/api/cart')) return response({ id: 1, userId: 1, total: 0, items: [] })
   if (url.includes('/api/products')) return init?.method === 'PATCH' ? response(null) : response(products)
   if (url.includes('/api/orders/10/history')) return response(orderHistory)
+  if (url.includes('/api/orders/10/cancel')) return response({ ...orderDetail, status: 'Canceled', cancellationReason: 'Pedido duplicado' })
   if (/\/api\/orders\/10$/.test(url)) return response(orderDetail)
   if (url.includes('/api/orders')) return init?.method === 'PATCH' ? Promise.resolve(new Response(null, { status: 204 })) : response(orderPage)
   if (url.includes('/api/users')) return response([])
@@ -111,15 +112,32 @@ describe('panel administrativo', () => {
     render(<App />)
     await userEvent.click(await screen.findByText('#10'))
     expect(await screen.findByRole('heading', { name: /15\.000,00/ })).toBeInTheDocument()
-    expect(screen.getByText(/pasará a pagado únicamente cuando el proveedor confirme el pago/i)).toBeInTheDocument()
+    expect(screen.getByText(/Podés cancelarlo indicando un motivo/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /pagado/i })).not.toBeInTheDocument()
     expect(await screen.findByText('Estado del pedido actualizado')).toBeInTheDocument()
     expect(screen.getByText('Admin Gym · admin@gym.com')).toBeInTheDocument()
     expect(screen.getByText('Reembolso parcial informado por el proveedor')).toBeInTheDocument()
     expect(screen.getByText('Reembolso parcial; requiere gestión manual.')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Marcar como cancelado' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/orders/10/status'), expect.objectContaining({ method: 'PATCH' })))
+    await userEvent.type(screen.getByLabelText('Motivo de cancelación'), 'Pedido duplicado')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar pedido' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/orders/10/cancel'), expect.objectContaining({ method: 'POST' })))
     expect(window.confirm).toHaveBeenCalled()
+  })
+
+  it('muestra una incidencia destacada cuando MP aprobó después de cancelar', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const incidentOrder = { ...orderDetail, status: 'Canceled', cancellationReason: 'Fraude', payments: [{ id: 44, provider: 'MercadoPago', amount: 15000, currency: 'ARS', status: 'Approved', createdAt: '2026-09-20T12:00:00Z', paidAt: '2026-09-20T15:00:00Z', failureReason: 'Requiere revisión y devolución.', requiresReview: true }] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(incidentOrder)
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Pago aprobado después de cancelar')
+    expect(alert).toHaveTextContent('Requiere revisión y devolución')
   })
 
   it('mantiene el detalle visible si falla el historial y permite reintentarlo', async () => {

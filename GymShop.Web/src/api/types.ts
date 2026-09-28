@@ -31,9 +31,12 @@ export interface ProductImageUpload { url: string; key: string }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
 export interface Cart { id: number; userId: number; subtotal: number; discount: number; total: number; couponCode: string | null; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
-export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null }
+export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null; failureReason?: string | null; requiresReview?: boolean }
 export type DeliveryMethod = 'StorePickup' | 'HomeDelivery'
 export interface ShippingOptions { homeDeliveryCost: number; pickupAddress: string; pickupInstructions: string; pickupHours: string }
+export type PaymentProvider = 'BankTransfer' | 'MercadoPago'
+export interface BankTransferDetails { bankName: string; accountHolder: string; cbu: string; alias: string; cuit: string }
+export interface PaymentMethods { bankTransferAvailable: boolean; mercadoPagoAvailable: boolean; mercadoPagoUnavailableReason: string | null }
 export interface Order { id: number; userId: number; userEmail: string | null; userName: string; createdAt: string; subtotal?: number; couponCode?: string | null; discountAmount?: number; deliveryMethod?: DeliveryMethod; shippingCost?: number; total: number; status: OrderStatus; shippingAddress: string; pickupAddress?: string; pickupHours?: string; pickupInstructions?: string; carrier?: string | null; trackingNumber?: string | null; trackingUrl?: string | null; cancellationReason: string | null; updatedAt: string | null; items: OrderItem[]; payments: OrderPayment[] }
 export type CouponType = 'Percentage' | 'FixedAmount'
 export interface Coupon { id: number; code: string; name: string; type: CouponType; value: number; minimumPurchase: number | null; maximumDiscount: number | null; startsAtUtc: string | null; endsAtUtc: string | null; totalUsageLimit: number | null; usageLimitPerUser: number | null; isActive: boolean; reservedUses: number; consumedUses: number; createdAtUtc: string; updatedAtUtc: string | null }

@@ -26,6 +26,7 @@ public class PaymentsController : ApiControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly MercadoPagoOptions _mercadoPagoOptions;
     private readonly IGymShopRequestLimiter _requestLimiter;
+    private readonly BankTransferOptions _bankTransferOptions;
 
     public PaymentsController(
         ICreatePaymentUseCase createPayment,
@@ -35,7 +36,8 @@ public class PaymentsController : ApiControllerBase
         IHandlePaymentWebhookUseCase handlePaymentWebhook,
         ICurrentUserService currentUser,
         IOptions<MercadoPagoOptions> mercadoPagoOptions,
-        IGymShopRequestLimiter requestLimiter)
+        IGymShopRequestLimiter requestLimiter,
+        IOptions<BankTransferOptions> bankTransferOptions)
     {
         _createPayment = createPayment;
         _getPaymentById = getPaymentById;
@@ -45,7 +47,29 @@ public class PaymentsController : ApiControllerBase
         _currentUser = currentUser;
         _mercadoPagoOptions = mercadoPagoOptions.Value;
         _requestLimiter = requestLimiter;
+        _bankTransferOptions = bankTransferOptions.Value;
     }
+
+    [HttpGet("bank-transfer-details")]
+    public ActionResult<BankTransferDetailsResponse> GetBankTransferDetails() => Ok(new BankTransferDetailsResponse(
+        _bankTransferOptions.BankName,
+        _bankTransferOptions.AccountHolder,
+        _bankTransferOptions.Cbu,
+        _bankTransferOptions.Alias,
+        _bankTransferOptions.Cuit));
+
+    [HttpGet("methods")]
+    public ActionResult<PaymentMethodsResponse> GetMethods()
+    {
+        var mercadoPagoAvailable = IsMercadoPagoAvailable(_mercadoPagoOptions);
+        return Ok(new PaymentMethodsResponse(
+            BankTransferAvailable: true,
+            MercadoPagoAvailable: mercadoPagoAvailable,
+            MercadoPagoUnavailableReason: mercadoPagoAvailable ? null : "Mercado Pago no está disponible en este momento."));
+    }
+
+    public static bool IsMercadoPagoAvailable(MercadoPagoOptions options) =>
+        options.Enabled && !string.IsNullOrWhiteSpace(options.AccessToken);
 
     [HttpPost("/api/orders/{orderId:int}/payments")]
     [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]

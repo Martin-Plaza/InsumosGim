@@ -165,8 +165,8 @@ public sealed class StockUseCaseTests
         var sale = Assert.Single(db.StockMovements); Assert.Equal(StockMovementType.Sale, sale.Type); Assert.Equal(-2, sale.Quantity);
 
         var cancel = new CancelOrderUseCase(db, new FakeAuditContext(user.Id, "cancel"));
-        Assert.True((await cancel.ExecuteAsync(checkout.Value!.Id, user.Id, false, new CancelOrderRequest("Cancelado"))).IsSuccess);
-        Assert.True((await cancel.ExecuteAsync(checkout.Value.Id, user.Id, false, new CancelOrderRequest("Reintento"))).IsSuccess);
+        Assert.True((await cancel.ExecuteAsync(checkout.Value!.Id, user.Id, true, new CancelOrderRequest("Cancelado"))).IsSuccess);
+        Assert.True((await cancel.ExecuteAsync(checkout.Value.Id, user.Id, true, new CancelOrderRequest("Reintento"))).IsSuccess);
         Assert.Equal(5, product.Stock); Assert.Equal(2, await db.StockMovements.CountAsync());
         Assert.Single(db.StockMovements.Where(x => x.Type == StockMovementType.CancellationReturn));
     }

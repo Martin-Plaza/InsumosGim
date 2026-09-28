@@ -9,9 +9,9 @@ import { orderStatusLabel } from '../orders/orderPresentation'
 
 const initialPage: OrderPage = { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 }
 const statusLabels: Record<string, string> = { Pending: 'Pendiente', Paid: 'Pagado', Preparing: 'Preparando', Shipped: 'Enviado', Delivered: 'Entregado', Canceled: 'Cancelado', Refunded: 'Reembolsado', Creating: 'Creando pago', Approved: 'Aprobado', Rejected: 'Rechazado', Expired: 'Vencido' }
-const nextStatuses: Partial<Record<OrderStatus, OrderStatus[]>> = { Pending: ['Canceled'], Paid: ['Preparing'], Preparing: ['Shipped'], Shipped: ['Delivered'] }
+const nextStatuses: Partial<Record<OrderStatus, OrderStatus[]>> = { Paid: ['Preparing'], Preparing: ['Shipped'], Shipped: ['Delivered'] }
 const transitionGuidance: Record<OrderStatus, string> = {
-  Pending: 'El pedido pasará a pagado únicamente cuando el proveedor confirme el pago. Desde aquí sólo podés cancelarlo.',
+  Pending: 'Podés cancelarlo indicando un motivo. Si existe un pago tardío, quedará señalado para revisión.',
   Paid: 'El pago ya fue confirmado. Podés iniciar la preparación del pedido.',
   Preparing: 'Cuando completes la preparación, marcá el pedido como enviado o listo para retirar.',
   Shipped: 'Confirmá la entrega cuando el cliente haya recibido o retirado el pedido.',
@@ -19,7 +19,7 @@ const transitionGuidance: Record<OrderStatus, string> = {
   Canceled: 'El pedido fue cancelado y no admite más cambios administrativos.',
   Refunded: 'El reembolso se resolvió desde el flujo de pagos; no admite cambios administrativos.'
 }
-const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor' }
+const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
 const sourceLabels = { Manual: 'Manual', Automatic: 'Automático', Provider: 'Proveedor' }
 const formatDate = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const utcStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : undefined
@@ -76,6 +76,8 @@ export function AdminOrders() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
   const [tracking, setTracking] = useState({ carrier: '', trackingNumber: '', trackingUrl: '' })
+  const [transferReference, setTransferReference] = useState('')
+  const [cancellationReason, setCancellationReason] = useState('')
   const historyRequest = useRef(0)
   const openOrderId = useRef<number | null>(null)
   const lastLoadedFilterKey = useRef<string | null>(null)
@@ -122,6 +124,31 @@ export function AdminOrders() {
       setDetail(updated); setSuccess(`Pedido #${detail.id} actualizado a ${orderStatusLabel(status, detail.deliveryMethod)}.`); await Promise.all([load(normalized.filters), loadHistory(detail.id)])
     } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
+  const confirmTransfer = async (paymentId: number) => {
+    if (!detail || pending) return
+    const reference = transferReference.trim()
+    if (!reference) { setError('Ingresá la referencia o motivo de la acreditación.'); return }
+    if (!window.confirm(`¿Confirmás que verificaste la acreditación bancaria del pedido #${detail.id}? Esta acción marcará el pago y el pedido como pagados.`)) return
+    setPending(true); setError(''); setSuccess('')
+    try {
+      await api.setPaymentStatus(paymentId, 'Approved', reference)
+      const updated = await api.order(detail.id)
+      setDetail(updated); setTransferReference(''); setSuccess(`Transferencia del pedido #${detail.id} confirmada.`)
+      await Promise.all([load(normalized.filters), loadHistory(detail.id)])
+    } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
+  }
+  const cancelOrder = async () => {
+    if (!detail || pending) return
+    const reason = cancellationReason.trim()
+    if (!reason) { setError('Ingresá el motivo de cancelación.'); return }
+    if (!window.confirm(`¿Cancelar el pedido #${detail.id}? Se repondrá el stock reservado.`)) return
+    setPending(true); setError(''); setSuccess('')
+    try {
+      const updated = await api.cancelOrder(detail.id, reason)
+      setDetail(updated); setCancellationReason(''); setSuccess(`Pedido #${detail.id} cancelado.`)
+      await Promise.all([load(normalized.filters), loadHistory(detail.id)])
+    } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
+  }
   const transitions = detail ? nextStatuses[detail.status] || [] : []
   const closeDetail = () => { openOrderId.current = null; historyRequest.current += 1; setDetail(null); setHistory([]); setHistoryError(''); setHistoryLoading(false) }
 
@@ -144,12 +171,13 @@ export function AdminOrders() {
       <section><h3>Cliente</h3><p><strong>{detail.userName}</strong><br />{detail.userEmail}</p></section>
       <section><h3>Entrega</h3><p><strong>{detail.deliveryMethod === 'StorePickup' ? 'Retiro en tienda' : 'Envío a domicilio'}</strong><br />Costo: {detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</p>{detail.shippingAddress && <p>{detail.shippingAddress}</p>}{(detail.status === 'Preparing' || detail.status === 'Shipped') && detail.deliveryMethod !== 'StorePickup' && <div className="tracking-form"><label>Empresa transportista<input value={tracking.carrier} maxLength={100} onChange={event => setTracking(current => ({ ...current, carrier: event.target.value }))} /></label><label>Número de seguimiento<input value={tracking.trackingNumber} maxLength={100} onChange={event => setTracking(current => ({ ...current, trackingNumber: event.target.value }))} /></label><label>URL de seguimiento (HTTPS)<input type="url" value={tracking.trackingUrl} maxLength={500} placeholder="https://…" onChange={event => setTracking(current => ({ ...current, trackingUrl: event.target.value }))} /></label>{detail.status === 'Shipped' && <button type="button" disabled={pending} onClick={() => void changeStatus('Shipped')}>Corregir seguimiento</button>}</div>}{detail.trackingUrl && <a href={detail.trackingUrl} target="_blank" rel="noopener noreferrer">Abrir seguimiento</a>}</section>
       <section><h3>Productos</h3>{detail.items.map(item => <div className="list-row" key={item.productId}><span>{item.quantity} × {item.productName}<small>{money(item.unitPrice)} c/u</small></span><strong>{money(item.subtotal)}</strong></div>)}{Boolean(detail.discountAmount) && <div className="list-row"><span>Descuento</span><strong>−{money(detail.discountAmount || 0)}</strong></div>}<div className="list-row"><span>Envío</span><strong>{detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</strong></div><div className="list-row"><strong>Total</strong><strong>{money(detail.total)}</strong></div></section>
-      <section><h3>Pago</h3>{detail.payments.length === 0 ? <p>Sin pagos registrados.</p> : detail.payments.map(payment => <div className="payment" key={payment.id}><span>#{payment.id} · {payment.provider}<small>{money(payment.amount)} {payment.currency}</small></span><Status value={payment.status} /><small>Creado: {formatDate(payment.createdAt)}{payment.paidAt ? ` · Pagado: ${formatDate(payment.paidAt)}` : ''}</small></div>)}</section>
+      <section><h3>Pago</h3>{detail.payments.some(payment => payment.requiresReview) && <div className="error payment-incident" role="alert"><strong>Pago aprobado después de cancelar</strong><span>Mercado Pago informó una acreditación para este pedido cancelado. Requiere revisión y devolución.</span></div>}{detail.payments.length === 0 ? <p>Sin pagos registrados.</p> : detail.payments.map(payment => <div className="payment" key={payment.id}><span>#{payment.id} · {payment.provider}<small>{money(payment.amount)} {payment.currency}</small></span><Status value={payment.status} /><small>Creado: {formatDate(payment.createdAt)}{payment.paidAt ? ` · Pagado: ${formatDate(payment.paidAt)}` : ''}</small>{payment.provider === 'BankTransfer' && payment.status === 'Pending' && <div className="transfer-confirmation"><label>Referencia o motivo de acreditación<input value={transferReference} maxLength={500} onChange={event => setTransferReference(event.target.value)} placeholder="Movimiento bancario, fecha o motivo" /></label><button className="primary" type="button" disabled={pending || !transferReference.trim()} onClick={() => void confirmTransfer(payment.id)}>{pending ? 'Confirmando…' : 'Confirmar acreditación verificada'}</button><small>Confirmá únicamente después de comprobar que el dinero fue acreditado.</small></div>}</div>)}</section>
       <section><h3>Fechas</h3><p>Creado: {formatDate(detail.createdAt)}<br />Última actualización: {detail.updatedAt ? formatDate(detail.updatedAt) : 'Sin cambios posteriores'}</p>{detail.cancellationReason && <p>Motivo: {detail.cancellationReason}</p>}</section>
       <section className="order-history" aria-labelledby="order-history-title"><h3 id="order-history-title">Historial</h3>
         {historyLoading ? <AdminLoading label="Cargando historial…" /> : historyError ? <div className="history-error"><p role="alert">{historyError}</p><button type="button" onClick={() => void loadHistory(detail.id)}>Reintentar historial</button></div> : history.length === 0 ? <p className="admin-footnote">Todavía no hay eventos relevantes.</p> : <ol className="order-timeline">{history.map(event => <li key={event.id} className={`history-${event.source.toLowerCase()}`}><div className="timeline-marker" aria-hidden="true" /><article><div className="timeline-heading"><strong>{actionLabels[event.action] || event.action}</strong><span>{sourceLabels[event.source]}</span></div><time dateTime={event.createdAtUtc}>{formatDate(event.createdAtUtc)}</time>{(event.previousStatus || event.newStatus) && <p>{event.previousStatus ? orderStatusLabel(event.previousStatus, detail.deliveryMethod) : '—'} <span aria-hidden="true">→</span><span className="sr-only"> a </span> {event.newStatus ? orderStatusLabel(event.newStatus, detail.deliveryMethod) : '—'}</p>}{event.reason && <p className="timeline-reason">{event.reason}</p>}<small>{event.actorName ? `${event.actorName}${event.actorEmail ? ` · ${event.actorEmail}` : ''}` : event.source === 'Provider' ? 'Proveedor de pagos' : 'Sistema'}</small></article></li>)}</ol>}
       </section>
       <section className="order-status-management" aria-labelledby="order-status-management-title"><h3 id="order-status-management-title">Gestionar estado</h3><p>{transitionGuidance[detail.status]}</p>
+        {detail.status === 'Pending' && <div className="tracking-form"><label>Motivo de cancelación<textarea value={cancellationReason} maxLength={500} onChange={event => setCancellationReason(event.target.value)} /></label><button type="button" disabled={pending || !cancellationReason.trim()} onClick={() => void cancelOrder()}>{pending ? 'Cancelando…' : 'Cancelar pedido'}</button></div>}
         {transitions.length > 0 && <div className="actions">{transitions.map(status => <button className={status === 'Canceled' ? '' : 'primary'} disabled={pending} key={status} onClick={() => void changeStatus(status)}>{pending ? 'Guardando…' : `Marcar como ${orderStatusLabel(status, detail.deliveryMethod).toLowerCase()}`}</button>)}</div>}
       </section>
     </aside>}

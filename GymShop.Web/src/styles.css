@@ -208,6 +208,14 @@ header nav a.active { color: var(--lime); background: #242822; }
 }
 
 /* Checkout separado: revisión, entrega y resultado. */
+.payment-methods { border: 1px solid var(--border, #3a3f39); border-radius: 12px; display: grid; gap: .65rem; margin: 1rem 0; padding: 1rem; }
+.payment-methods label { align-items: flex-start; display: grid; grid-template-columns: auto 1fr; gap: .25rem .6rem; }
+.payment-methods small { grid-column: 2; }
+.bank-details { display: grid; gap: .5rem; margin: 1rem 0; }
+.bank-details div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
+.bank-details dd { font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+.transfer-confirmation { display: grid; gap: .65rem; margin-top: .75rem; width: 100%; }
+@media (max-width: 640px) { .bank-details div { display: block; } .transfer-confirmation button { width: 100%; } }
 .checkout-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 32px; color: var(--muted); font-size: 13px; }
 .checkout-steps span { padding: 11px; border-bottom: 2px solid #363a35; }
 .checkout-steps .done { color: #c9d2bd; border-color: #778266; }

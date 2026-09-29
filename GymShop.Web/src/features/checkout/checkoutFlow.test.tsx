@@ -324,6 +324,86 @@ describe('checkout y pago por orderId', () => {
     expect(screen.queryByRole('button', { name: 'Cancelar orden' })).not.toBeInTheDocument()
   })
 
+  async function renderResult(orderStatus: Order['status'], attempts: Payment[]) {
+    window.history.replaceState(null, '', '/checkout/orden/81')
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart')) return json(emptyCart)
+      if (url.endsWith('/api/orders/81')) return json({ ...order, status: orderStatus })
+      if (url.endsWith('/api/payments/orders/81')) return json(attempts)
+      if (url.endsWith('/api/payments/bank-transfer-details')) return json({ bankName: 'Banco de prueba', accountHolder: 'Tienda', cbu: '123456789', alias: 'tienda.test', cuit: '' })
+      return json([])
+    })
+    render(<App />)
+    await screen.findByText('Estado del pago')
+  }
+
+  it('prioriza Canceled cuando un intento anterior de Mercado Pago fue Approved', async () => {
+    await renderResult('Canceled', [
+      { ...payment('Pending'), id: 92, provider: 'MercadoPago' },
+      { ...payment('Approved'), id: 91, provider: 'MercadoPago' },
+    ])
+    expect(screen.getByRole('heading', { name: 'Pedido cancelado' })).toBeInTheDocument()
+    expect(screen.getByText('Detectamos un pago aprobado para este pedido cancelado. La situación está en revisión.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '¡Pago aprobado!' })).not.toBeInTheDocument()
+    expect(screen.queryByText('La compra quedó confirmada.')).not.toBeInTheDocument()
+  })
+
+  it('muestra la cancelación cuando ningún intento de Mercado Pago fue aprobado', async () => {
+    await renderResult('Canceled', [
+      { ...payment('Pending'), id: 92, provider: 'MercadoPago' },
+      { ...payment('Rejected'), id: 91, provider: 'MercadoPago' },
+    ])
+    expect(screen.getByRole('heading', { name: 'Pedido cancelado' })).toBeInTheDocument()
+    expect(screen.getByText('El pedido fue cancelado.')).toBeInTheDocument()
+    expect(screen.queryByText('La orden permanece pendiente hasta que se apruebe un pago.')).not.toBeInTheDocument()
+    expect(screen.queryByText('La compra quedó confirmada.')).not.toBeInTheDocument()
+  })
+
+  it('mantiene informativa una orden cancelada con un pago Pending y checkoutUrl', async () => {
+    await renderResult('Canceled', [{ ...payment('Pending'), provider: 'MercadoPago', checkoutUrl: 'https://provider.test/checkout/81' }])
+    expect(screen.getByRole('heading', { name: 'Pedido cancelado' })).toBeInTheDocument()
+    expect(screen.getByText('Pendiente')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Continuar con el proveedor' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Iniciar pago' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Actualizar estado' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Transferencia bancaria/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Mercado Pago/ })).not.toBeInTheDocument()
+  })
+
+  it('mantiene informativa una orden cancelada sin intentos de pago', async () => {
+    await renderResult('Canceled', [])
+    expect(screen.getByRole('heading', { name: 'Pedido cancelado' })).toBeInTheDocument()
+    expect(screen.getByText('Todavía no hay intentos de pago.')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Continuar con el proveedor' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Iniciar pago' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Actualizar estado' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Transferencia bancaria/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Mercado Pago/ })).not.toBeInTheDocument()
+  })
+
+  it('no indica transferir ni muestra datos bancarios en una orden cancelada', async () => {
+    await renderResult('Canceled', [payment('Pending')])
+    expect(screen.getByText('Este intento de pago pertenece a un pedido cancelado. No realices pagos para esta orden.')).toBeInTheDocument()
+    expect(screen.queryByText(/Transferí el monto exacto/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Banco de prueba')).not.toBeInTheDocument()
+    expect(screen.queryByText('123456789')).not.toBeInTheDocument()
+  })
+
+  it('no invita a reintentar un pago rechazado de una orden cancelada', async () => {
+    await renderResult('Canceled', [{ ...payment('Rejected'), provider: 'MercadoPago' }])
+    expect(screen.getByText('Rechazado')).toBeInTheDocument()
+    expect(screen.getByText('Este intento de pago pertenece a un pedido cancelado. No realices pagos para esta orden.')).toBeInTheDocument()
+    expect(screen.queryByText(/Podés iniciar un nuevo intento/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Intentar pagar nuevamente' })).not.toBeInTheDocument()
+  })
+
+  it('confirma el flujo normal Paid con un pago Approved de Mercado Pago', async () => {
+    await renderResult('Paid', [{ ...payment('Approved'), provider: 'MercadoPago' }])
+    expect(screen.getByRole('heading', { name: '¡Pago aprobado!' })).toBeInTheDocument()
+    expect(screen.getByText('La compra quedó confirmada.')).toBeInTheDocument()
+  })
+
   it('muestra el snapshot de retiro en el detalle de Mis órdenes', async () => {
     window.history.replaceState(null, '', '/ordenes')
     const pickupOrder = { ...order, deliveryMethod: 'StorePickup' as const, shippingAddress: '', shippingCost: 0, pickupAddress: 'Sucursal histórica 456', pickupHours: 'Sábados de 10 a 13', pickupInstructions: 'Presentá el código de compra.' }

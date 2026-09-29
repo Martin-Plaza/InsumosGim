@@ -27,6 +27,7 @@ public class PaymentsController : ApiControllerBase
     private readonly MercadoPagoOptions _mercadoPagoOptions;
     private readonly IGymShopRequestLimiter _requestLimiter;
     private readonly BankTransferOptions _bankTransferOptions;
+    private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
         ICreatePaymentUseCase createPayment,
@@ -37,7 +38,8 @@ public class PaymentsController : ApiControllerBase
         ICurrentUserService currentUser,
         IOptions<MercadoPagoOptions> mercadoPagoOptions,
         IGymShopRequestLimiter requestLimiter,
-        IOptions<BankTransferOptions> bankTransferOptions)
+        IOptions<BankTransferOptions> bankTransferOptions,
+        ILogger<PaymentsController> logger)
     {
         _createPayment = createPayment;
         _getPaymentById = getPaymentById;
@@ -48,6 +50,7 @@ public class PaymentsController : ApiControllerBase
         _mercadoPagoOptions = mercadoPagoOptions.Value;
         _requestLimiter = requestLimiter;
         _bankTransferOptions = bankTransferOptions.Value;
+        _logger = logger;
     }
 
     [HttpGet("bank-transfer-details")]
@@ -122,16 +125,21 @@ public class PaymentsController : ApiControllerBase
     [HttpPost("mercadopago/webhook")]
     [EnableRateLimiting(RateLimitPolicies.WebhookIp)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult> MercadoPagoWebhook([FromQuery(Name = "data.id")] string? queryDataId, [FromBody] JsonElement body, CancellationToken cancellationToken)
+    public async Task<ActionResult> MercadoPagoWebhook([FromQuery(Name = "data.id")] string? queryDataId, CancellationToken cancellationToken)
     {
         if (!_mercadoPagoOptions.Enabled)
         {
             return NotFound(new { message = "La integracion de Mercado Pago no esta habilitada." });
         }
 
-        var dataId = GetMercadoPagoPaymentId(queryDataId, body);
+        var dataId = await GetMercadoPagoPaymentIdAsync(queryDataId, Request, cancellationToken);
         if (string.IsNullOrWhiteSpace(dataId))
         {
+            _logger.LogWarning(
+                "Mercado Pago notification missing data.id. HasLegacyId={HasLegacyId}, HasTopic={HasTopic}, HasJsonContentType={HasJsonContentType}, ContentLength={ContentLength}",
+                Request.Query.ContainsKey("id"), Request.Query.ContainsKey("topic"),
+                Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true,
+                Request.ContentLength);
             return BadRequest(new { message = "No se encontro data.id en la notificacion." });
         }
 
@@ -148,19 +156,30 @@ public class PaymentsController : ApiControllerBase
         return result.IsSuccess ? Ok(new { received = true }) : ToErrorResponse(result.Error!);
     }
 
-    private static string? GetMercadoPagoPaymentId(string? queryDataId, JsonElement body)
+    private static async Task<string?> GetMercadoPagoPaymentIdAsync(string? queryDataId, HttpRequest request, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(queryDataId))
         {
             return queryDataId;
         }
 
-        if (body.ValueKind == JsonValueKind.Object &&
-            body.TryGetProperty("data", out var data) &&
-            data.ValueKind == JsonValueKind.Object &&
-            data.TryGetProperty("id", out var id))
+        if (request.ContentLength == 0) return null;
+
+        try
         {
-            return id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
+            using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
+            var body = document.RootElement;
+            if (body.ValueKind == JsonValueKind.Object &&
+                body.TryGetProperty("data", out var data) &&
+                data.ValueKind == JsonValueKind.Object &&
+                data.TryGetProperty("id", out var id))
+            {
+                return id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
+            }
+        }
+        catch (JsonException)
+        {
+            // A malformed or non-JSON notification cannot supply a signed Webhook payment ID.
         }
 
         return null;

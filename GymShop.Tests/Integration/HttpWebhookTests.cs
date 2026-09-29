@@ -82,6 +82,67 @@ public sealed class HttpWebhookTests : IAsyncLifetime
         Assert.Equal(OrderStatus.Paid, (await db.Orders.SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task Signed_webhook_with_query_id_and_empty_body_updates_payment()
+    {
+        const string paymentId = "mp-query-only-http";
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/payments/mercadopago/webhook?data.id={paymentId}");
+        request.Headers.Add("x-request-id", "request-query-only-1");
+        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-query-only-1", "123456"));
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _gateway.GetCalls);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
+        Assert.Equal(PaymentStatus.Approved, (await db.Payments.SingleAsync()).Status);
+        Assert.Equal(OrderStatus.Paid, (await db.Orders.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Unsigned_webhook_with_query_id_and_empty_body_is_rejected()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments/mercadopago/webhook?data.id=mp-unsigned-query");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(0, _gateway.GetCalls);
+    }
+
+    [Fact]
+    public async Task Signed_webhook_with_body_id_and_no_query_updates_payment()
+    {
+        const string paymentId = "mp-body-only-http";
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments/mercadopago/webhook")
+        {
+            Content = JsonContent.Create(new { data = new { id = paymentId } })
+        };
+        request.Headers.Add("x-request-id", "request-body-only-1");
+        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-body-only-1", "123456"));
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _gateway.GetCalls);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
+        Assert.Equal(PaymentStatus.Approved, (await db.Payments.SingleAsync()).Status);
+        Assert.Equal(OrderStatus.Paid, (await db.Orders.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Legacy_ipn_query_without_signed_webhook_id_is_rejected()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments/mercadopago/webhook?topic=payment&id=mp-legacy");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, _gateway.GetCalls);
+    }
+
     private static string CreateSignature(string dataId, string requestId, string timestamp)
     {
         var manifest = $"id:{dataId};request-id:{requestId};ts:{timestamp};";

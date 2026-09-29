@@ -264,6 +264,58 @@ public class CartUseCaseTests
     }
 
     [Fact]
+    public async Task Checkout_with_full_coupon_and_store_pickup_confirms_free_order_once()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        var coupon = new Coupon { Code = "FREE100", Name = "Free", Type = CouponType.Percentage, Value = 100, IsActive = true };
+        db.Coupons.Add(coupon);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 2));
+        await new GymShop.Application.UseCases.Coupons.ApplyCartCouponUseCase(db)
+            .ExecuteAsync(user.Id, new GymShop.Application.DTOs.Coupons.ApplyCouponRequest("FREE100"));
+        var checkout = new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(50));
+
+        var first = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200));
+        var retry = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200));
+
+        Assert.True(first.IsSuccess);
+        Assert.Equal(0, first.Value!.Total);
+        Assert.Equal(OrderStatus.Paid.ToString(), first.Value.Status);
+        Assert.False(retry.IsSuccess);
+        Assert.Single(db.Orders);
+        Assert.Empty(db.Payments);
+        Assert.Equal(3, product.Stock);
+        Assert.Single(db.StockMovements);
+        Assert.Equal(CouponRedemptionStatus.Consumed, db.CouponRedemptions.Single().Status);
+        Assert.Equal("FreeOrderConfirmed", db.AuditEntries.Single().Action);
+    }
+
+    [Fact]
+    public async Task Checkout_with_full_coupon_and_home_delivery_leaves_shipping_to_pay()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        var coupon = new Coupon { Code = "PRODUCTS100", Name = "Products free", Type = CouponType.Percentage, Value = 100, IsActive = true };
+        db.Coupons.Add(coupon);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+        await new GymShop.Application.UseCases.Coupons.ApplyCartCouponUseCase(db)
+            .ExecuteAsync(user.Id, new GymShop.Application.DTOs.Coupons.ApplyCouponRequest("PRODUCTS100"));
+
+        var result = await new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(30))
+            .ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Calle 123", 30, 100, 100));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(30, result.Value!.Total);
+        Assert.Equal(OrderStatus.Pending.ToString(), result.Value.Status);
+        Assert.Equal(CouponRedemptionStatus.Reserved, db.CouponRedemptions.Single().Status);
+        Assert.Empty(db.AuditEntries.Where(entry => entry.Action == "FreeOrderConfirmed"));
+    }
+
+    [Fact]
     public async Task Checkout_store_pickup_snapshots_current_configuration()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

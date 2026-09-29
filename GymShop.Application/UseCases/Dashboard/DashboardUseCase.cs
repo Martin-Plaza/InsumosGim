@@ -40,7 +40,7 @@ public sealed class GetDashboardStatisticsUseCase : IGetDashboardStatisticsUseCa
 
         // A sale is counted once per order, on its first approved payment. Refunded and
         // canceled orders are excluded even if an earlier payment attempt was approved.
-        var sales = _db.Orders.AsNoTracking()
+        var paidSales = _db.Orders.AsNoTracking()
             .Where(order => order.Status != OrderStatus.Canceled && order.Status != OrderStatus.Refunded)
             .Where(order => !order.Payments.Any(payment => payment.Status == PaymentStatus.Refunded))
             .Where(order => !order.Payments.Any(payment => _db.AuditEntries.Any(audit =>
@@ -55,6 +55,20 @@ public sealed class GetDashboardStatisticsUseCase : IGetDashboardStatisticsUseCa
                     .Min(payment => payment.PaidAt)!.Value
             })
             .Where(sale => sale.SoldAt >= fromUtc && sale.SoldAt < toUtc);
+        var freeSales = _db.Orders.AsNoTracking()
+            .Where(order => order.Status == OrderStatus.Paid && order.Total == 0)
+            .Where(order => _db.AuditEntries.Any(audit =>
+                audit.Action == "FreeOrderConfirmed" && audit.EntityType == "Order" && audit.EntityId == order.Id.ToString()))
+            .Select(order => new
+            {
+                order.Id,
+                order.Total,
+                SoldAt = _db.AuditEntries
+                    .Where(audit => audit.Action == "FreeOrderConfirmed" && audit.EntityType == "Order" && audit.EntityId == order.Id.ToString())
+                    .Min(audit => audit.CreatedAtUtc)
+            })
+            .Where(sale => sale.SoldAt >= fromUtc && sale.SoldAt < toUtc);
+        var sales = paidSales.Concat(freeSales);
 
         var totals = await sales
             .GroupBy(_ => 1)

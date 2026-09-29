@@ -230,12 +230,14 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
     private readonly IApplicationDbContext _db;
     private readonly ITransactionManager? _transactionManager;
     private readonly IShippingSettings _shippingSettings;
+    private readonly IAuditContext? _auditContext;
 
-    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null, IShippingSettings? shippingSettings = null)
+    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null, IShippingSettings? shippingSettings = null, IAuditContext? auditContext = null)
     {
         _db = db;
         _transactionManager = transactionManager;
         _shippingSettings = shippingSettings ?? new FreeShippingSettings();
+        _auditContext = auditContext;
     }
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
@@ -269,6 +271,8 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La configuracion de retiro en tienda supera los limites permitidos.", "pickup_configuration_invalid");
         }
+
+        await using var transaction = await BeginCheckoutTransactionAsync(cancellationToken);
 
         var cart = await _db.Carts
             .Include(x => x.Items)
@@ -329,8 +333,6 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             })
             .ToList();
 
-        await using var transaction = await BeginTransactionAsync(cart.CouponId is not null, cancellationToken);
-
         var order = new Order
         {
             UserId = userId,
@@ -366,6 +368,13 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El precio, descuento o costo de envio cambio. Revisa el resumen antes de confirmar.", "checkout_pricing_changed");
         }
         order.Total = Math.Max(0, subtotal - discount) + order.ShippingCost;
+        var isFreeOrder = order.Total == 0;
+        if (isFreeOrder)
+        {
+            order.Status = OrderStatus.Paid;
+            order.UpdatedAt = DateTime.UtcNow;
+            CouponRedemptionLifecycle.Consume(order);
+        }
 
         foreach (var line in orderLines)
         {
@@ -396,6 +405,15 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        if (isFreeOrder)
+        {
+            AuditTrail.Add(_db, _auditContext, "FreeOrderConfirmed", "Order", order.Id,
+                new { status = OrderStatus.Pending.ToString(), total = order.Total },
+                new { status = order.Status.ToString(), total = order.Total },
+                "Pedido confirmado sin pago porque el cupon cubrio el total de productos y el retiro no tiene costo.");
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
         if (transaction is not null)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -404,13 +422,11 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         return AppResult<OrderResponse>.Success(await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken));
     }
 
-    private async Task<IApplicationTransaction?> BeginTransactionAsync(bool couponCheckout, CancellationToken cancellationToken)
+    private async Task<IApplicationTransaction?> BeginCheckoutTransactionAsync(CancellationToken cancellationToken)
     {
         return _transactionManager is null
             ? null
-            : couponCheckout
-                ? await _transactionManager.BeginCouponCheckoutTransactionAsync(cancellationToken)
-                : await _transactionManager.BeginTransactionAsync(cancellationToken);
+            : await _transactionManager.BeginCheckoutTransactionAsync(cancellationToken);
     }
 }
 

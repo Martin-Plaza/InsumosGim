@@ -140,6 +140,57 @@ describe('panel administrativo', () => {
     expect(alert).toHaveTextContent('Requiere revisión y devolución')
   })
 
+  it('ofrece cancelar un pedido gratuito pagado sin intentos de pago', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const freeOrder = { ...orderDetail, total: 0, status: 'Paid', payments: [] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(freeOrder)
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+
+    expect(await screen.findByText(/Este pedido gratuito puede cancelarse/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Motivo de cancelación')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancelar pedido' })).toBeDisabled()
+  })
+
+  it('no ofrece cancelar un pedido de total cero con un pago pendiente', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const orderWithPayment = { ...orderDetail, total: 0, status: 'Paid', payments: [{ id: 51, provider: 'MercadoPago', amount: 100, currency: 'ARS', status: 'Pending', createdAt: '2026-09-20T12:00:00Z' }] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(orderWithPayment)
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+
+    await screen.findByText('El pago ya fue confirmado. Podés iniciar la preparación del pedido.')
+    expect(screen.queryByLabelText('Motivo de cancelación')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancelar pedido' })).not.toBeInTheDocument()
+  })
+
+  it('no ofrece cancelación administrativa a pedidos pagos o gratuitos enviados', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const paidOrder = { ...orderDetail, status: 'Paid', payments: [{ id: 50, provider: 'MercadoPago', amount: 15000, currency: 'ARS', status: 'Approved', createdAt: '2026-09-20T12:00:00Z' }] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(paidOrder)
+      return apiMock(input, init)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+
+    await screen.findByText('El pago ya fue confirmado. Podés iniciar la preparación del pedido.')
+    expect(screen.queryByLabelText('Motivo de cancelación')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancelar pedido' })).not.toBeInTheDocument()
+  })
+
   it('mantiene el detalle visible si falla el historial y permite reintentarlo', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
     let historyLoads = 0

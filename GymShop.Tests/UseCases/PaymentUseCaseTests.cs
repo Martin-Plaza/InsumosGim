@@ -146,7 +146,50 @@ public class PaymentUseCaseTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(PaymentStatus.Approved.ToString(), result.Value?.Status);
+        Assert.Equal(PaymentStatus.Approved, db.Payments.Single().Status);
         Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
+    public async Task Webhook_approved_with_incorrect_amount_keeps_payment_and_order_pending()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "approved",
+            Amount = order.Total - 1m,
+            ExternalReference = $"order-{order.Id}"
+        };
+
+        var result = await new HandlePaymentWebhookUseCase(db, [gateway])
+            .ExecuteAsync("MercadoPago", "mp-pay-wrong-amount");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Contains("monto o la moneda", result.Error?.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+    }
+
+    [Fact]
+    public async Task Create_payment_rejects_zero_total_without_calling_gateway()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        order.Total = 0;
+        var gateway = new FakeMercadoPagoGateway();
+
+        var result = await new CreatePaymentUseCase(db, [gateway])
+            .ExecuteAsync(order.Id, user.Id, false, new CreatePaymentRequest("MercadoPago", "free-order"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Empty(db.Payments);
+        Assert.Equal(0, gateway.CreatePreferenceCalls);
     }
 
     [Fact]

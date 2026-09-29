@@ -19,7 +19,7 @@ const transitionGuidance: Record<OrderStatus, string> = {
   Canceled: 'El pedido fue cancelado y no admite más cambios administrativos.',
   Refunded: 'El reembolso se resolvió desde el flujo de pagos; no admite cambios administrativos.'
 }
-const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
+const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', FreeOrderConfirmed: 'Pedido gratuito confirmado', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
 const sourceLabels = { Manual: 'Manual', Automatic: 'Automático', Provider: 'Proveedor' }
 const formatDate = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const utcStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : undefined
@@ -150,6 +150,10 @@ export function AdminOrders() {
     } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
   const transitions = detail ? nextStatuses[detail.status] || [] : []
+  const canCancelFreeOrder = Boolean(detail && detail.total === 0 &&
+    (detail.status === 'Paid' || detail.status === 'Preparing') &&
+    detail.payments.length === 0)
+  const canCancelOrder = detail?.status === 'Pending' || canCancelFreeOrder
   const closeDetail = () => { openOrderId.current = null; historyRequest.current += 1; setDetail(null); setHistory([]); setHistoryError(''); setHistoryLoading(false) }
 
   return <section className="admin-page">
@@ -176,8 +180,8 @@ export function AdminOrders() {
       <section className="order-history" aria-labelledby="order-history-title"><h3 id="order-history-title">Historial</h3>
         {historyLoading ? <AdminLoading label="Cargando historial…" /> : historyError ? <div className="history-error"><p role="alert">{historyError}</p><button type="button" onClick={() => void loadHistory(detail.id)}>Reintentar historial</button></div> : history.length === 0 ? <p className="admin-footnote">Todavía no hay eventos relevantes.</p> : <ol className="order-timeline">{history.map(event => <li key={event.id} className={`history-${event.source.toLowerCase()}`}><div className="timeline-marker" aria-hidden="true" /><article><div className="timeline-heading"><strong>{actionLabels[event.action] || event.action}</strong><span>{sourceLabels[event.source]}</span></div><time dateTime={event.createdAtUtc}>{formatDate(event.createdAtUtc)}</time>{(event.previousStatus || event.newStatus) && <p>{event.previousStatus ? orderStatusLabel(event.previousStatus, detail.deliveryMethod) : '—'} <span aria-hidden="true">→</span><span className="sr-only"> a </span> {event.newStatus ? orderStatusLabel(event.newStatus, detail.deliveryMethod) : '—'}</p>}{event.reason && <p className="timeline-reason">{event.reason}</p>}<small>{event.actorName ? `${event.actorName}${event.actorEmail ? ` · ${event.actorEmail}` : ''}` : event.source === 'Provider' ? 'Proveedor de pagos' : 'Sistema'}</small></article></li>)}</ol>}
       </section>
-      <section className="order-status-management" aria-labelledby="order-status-management-title"><h3 id="order-status-management-title">Gestionar estado</h3><p>{transitionGuidance[detail.status]}</p>
-        {detail.status === 'Pending' && <div className="tracking-form"><label>Motivo de cancelación<textarea value={cancellationReason} maxLength={500} onChange={event => setCancellationReason(event.target.value)} /></label><button type="button" disabled={pending || !cancellationReason.trim()} onClick={() => void cancelOrder()}>{pending ? 'Cancelando…' : 'Cancelar pedido'}</button></div>}
+      <section className="order-status-management" aria-labelledby="order-status-management-title"><h3 id="order-status-management-title">Gestionar estado</h3><p>{canCancelFreeOrder ? 'Este pedido gratuito puede cancelarse mientras no haya sido enviado. Se repondrá el stock y se liberará el uso del cupón.' : transitionGuidance[detail.status]}</p>
+        {canCancelOrder && <div className="tracking-form"><label>Motivo de cancelación<textarea value={cancellationReason} maxLength={500} onChange={event => setCancellationReason(event.target.value)} /></label><button type="button" disabled={pending || !cancellationReason.trim()} onClick={() => void cancelOrder()}>{pending ? 'Cancelando…' : 'Cancelar pedido'}</button></div>}
         {transitions.length > 0 && <div className="actions">{transitions.map(status => <button className={status === 'Canceled' ? '' : 'primary'} disabled={pending} key={status} onClick={() => void changeStatus(status)}>{pending ? 'Guardando…' : `Marcar como ${orderStatusLabel(status, detail.deliveryMethod).toLowerCase()}`}</button>)}</div>}
       </section>
     </aside>}

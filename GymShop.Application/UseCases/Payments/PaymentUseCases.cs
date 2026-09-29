@@ -100,6 +100,11 @@ public class CreatePaymentUseCase : ICreatePaymentUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido ya esta pagado.");
         }
 
+        if (order.Total <= 0)
+        {
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido no requiere un pago externo.");
+        }
+
         if (order.Status != OrderStatus.Pending)
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pedido no admite nuevos pagos.");

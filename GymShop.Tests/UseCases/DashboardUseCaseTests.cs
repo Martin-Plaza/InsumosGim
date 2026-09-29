@@ -13,6 +13,34 @@ public sealed class DashboardUseCaseTests
     private static readonly DateTime Now = new(2026, 9, 21, 12, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public async Task Dashboard_counts_audited_free_order_without_inventing_a_payment()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var product = new Product { Name = "Regalo", Price = 100, Stock = 8, IsActive = true };
+        var user = NewUser();
+        db.AddRange(product, user);
+        await db.SaveChangesAsync();
+        var order = AddOrder(db, user.Id, Now.AddDays(-1), OrderStatus.Paid, (product, 1, 100m));
+        order.Total = 0;
+        await db.SaveChangesAsync();
+        db.AuditEntries.Add(new AuditEntry
+        {
+            Action = "FreeOrderConfirmed", EntityType = "Order", EntityId = order.Id.ToString(),
+            CorrelationId = "free-test", CreatedAtUtc = Now.AddDays(-1)
+        });
+        await db.SaveChangesAsync();
+
+        var result = await UseCase(db).ExecuteAsync(new DashboardQueryRequest(From: new DateOnly(2026, 9, 18), To: new DateOnly(2026, 9, 21)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, result.Value!.PaidOrders);
+        Assert.Equal(0, result.Value.TotalSales);
+        Assert.Equal(0, result.Value.AverageTicket);
+        Assert.Single(result.Value.TopProducts);
+        Assert.Empty(db.Payments);
+    }
+
+    [Fact]
     public async Task Dashboard_deduplicates_payment_attempts_and_calculates_ticket_daily_sales_and_top_products()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

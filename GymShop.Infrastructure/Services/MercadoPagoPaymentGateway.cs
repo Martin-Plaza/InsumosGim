@@ -24,6 +24,11 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
 
     public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
     {
+        if (decimal.Round(order.Total, 2, MidpointRounding.AwayFromZero) <= 0)
+        {
+            throw new PaymentGatewayException("Mercado Pago no admite preferencias con importe cero.");
+        }
+
         ConfigureAuthorization();
 
         var notificationUrl = _options.NotificationUrl;
@@ -33,14 +38,7 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
 
         var payload = new Dictionary<string, object?>
         {
-            ["items"] = order.Items.Select(item => new
-            {
-                id = item.ProductId.ToString(),
-                title = item.ProductName,
-                quantity = item.Quantity,
-                currency_id = "ARS",
-                unit_price = item.UnitPrice
-            }).ToList(),
+            ["items"] = BuildPreferenceItems(order),
             ["external_reference"] = string.IsNullOrWhiteSpace(externalReference) ? $"order-{order.Id}" : externalReference
         };
 
@@ -99,6 +97,70 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         }
 
         return new PaymentPreferenceResult("MercadoPago", preferenceId, checkoutUrl);
+    }
+
+    private static List<Dictionary<string, object>> BuildPreferenceItems(Order order)
+    {
+        var total = decimal.Round(order.Total, 2, MidpointRounding.AwayFromZero);
+        var shipping = decimal.Round(order.ShippingCost, 2, MidpointRounding.AwayFromZero);
+        var merchandiseTotal = total - shipping;
+        var sourceLines = order.Items
+            .Select(item => new
+            {
+                Item = item,
+                Subtotal = item.Subtotal > 0 ? item.Subtotal : item.UnitPrice * item.Quantity
+            })
+            .Where(line => line.Subtotal > 0)
+            .ToList();
+        var sourceSubtotal = sourceLines.Sum(line => line.Subtotal);
+        var items = new List<Dictionary<string, object>>();
+        var remaining = merchandiseTotal;
+
+        for (var index = 0; index < sourceLines.Count && remaining > 0; index++)
+        {
+            var line = sourceLines[index];
+            var amount = index == sourceLines.Count - 1
+                ? remaining
+                : decimal.Round(merchandiseTotal * line.Subtotal / sourceSubtotal, 2, MidpointRounding.AwayFromZero);
+            amount = Math.Min(amount, remaining);
+            remaining -= amount;
+            if (amount <= 0) continue;
+
+            items.Add(new Dictionary<string, object>
+            {
+                ["id"] = line.Item.ProductId.ToString(),
+                ["title"] = line.Item.Quantity == 1 ? line.Item.ProductName : $"{line.Item.Quantity} x {line.Item.ProductName}",
+                ["quantity"] = 1,
+                ["currency_id"] = "ARS",
+                ["unit_price"] = amount
+            });
+        }
+
+        if (remaining > 0)
+        {
+            items.Add(new Dictionary<string, object>
+            {
+                ["id"] = $"order-{order.Id}",
+                ["title"] = $"Productos del pedido #{order.Id}",
+                ["quantity"] = 1,
+                ["currency_id"] = "ARS",
+                ["unit_price"] = remaining
+            });
+        }
+
+        if (shipping > 0)
+        {
+            items.Add(new Dictionary<string, object>
+            {
+                ["id"] = $"shipping-{order.Id}",
+                ["title"] = "Envio",
+                ["quantity"] = 1,
+                ["currency_id"] = "ARS",
+                ["unit_price"] = shipping
+            });
+        }
+
+        return items;
     }
 
     public async Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default)

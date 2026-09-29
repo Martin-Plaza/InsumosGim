@@ -82,4 +82,58 @@ describe('carrito visitante y fusión autenticada', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Quitar una unidad de Mancuerna Pro' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Quitar MINIMUM' })).not.toBeInTheDocument()); expect(screen.queryByText(/−.*200,00/)).not.toBeInTheDocument()
   })
+
+  it('continúa al checkout sin validar cuando el cupón está vacío', async () => {
+    localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'U', role: 'User' })); window.history.replaceState(null, '', '/carrito')
+    const base = { id: 1, userId: 7, subtotal: 2000, discount: 0, total: 2000, couponCode: null, items: [cartItem(2)] }
+    let couponPosts = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => { if (String(input).endsWith('/api/cart/coupon') && init?.method === 'POST') couponPosts++; return json(base) })
+    render(<App />); await screen.findByText('Mancuerna Pro')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar al checkout' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/checkout'))
+    expect(couponPosts).toBe(0)
+  })
+
+  it('valida y aplica una sola vez el cupón escrito antes de continuar', async () => {
+    localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'U', role: 'User' })); window.history.replaceState(null, '', '/carrito')
+    const base = { id: 1, userId: 7, subtotal: 2000, discount: 0, total: 2000, couponCode: null, items: [cartItem(2)] }
+    const discounted = { ...base, discount: 200, total: 1800, couponCode: 'SAVE10' }
+    let couponPosts = 0
+    let resolveCoupon!: (response: Response) => void
+    const pendingCoupon = new Promise<Response>(resolve => { resolveCoupon = resolve })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart/coupon') && init?.method === 'POST') { couponPosts++; return pendingCoupon }
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 0, pickupAddress: 'Local', pickupInstructions: '', pickupHours: '' })
+      return json(couponPosts > 0 ? discounted : base)
+    })
+    render(<App />); await screen.findByText('Mancuerna Pro')
+    await userEvent.type(screen.getByLabelText('Código de descuento'), 'SAVE10')
+    const continueButton = screen.getByRole('button', { name: 'Continuar al checkout' })
+
+    await userEvent.dblClick(continueButton)
+    expect(couponPosts).toBe(1)
+    expect(window.location.pathname).toBe('/carrito')
+    resolveCoupon(await json(discounted))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/checkout'))
+  })
+
+  it.each([
+    ['código inventado', 404, 'El código de descuento no es válido.'],
+    ['error de API', 503, 'No pudimos validar el cupón.'],
+  ])('permanece en el carrito ante %s', async (_, status, detail) => {
+    localStorage.setItem('gymshop.token', 'jwt'); localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'U', role: 'User' })); window.history.replaceState(null, '', '/carrito')
+    const base = { id: 1, userId: 7, subtotal: 2000, discount: 0, total: 2000, couponCode: null, items: [cartItem(2)] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => String(input).endsWith('/api/cart/coupon') && init?.method === 'POST' ? json({ detail }, status) : json(base))
+    render(<App />); await screen.findByText('Mancuerna Pro')
+    await userEvent.type(screen.getByLabelText('Código de descuento'), status === 404 ? 'INVENTADO' : 'ERROR')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar al checkout' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(detail)
+    expect(window.location.pathname).toBe('/carrito')
+  })
 })

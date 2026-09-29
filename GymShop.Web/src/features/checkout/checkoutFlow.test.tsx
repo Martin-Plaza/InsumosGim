@@ -126,6 +126,33 @@ describe('checkout y pago por orderId', () => {
     expect(calls.some(call => call.url.includes('/api/payments/current'))).toBe(false)
   })
 
+  it('confirma una orden gratuita con retiro sin crear un pago y tolera doble click', async () => {
+    const freeCart = { ...cart, discount: cart.subtotal, couponCode: 'FREE100', total: 0 }
+    const freeOrder = { ...order, status: 'Paid' as const, subtotal: cart.subtotal, discountAmount: cart.subtotal, couponCode: 'FREE100', deliveryMethod: 'StorePickup' as const, shippingAddress: '', shippingCost: 0, total: 0, pickupAddress: 'Av. Demo 123' }
+    let checkedOut = false; let checkoutPosts = 0; let paymentPosts = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); const method = init?.method || 'GET'
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : freeCart)
+      if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; checkoutPosts++; return json(freeOrder) }
+      if (url.endsWith('/api/orders/81/payments') && method === 'POST') { paymentPosts++; return json(payment('Pending')) }
+      if (url.endsWith('/api/orders/81')) return json(freeOrder)
+      if (url.endsWith('/api/payments/orders/81')) return json([])
+      return json([])
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('radio', { name: /Retiro en tienda/ }))
+    expect(screen.queryByRole('group', { name: 'Medio de pago' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('no requiere pago')
+
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Confirmar pedido' }))
+
+    expect(await screen.findByRole('heading', { name: 'Pedido confirmado' })).toBeInTheDocument()
+    expect(screen.getByText('Esta orden no requiere pago.')).toBeInTheDocument()
+    expect(checkoutPosts).toBe(1)
+    expect(paymentPosts).toBe(0)
+  })
+
   it('muestra 409, refresca el carrito y recupera la orden pendiente', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'

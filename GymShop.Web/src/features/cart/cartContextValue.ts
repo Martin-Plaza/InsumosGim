@@ -17,7 +17,7 @@ export interface CartContextValue {
   remove(productId: number, productVariantId?: number | null): Promise<void>
   clear(): Promise<void>
   refresh(): Promise<void>
-  applyCoupon(code: string): Promise<void>
+  applyCoupon(code: string): Promise<boolean>
   removeCoupon(): Promise<void>
   openDrawer(): void
   closeDrawer(): void

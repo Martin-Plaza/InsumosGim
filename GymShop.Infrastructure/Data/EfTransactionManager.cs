@@ -49,6 +49,46 @@ public sealed class EfTransactionManager : ITransactionManager
         catch { await transaction.DisposeAsync(); throw; }
     }
 
+    public async Task<IApplicationTransaction> BeginCheckoutTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        if (_db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+            return new NoopApplicationTransaction();
+
+        var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // Acquire the checkout mutex before reading the cart. Besides protecting coupon
+            // usage limits, this makes a repeated/concurrent checkout observe the cart emptied
+            // by the first request instead of creating a second order from stale data.
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(87324520)", cancellationToken);
+            return new EfApplicationTransaction(transaction);
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+    }
+
+    public async Task<IApplicationTransaction> BeginOrderCancellationTransactionAsync(int orderId, CancellationToken cancellationToken = default)
+    {
+        if (_db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+            return new NoopApplicationTransaction();
+
+        var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // Serialize repeated cancellation requests for the same order before reading it.
+            await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(87324523, {orderId})", cancellationToken);
+            return new EfApplicationTransaction(transaction);
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+    }
+
     public async Task<IApplicationTransaction> BeginPasswordResetActivationTransactionAsync(int userId, CancellationToken cancellationToken = default)
     {
         // The test host replaces Npgsql with EF's in-memory provider while retaining

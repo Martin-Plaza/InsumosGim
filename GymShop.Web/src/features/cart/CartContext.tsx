@@ -158,7 +158,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     couponCode: session.user() ? pricing.couponCode : null,
     count: cart.reduce((sum, item) => sum + item.quantity, 0),
     loading, error, notice, drawerOpen, add, update, remove, clear, refresh,
-    applyCoupon: async code => { setError(''); try { acceptServerCart(await api.applyCoupon(code)); setNotice('Cupón aplicado.') } catch (value) { setError(describe(value)); throw value } },
+    applyCoupon: async code => { setError(''); try { const result = await api.applyCoupon(code); acceptServerCart(result); if (!result.couponCode) { setError('El cupón no quedó aplicado.'); return false } setNotice('Cupón aplicado.'); return true } catch (value) { setError(describe(value)); throw value } },
     removeCoupon: async () => { setError(''); acceptServerCart(await api.removeCoupon()); setNotice('Cupón quitado.') },
     openDrawer: () => setDrawerOpen(true),
     closeDrawer: () => setDrawerOpen(false),

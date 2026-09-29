@@ -32,6 +32,30 @@ public class OrderHistoryUseCaseTests
     }
 
     [Fact]
+    public async Task History_includes_automatic_free_order_confirmation()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await SeedOrderAsync(db);
+        order.Total = 0;
+        db.AuditEntries.Add(new AuditEntry
+        {
+            Action = "FreeOrderConfirmed", EntityType = "Order", EntityId = order.Id.ToString(),
+            OldValue = "{\"status\":\"Pending\",\"total\":0}",
+            NewValue = "{\"status\":\"Paid\",\"total\":0}",
+            Reason = "Pedido gratuito confirmado.", CorrelationId = "free-order"
+        });
+        await db.SaveChangesAsync();
+
+        var result = await new GetOrderHistoryUseCase(db).ExecuteAsync(order.Id);
+
+        var entry = Assert.Single(result.Value!);
+        Assert.Equal("FreeOrderConfirmed", entry.Action);
+        Assert.Equal("Pending", entry.PreviousStatus);
+        Assert.Equal("Paid", entry.NewStatus);
+        Assert.Equal("Automatic", entry.Source);
+    }
+
+    [Fact]
     public async Task History_combines_manual_cancellation_automatic_and_provider_events_chronologically()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

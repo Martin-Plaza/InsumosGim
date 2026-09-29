@@ -163,6 +163,117 @@ public class AdminOrderUseCaseTests
     }
 
     [Fact]
+    public async Task CancelOrder_cancels_free_paid_order_releases_coupon_and_is_idempotent()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "gratis@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var coupon = new Coupon { Code = "GRATIS", Name = "Gratis", Type = CouponType.Percentage, Value = 100 };
+        db.Coupons.Add(coupon);
+        order.Status = OrderStatus.Paid;
+        order.Subtotal = 200;
+        order.DiscountAmount = 200;
+        order.Total = 0;
+        order.CouponCode = coupon.Code;
+        order.CouponRedemption = new CouponRedemption
+        {
+            Coupon = coupon,
+            UserId = user.Id,
+            Status = CouponRedemptionStatus.Consumed,
+            ConsumedAtUtc = DateTime.UtcNow
+        };
+        await db.SaveChangesAsync();
+
+        var useCase = new CancelOrderUseCase(db, new FakeAuditContext(user.Id, "free-cancel"));
+        var denied = await useCase.ExecuteAsync(order.Id, user.Id, false, new CancelOrderRequest("Sin permiso"));
+        var missingReason = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("  "));
+        var first = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Pedido gratuito duplicado"));
+        var repeated = await useCase.ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No reemplazar"));
+
+        Assert.Equal(AppErrorType.Forbidden, denied.Error?.Type);
+        Assert.Equal(AppErrorType.Validation, missingReason.Error?.Type);
+        Assert.True(first.IsSuccess);
+        Assert.True(repeated.IsSuccess);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal("Pedido gratuito duplicado", order.CancellationReason);
+        Assert.Equal(5, db.Products.Single().Stock);
+        Assert.Equal(CouponRedemptionStatus.Released, order.CouponRedemption.Status);
+        Assert.NotNull(order.CouponRedemption.ReleasedAtUtc);
+        Assert.Empty(order.Payments);
+        Assert.Single(db.StockMovements.Where(x => x.Type == StockMovementType.CancellationReturn));
+        var audit = Assert.Single(db.AuditEntries.Where(x => x.Action == "OrderCanceled"));
+        Assert.Contains("Paid", audit.OldValue);
+    }
+
+    [Fact]
+    public async Task CancelOrder_restores_variant_stock_for_free_preparing_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "variante-gratis@test.com");
+        var product = new Product { Name = "Remera", Description = "Test", Price = 100, Stock = 0, IsActive = true };
+        var variant = new ProductVariant { Product = product, Sku = "REM-M", Price = 100, Stock = 3, IsActive = true };
+        product.Variants.Add(variant);
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        variant.Stock -= 2;
+        var order = new Order { UserId = user.Id, Status = OrderStatus.Preparing, Total = 0, ShippingAddress = "Retiro" };
+        order.Items.Add(new OrderItem { Product = product, ProductId = product.Id, ProductVariant = variant, ProductVariantId = variant.Id, ProductName = product.Name, UnitPrice = 100, Quantity = 2, Subtotal = 200 });
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+
+        var result = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No se retira"));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(OrderStatus.Canceled, order.Status);
+        Assert.Equal(3, variant.Stock);
+        var movement = Assert.Single(db.StockMovements.Where(x => x.Type == StockMovementType.CancellationReturn));
+        Assert.Equal(variant.Id, movement.ProductVariantId);
+        Assert.Equal(2, movement.Quantity);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Shipped)]
+    [InlineData(OrderStatus.Delivered)]
+    public async Task CancelOrder_rejects_free_orders_after_shipping(OrderStatus status)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, $"gratis-{status}@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        order.Status = status;
+        order.Total = 0;
+        await db.SaveChangesAsync();
+
+        var result = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("Tarde"));
+
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(status, order.Status);
+        Assert.Equal(4, db.Products.Single().Stock);
+        Assert.Empty(db.StockMovements);
+    }
+
+    [Theory]
+    [InlineData(PaymentStatus.Pending)]
+    [InlineData(PaymentStatus.Approved)]
+    public async Task CancelOrder_rejects_zero_total_order_with_any_payment(PaymentStatus paymentStatus)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db, "aprobado@test.com");
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 1, price: 100);
+        order.Status = OrderStatus.Paid;
+        order.Total = 0;
+        order.Payments.Add(new Payment { Provider = "MercadoPago", ExternalReference = $"order-{order.Id}", Amount = 100, Status = paymentStatus });
+        await db.SaveChangesAsync();
+
+        var result = await new CancelOrderUseCase(db).ExecuteAsync(order.Id, user.Id, true, new CancelOrderRequest("No corresponde"));
+
+        Assert.Equal(AppErrorType.Conflict, result.Error?.Type);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(4, db.Products.Single().Stock);
+        Assert.Equal(paymentStatus, Assert.Single(order.Payments).Status);
+        Assert.Empty(db.StockMovements);
+    }
+
+    [Fact]
     public async Task CancelOrder_persists_first_reason_even_without_payment()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

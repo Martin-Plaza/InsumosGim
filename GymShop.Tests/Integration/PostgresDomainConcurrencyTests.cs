@@ -39,19 +39,18 @@ public sealed class PostgresDomainConcurrencyTests
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         var (firstUser, secondUser, productId) = await SeedTwoCartsAsync(database, stock: 1);
-        var barrier = new ProductSaveBarrier(2);
-        await using var firstDb = database.CreateContext(barrier);
-        await using var secondDb = database.CreateContext(barrier);
+        await using var firstDb = database.CreateContext();
+        await using var secondDb = database.CreateContext();
 
-        var firstTask = Capture(() => new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb))
-            .ExecuteAsync(firstUser, new CheckoutCartRequest("HomeDelivery", "First Address", 0)));
-        var secondTask = Capture(() => new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb))
-            .ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
-        await barrier.AllArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
-        barrier.Release.TrySetResult();
-        var outcomes = await Task.WhenAll(firstTask, secondTask);
+        var outcomes = await Task.WhenAll(
+            new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb))
+                .ExecuteAsync(firstUser, new CheckoutCartRequest("HomeDelivery", "First Address", 0)),
+            new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb))
+                .ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
 
-        Assert.Equal(1, outcomes.Count(x => x.Success));
+        Assert.Single(outcomes, x => x.IsSuccess);
+        Assert.Single(outcomes, x => !x.IsSuccess &&
+            x.Error?.Message.Contains("stock", StringComparison.OrdinalIgnoreCase) == true);
         await using var verification = database.CreateContext();
         Assert.Equal(0, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
         Assert.Single(await verification.Orders.ToListAsync());

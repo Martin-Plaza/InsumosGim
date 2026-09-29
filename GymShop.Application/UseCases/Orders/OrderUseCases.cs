@@ -160,7 +160,7 @@ public class GetOrdersUseCase : IGetOrdersUseCase
 
 public sealed class GetOrderHistoryUseCase : IGetOrderHistoryUseCase
 {
-    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively", "PaymentWebhookUnmatched"];
+    private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively", "PaymentWebhookUnmatched", "FreeOrderConfirmed"];
     private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged", "PaymentApprovedAfterOrderCancellation"];
     private readonly IApplicationDbContext _db;
 
@@ -233,11 +233,13 @@ public class CancelOrderUseCase : ICancelOrderUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly IAuditContext? _auditContext;
+    private readonly ITransactionManager? _transactionManager;
 
-    public CancelOrderUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
+    public CancelOrderUseCase(IApplicationDbContext db, IAuditContext? auditContext = null, ITransactionManager? transactionManager = null)
     {
         _db = db;
         _auditContext = auditContext;
+        _transactionManager = transactionManager;
     }
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int id, int userId, bool canManageAll, CancelOrderRequest request, CancellationToken cancellationToken = default)
@@ -246,6 +248,10 @@ public class CancelOrderUseCase : ICancelOrderUseCase
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El motivo no puede superar 500 caracteres.");
         }
+
+        await using var transaction = _transactionManager is null
+            ? null
+            : await _transactionManager.BeginOrderCancellationTransactionAsync(id, cancellationToken);
 
         var order = await _db.Orders
             .Include(x => x.User)
@@ -271,19 +277,28 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
         }
 
-        if (order.Status != OrderStatus.Pending)
+        var isCancelableFreeOrder = order.Total == 0 &&
+                                    order.Status is OrderStatus.Paid or OrderStatus.Preparing &&
+                                    !order.Payments.Any();
+        if (order.Status != OrderStatus.Pending && !isCancelableFreeOrder)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Solo se pueden cancelar pedidos pendientes desde este flujo.");
+            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Solo se pueden cancelar pedidos pendientes o pedidos gratuitos confirmados que todavía no fueron enviados.");
         }
 
         if (string.IsNullOrWhiteSpace(request.Reason))
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El motivo de cancelacion es obligatorio.");
 
         var reason = request.Reason.Trim();
-        OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
+        var previousStatus = order.Status;
+        if (isCancelableFreeOrder)
+            OrderCompensation.CancelFreeOrderAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
+        else
+            OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
         AuditTrail.Add(_db, _auditContext, "OrderCanceled", "Order", order.Id,
-            new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() }, reason);
+            new { status = previousStatus.ToString() }, new { status = order.Status.ToString() }, reason);
         await _db.SaveChangesAsync(cancellationToken);
+
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
 
         return AppResult<OrderResponse>.Success(OrderMapper.ToResponse(order));
     }
@@ -334,6 +349,22 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 
 internal static class OrderCompensation
 {
+    public static bool CancelFreeOrderAndRestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
+    {
+        if (order.Total != 0 || order.Status is not (OrderStatus.Paid or OrderStatus.Preparing) ||
+            order.Payments.Any())
+        {
+            return false;
+        }
+
+        RestoreStock(db, order, reason, actorUserId);
+        order.Status = OrderStatus.Canceled;
+        order.CancellationReason ??= reason;
+        order.UpdatedAt = DateTime.UtcNow;
+        CouponRedemptionLifecycle.ReleaseConsumedAfterCancellation(order);
+        return true;
+    }
+
     public static bool CancelPendingAndRestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
     {
         if (order.Status != OrderStatus.Pending)
@@ -353,6 +384,15 @@ internal static class OrderCompensation
             payment.UpdatedAt = DateTime.UtcNow;
         }
 
+        RestoreStock(db, order, reason, actorUserId);
+
+        CouponRedemptionLifecycle.Release(order);
+
+        return true;
+    }
+
+    private static void RestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId)
+    {
         foreach (var item in order.Items)
         {
             var previousStock = item.ProductVariant?.Stock ?? item.Product.Stock;
@@ -362,10 +402,6 @@ internal static class OrderCompensation
             StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
                 previousStock, reason, actorUserId, order, item.ProductVariant);
         }
-
-        CouponRedemptionLifecycle.Release(order);
-
-        return true;
     }
 
     public static bool ApplyConfirmedRefund(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)

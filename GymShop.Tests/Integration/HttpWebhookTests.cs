@@ -133,9 +133,29 @@ public sealed class HttpWebhookTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Legacy_ipn_query_without_signed_webhook_id_is_rejected()
+    public async Task Legacy_payment_ipn_is_verified_with_provider_and_updates_payment()
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments/mercadopago/webhook?topic=payment&id=mp-legacy");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments/mercadopago/webhook?topic=payment&id=123456789")
+        {
+            Content = JsonContent.Create(new { resource = "https://api.mercadopago.com/v1/payments/123456789", topic = "payment" })
+        };
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _gateway.GetCalls);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
+        Assert.Equal(PaymentStatus.Approved, (await db.Payments.SingleAsync()).Status);
+        Assert.Equal(OrderStatus.Paid, (await db.Orders.SingleAsync()).Status);
+    }
+
+    [Theory]
+    [InlineData("merchant_order", "123456789")]
+    [InlineData("payment", "not-numeric")]
+    public async Task Legacy_ipn_requires_payment_topic_and_numeric_id(string topic, string id)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/payments/mercadopago/webhook?topic={topic}&id={id}");
 
         var response = await _client.SendAsync(request);
 

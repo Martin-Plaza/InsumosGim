@@ -1200,8 +1200,9 @@ La integracion cubre:
 
 - Creacion de preferencias de Checkout Pro.
 - Asociacion local entre pago y orden mediante `OrderId` y `ExternalReference`.
-- Recepcion de webhook en `POST /api/payments/mercadopago/webhook`.
-- Validacion HMAC con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`.
+- Recepcion de Webhook e IPN de pagos en `POST /api/payments/mercadopago/webhook`.
+- Validacion HMAC de Webhooks con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`.
+- Compatibilidad con IPN legacy limitada a `topic=payment` e ID numerico. La IPN nunca se toma como prueba de pago: el backend consulta Mercado Pago con su propio access token y valida referencia externa, monto y moneda antes de modificar estados.
 - Idempotencia con `IdempotencyKey`.
 - Actualizacion de orden a `Paid` cuando el pago queda aprobado.
 - Cancelacion y restauracion de stock cuando el pago se rechaza, cancela o expira.

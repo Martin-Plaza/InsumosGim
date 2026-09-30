@@ -125,18 +125,23 @@ public class PaymentsController : ApiControllerBase
     [HttpPost("mercadopago/webhook")]
     [EnableRateLimiting(RateLimitPolicies.WebhookIp)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult> MercadoPagoWebhook([FromQuery(Name = "data.id")] string? queryDataId, CancellationToken cancellationToken)
+    public async Task<ActionResult> MercadoPagoWebhook(
+        [FromQuery(Name = "data.id")] string? queryDataId,
+        [FromQuery(Name = "id")] string? legacyId,
+        [FromQuery(Name = "topic")] string? legacyTopic,
+        CancellationToken cancellationToken)
     {
         if (!_mercadoPagoOptions.Enabled)
         {
             return NotFound(new { message = "La integracion de Mercado Pago no esta habilitada." });
         }
 
-        var dataId = await GetMercadoPagoPaymentIdAsync(queryDataId, Request, cancellationToken);
-        if (string.IsNullOrWhiteSpace(dataId))
+        var notification = await GetMercadoPagoNotificationAsync(
+            queryDataId, legacyId, legacyTopic, Request, cancellationToken);
+        if (notification is null)
         {
             _logger.LogWarning(
-                "Mercado Pago notification missing data.id. HasLegacyId={HasLegacyId}, HasTopic={HasTopic}, HasJsonContentType={HasJsonContentType}, ContentLength={ContentLength}",
+                "Unrecognized Mercado Pago notification format. HasLegacyId={HasLegacyId}, HasTopic={HasTopic}, HasJsonContentType={HasJsonContentType}, ContentLength={ContentLength}",
                 Request.Query.ContainsKey("id"), Request.Query.ContainsKey("topic"),
                 Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true,
                 Request.ContentLength);
@@ -144,7 +149,10 @@ public class PaymentsController : ApiControllerBase
         }
 
         var secret = _mercadoPagoOptions.WebhookSecret;
-        if (!string.IsNullOrWhiteSpace(secret) && !MercadoPagoWebhookSignatureValidator.IsValid(Request.Headers["x-signature"], Request.Headers["x-request-id"], dataId, secret))
+        if (notification.RequiresSignature &&
+            !string.IsNullOrWhiteSpace(secret) &&
+            !MercadoPagoWebhookSignatureValidator.IsValid(
+                Request.Headers["x-signature"], Request.Headers["x-request-id"], notification.PaymentId, secret))
         {
             return Unauthorized(new { message = "Firma de Mercado Pago invalida." });
         }
@@ -152,38 +160,60 @@ public class PaymentsController : ApiControllerBase
         var decision = _requestLimiter.Acquire(RateLimitPolicies.WebhookGlobal, "all");
         if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
 
-        var result = await _handlePaymentWebhook.ExecuteAsync("MercadoPago", dataId, cancellationToken);
+        var result = await _handlePaymentWebhook.ExecuteAsync("MercadoPago", notification.PaymentId, cancellationToken);
         return result.IsSuccess ? Ok(new { received = true }) : ToErrorResponse(result.Error!);
     }
 
-    private static async Task<string?> GetMercadoPagoPaymentIdAsync(string? queryDataId, HttpRequest request, CancellationToken cancellationToken)
+    private static async Task<MercadoPagoNotification?> GetMercadoPagoNotificationAsync(
+        string? queryDataId,
+        string? legacyId,
+        string? legacyTopic,
+        HttpRequest request,
+        CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(queryDataId))
         {
-            return queryDataId;
+            return new MercadoPagoNotification(queryDataId, RequiresSignature: true);
         }
 
-        if (request.ContentLength == 0) return null;
-
-        try
+        if (request.ContentLength != 0)
         {
-            using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
-            var body = document.RootElement;
-            if (body.ValueKind == JsonValueKind.Object &&
-                body.TryGetProperty("data", out var data) &&
-                data.ValueKind == JsonValueKind.Object &&
-                data.TryGetProperty("id", out var id))
+            try
             {
-                return id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
+                using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
+                var body = document.RootElement;
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("data", out var data) &&
+                    data.ValueKind == JsonValueKind.Object &&
+                    data.TryGetProperty("id", out var id))
+                {
+                    var bodyDataId = id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
+                    if (!string.IsNullOrWhiteSpace(bodyDataId))
+                    {
+                        return new MercadoPagoNotification(bodyDataId, RequiresSignature: true);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // A malformed or non-JSON notification cannot supply a signed Webhook payment ID.
             }
         }
-        catch (JsonException)
+
+        if (string.Equals(legacyTopic, "payment", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(legacyId) &&
+            legacyId.All(char.IsAsciiDigit))
         {
-            // A malformed or non-JSON notification cannot supply a signed Webhook payment ID.
+            // Legacy IPN does not carry the Webhook HMAC headers. Authenticity is established
+            // server-to-server by loading this payment with our Mercado Pago access token and
+            // validating its external reference, amount and currency before applying any state.
+            return new MercadoPagoNotification(legacyId, RequiresSignature: false);
         }
 
         return null;
     }
+
+    private sealed record MercadoPagoNotification(string PaymentId, bool RequiresSignature);
 }
 
 public static class MercadoPagoWebhookSignatureValidator

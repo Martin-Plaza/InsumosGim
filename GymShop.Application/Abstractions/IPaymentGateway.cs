@@ -22,6 +22,7 @@ public interface IPaymentGateway
     bool CanHandle(string provider);
     Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default);
     Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default);
+    Task ExpirePreferenceAsync(string providerPreferenceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
 public class PaymentGatewayException : Exception

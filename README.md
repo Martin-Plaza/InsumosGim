@@ -1202,6 +1202,7 @@ La integracion cubre:
 - Asociacion local entre pago y orden mediante `OrderId` y `ExternalReference`.
 - Recepcion de Webhook e IPN de pagos en `POST /api/payments/mercadopago/webhook`.
 - Validacion HMAC de Webhooks con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`.
+- Invalidacion de la preferencia de Checkout Pro despues del primer pago aprobado para cerrar enlaces abiertos; si Mercado Pago no acepta el cierre, el webhook responde `503` y el intento queda auditado para permitir el reintento sin aplicar el pago dos veces.
 - Compatibilidad con IPN legacy limitada a `topic=payment` e ID numerico. La IPN nunca se toma como prueba de pago: el backend consulta Mercado Pago con su propio access token y valida referencia externa, monto y moneda antes de modificar estados.
 - Idempotencia con `IdempotencyKey`.
 - Actualizacion de orden a `Paid` cuando el pago queda aprobado.

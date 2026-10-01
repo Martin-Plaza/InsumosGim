@@ -17,6 +17,18 @@ public class Order
     public decimal ShippingCost { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
     public string ShippingAddress { get; set; } = string.Empty;
+    public string? ShippingPostalCode { get; set; }
+    public string? ShippingProvince { get; set; }
+    public string? ShippingCity { get; set; }
+    public string? ShippingStreet { get; set; }
+    public string? ShippingStreetNumber { get; set; }
+    public string? ShippingFloor { get; set; }
+    public string? ShippingApartment { get; set; }
+    public string? ShippingNotes { get; set; }
+    public Guid? ShippingQuoteId { get; set; }
+    public string? ShippingProviderCode { get; set; }
+    public string? ShippingServiceCode { get; set; }
+    public string? ShippingServiceName { get; set; }
     public string PickupAddress { get; set; } = string.Empty;
     public string PickupHours { get; set; } = string.Empty;
     public string PickupInstructions { get; set; } = string.Empty;

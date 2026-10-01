@@ -67,6 +67,7 @@ public static class DependencyInjection
         services.AddScoped<IRemoveCartItemUseCase, RemoveCartItemUseCase>();
         services.AddScoped<IClearCartUseCase, ClearCartUseCase>();
         services.AddScoped<ICheckoutCartUseCase, CheckoutCartUseCase>();
+        services.AddScoped<IQuoteCartShippingUseCase, QuoteCartShippingUseCase>();
         services.AddScoped<IApplyCartCouponUseCase, ApplyCartCouponUseCase>();
         services.AddScoped<IRemoveCartCouponUseCase, RemoveCartCouponUseCase>();
         services.AddScoped<IGetCouponsUseCase, GetCouponsUseCase>();

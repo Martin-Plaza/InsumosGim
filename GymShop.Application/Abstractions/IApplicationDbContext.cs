@@ -26,5 +26,6 @@ public interface IApplicationDbContext
     DbSet<UserExternalLogin> UserExternalLogins { get; }
     DbSet<Coupon> Coupons { get; }
     DbSet<CouponRedemption> CouponRedemptions { get; }
+    DbSet<ShippingQuoteReservation> ShippingQuoteReservations { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

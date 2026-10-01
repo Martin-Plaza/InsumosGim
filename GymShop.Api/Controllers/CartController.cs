@@ -24,6 +24,7 @@ public class CartController : ApiControllerBase
     private readonly IApplyCartCouponUseCase _applyCoupon;
     private readonly IRemoveCartCouponUseCase _removeCoupon;
     private readonly IShippingSettings _shippingSettings;
+    private readonly IQuoteCartShippingUseCase _quoteShipping;
 
     public CartController(
         IGetCartUseCase getCart,
@@ -33,7 +34,8 @@ public class CartController : ApiControllerBase
         IClearCartUseCase clearCart,
         ICheckoutCartUseCase checkoutCart,
         ICurrentUserService currentUser, IApplyCartCouponUseCase applyCoupon, IRemoveCartCouponUseCase removeCoupon,
-        IShippingSettings shippingSettings)
+        IShippingSettings shippingSettings,
+        IQuoteCartShippingUseCase quoteShipping)
     {
         _getCart = getCart;
         _addCartItem = addCartItem;
@@ -44,6 +46,7 @@ public class CartController : ApiControllerBase
         _currentUser = currentUser;
         _applyCoupon = applyCoupon; _removeCoupon = removeCoupon;
         _shippingSettings = shippingSettings;
+        _quoteShipping = quoteShipping;
     }
 
     [HttpGet("shipping-options")]
@@ -52,6 +55,12 @@ public class CartController : ApiControllerBase
         _shippingSettings.PickupAddress,
         _shippingSettings.PickupInstructions,
         _shippingSettings.PickupHours));
+
+    [HttpPost("shipping-quotes")]
+    public async Task<ActionResult<IReadOnlyList<ShippingQuoteResponse>>> QuoteShipping(CreateShippingQuoteRequest request, CancellationToken cancellationToken)
+    {
+        return FromResult(await _quoteShipping.ExecuteAsync(_currentUser.UserId, request, cancellationToken));
+    }
 
     [HttpPost("coupon")]
     public async Task<ActionResult<CartResponse>> ApplyCoupon(ApplyCouponRequest request, CancellationToken cancellationToken)

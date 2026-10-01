@@ -1561,12 +1561,34 @@ El checkout está separado en tres responsabilidades:
 
 Se eligieron páginas separadas en lugar de mantener todo dentro del carrito porque permiten usar atrás/adelante, recuperar una orden por URL y distinguir claramente entre modificar la compra y confirmarla. La contrapartida es una ruta y componentes adicionales, pero reduce el riesgo de recrear una orden al volver a la pantalla anterior.
 
-El contrato actual solamente admite `shippingAddress`, con un máximo de 300 caracteres. El frontend no agrega costos de envío, cuotas, impuestos, códigos postales estructurados ni datos fiscales porque todavía no existen en el backend. Agregar esos conceptos solamente en la interfaz produciría totales o promesas que la API no puede validar.
+Para envío a domicilio el checkout solicita una dirección estructurada: código postal, provincia, ciudad, calle, número y, opcionalmente, piso, departamento e indicaciones. Antes de confirmar llama a `POST /api/cart/shipping-quotes`. La API arma los bultos con el peso y las dimensiones efectivas del producto o su variante, consulta los proveedores registrados y devuelve cotizaciones temporales.
+
+Cada cotización se persiste con usuario, carrito, destino, proveedor, servicio, precio, vencimiento y una huella SHA-256 de los productos, variantes, cantidades y medidas. `POST /api/cart/checkout` recibe `shippingQuoteId` y vuelve a validar todo dentro del flujo transaccional. Si la cotización venció o cambió el carrito o la dirección, responde `409` y no crea la orden. El precio del envío proviene de la cotización guardada por el servidor, no del navegador.
+
+La orden conserva tanto el texto legible de la dirección como su snapshot estructurado y los códigos de proveedor y servicio. Las órdenes anteriores siguen siendo compatibles porque estos campos nuevos son opcionales. El request legado con `shippingAddress` se mantiene temporalmente para clientes anteriores, pero el frontend nuevo siempre usa cotización estructurada.
+
+El primer adaptador es `OwnFleetShippingProvider`, que representa reparto propio y usa `Shipping:HomeDeliveryCost`. La abstracción `IShippingProvider` permite sumar OCA o Correo Argentino sin cambiar el checkout: cada integración solamente debe implementar cotización, sucursales, creación, etiqueta, cancelación y tracking según sus capacidades. En esta etapa el reparto propio implementa cotización; la creación de despachos y el seguimiento quedan para el módulo operativo siguiente.
+
+La configuración incluye el origen y la vigencia de las cotizaciones:
+
+```text
+Shipping__OriginPostalCode
+Shipping__OriginProvince
+Shipping__OriginCity
+Shipping__OriginStreet
+Shipping__OriginStreetNumber
+Shipping__QuoteLifetimeMinutes
+Shipping__EstimatedDeliveryMinDays
+Shipping__EstimatedDeliveryMaxDays
+```
+
+Los productos que participen en envíos deben tener peso, largo, ancho y alto del paquete. Una variante puede sobrescribir cada medida; si no lo hace, hereda la del producto. Si falta alguna medida, la API responde `shipping_dimensions_missing` y no inventa un costo.
 
 Al confirmar, el frontend ejecuta:
 
 ```text
 POST /api/cart/checkout
+POST /api/cart/shipping-quotes
 POST /api/orders/{orderId}/payments
 GET  /api/orders/{orderId}
 GET  /api/payments/orders/{orderId}
@@ -1598,9 +1620,9 @@ Ventajas del diseño:
 
 Limitaciones actuales:
 
-- No hay cálculo de envío, promociones, impuestos ni cuotas.
+- Todavía no se crean despachos, etiquetas ni eventos de tracking; esta etapa cubre dirección, bultos y cotización segura.
+- OCA y Correo Argentino todavía no tienen adaptador concreto ni credenciales configuradas.
 - El proveedor Mock no representa una aprobación financiera real.
-- Para staging será necesario definir las reglas comerciales de entrega antes de ampliar los campos.
 
 La aplicacion aplica migraciones y datos demo cuando `DatabaseInitialization:Enabled=true`.
 Compose establece ese valor explicitamente; fuera de Compose permanece deshabilitado por defecto.

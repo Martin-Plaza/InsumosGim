@@ -170,11 +170,16 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             {
                 table.HasCheckConstraint("CK_Products_Price_Positive", "\"Price\" > 0");
                 table.HasCheckConstraint("CK_Products_Stock_NonNegative", "\"Stock\" >= 0");
+                table.HasCheckConstraint("CK_Products_PackageWeight_Positive", "\"PackageWeightGrams\" IS NULL OR \"PackageWeightGrams\" > 0");
+                table.HasCheckConstraint("CK_Products_PackageDimensions_Positive", "(\"PackageLengthCm\" IS NULL OR \"PackageLengthCm\" > 0) AND (\"PackageWidthCm\" IS NULL OR \"PackageWidthCm\" > 0) AND (\"PackageHeightCm\" IS NULL OR \"PackageHeightCm\" > 0)");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(150).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(1000);
             entity.Property(x => x.Price).HasPrecision(18, 2);
+            entity.Property(x => x.PackageLengthCm).HasPrecision(8, 2);
+            entity.Property(x => x.PackageWidthCm).HasPrecision(8, 2);
+            entity.Property(x => x.PackageHeightCm).HasPrecision(8, 2);
             entity.Property(x => x.ImageUrl).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
@@ -188,10 +193,18 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
 
         modelBuilder.Entity<ProductVariant>(entity =>
         {
-            entity.ToTable("ProductVariants", table => table.HasCheckConstraint("CK_ProductVariants_Stock_NonNegative", "\"Stock\" >= 0"));
+            entity.ToTable("ProductVariants", table =>
+            {
+                table.HasCheckConstraint("CK_ProductVariants_Stock_NonNegative", "\"Stock\" >= 0");
+                table.HasCheckConstraint("CK_ProductVariants_PackageWeight_Positive", "\"PackageWeightGrams\" IS NULL OR \"PackageWeightGrams\" > 0");
+                table.HasCheckConstraint("CK_ProductVariants_PackageDimensions_Positive", "(\"PackageLengthCm\" IS NULL OR \"PackageLengthCm\" > 0) AND (\"PackageWidthCm\" IS NULL OR \"PackageWidthCm\" > 0) AND (\"PackageHeightCm\" IS NULL OR \"PackageHeightCm\" > 0)");
+            });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Sku).HasMaxLength(100).IsRequired();
             entity.Property(x => x.Price).HasPrecision(18, 2);
+            entity.Property(x => x.PackageLengthCm).HasPrecision(8, 2);
+            entity.Property(x => x.PackageWidthCm).HasPrecision(8, 2);
+            entity.Property(x => x.PackageHeightCm).HasPrecision(8, 2);
             entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Sku).IsUnique();
             entity.HasIndex(x => new { x.ProductId, x.IsActive });

@@ -130,6 +130,9 @@ public class CreateProductUseCase : ICreateProductUseCase
         }
         if (string.IsNullOrWhiteSpace(request.ImageUrl))
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "Agregá una imagen o su URL.");
+        var packageError = ProductValidator.ValidatePackage(request.PackageWeightGrams, request.PackageLengthCm, request.PackageWidthCm, request.PackageHeightCm);
+        if (packageError is not null)
+            return AppResult<ProductResponse>.Failure(AppErrorType.Validation, packageError);
         var options = await ProductVariantManager.LoadOptions(_db, request.Variants, cancellationToken);
         var variantsError = ProductVariantManager.Validate(request.Variants, options);
         if (variantsError is not null) return AppResult<ProductResponse>.Failure(AppErrorType.Validation, variantsError);
@@ -149,6 +152,10 @@ public class CreateProductUseCase : ICreateProductUseCase
             Price = request.Price,
             Stock = request.Stock,
             ImageUrl = request.ImageUrl?.Trim(),
+            PackageWeightGrams = request.PackageWeightGrams,
+            PackageLengthCm = request.PackageLengthCm,
+            PackageWidthCm = request.PackageWidthCm,
+            PackageHeightCm = request.PackageHeightCm,
             IsActive = true,
             Category = category
         };
@@ -198,6 +205,9 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         {
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, validationError);
         }
+        var packageError = ProductValidator.ValidatePackage(request.PackageWeightGrams, request.PackageLengthCm, request.PackageWidthCm, request.PackageHeightCm);
+        if (packageError is not null)
+            return AppResult<ProductResponse>.Failure(AppErrorType.Validation, packageError);
         var options = await ProductVariantManager.LoadOptions(_db, request.Variants, cancellationToken);
         var variantsError = ProductVariantManager.Validate(request.Variants, options);
         if (variantsError is not null) return AppResult<ProductResponse>.Failure(AppErrorType.Validation, variantsError);
@@ -210,12 +220,16 @@ public class UpdateProductUseCase : IUpdateProductUseCase
         if (request.CategoryId.HasValue && category is null)
             return AppResult<ProductResponse>.Failure(AppErrorType.Validation, "La categoría indicada no existe o está inactiva.");
 
-        var oldValue = new { product.Name, product.Price, product.Stock, product.IsActive };
+        var oldValue = new { product.Name, product.Price, product.Stock, product.IsActive, product.PackageWeightGrams, product.PackageLengthCm, product.PackageWidthCm, product.PackageHeightCm };
         var previousVariantStocks = product.Variants.Where(x => x.Id > 0).ToDictionary(x => x.Id, x => x.Stock);
         product.Name = request.Name.Trim();
         product.Description = request.Description?.Trim();
         product.Price = request.Price;
         product.ImageUrl = request.ImageUrl?.Trim();
+        product.PackageWeightGrams = request.PackageWeightGrams;
+        product.PackageLengthCm = request.PackageLengthCm;
+        product.PackageWidthCm = request.PackageWidthCm;
+        product.PackageHeightCm = request.PackageHeightCm;
         product.IsActive = request.IsActive;
         product.Category = category;
         product.UpdatedAt = DateTime.UtcNow;
@@ -232,7 +246,7 @@ public class UpdateProductUseCase : IUpdateProductUseCase
                     _auditContext?.ActorUserId, variant: variant);
         }
         AuditTrail.Add(_db, _auditContext, "ProductUpdated", "Product", product.Id, oldValue,
-            new { product.Name, product.Price, product.Stock, product.IsActive });
+            new { product.Name, product.Price, product.Stock, product.IsActive, product.PackageWeightGrams, product.PackageLengthCm, product.PackageWidthCm, product.PackageHeightCm });
 
         try
         {
@@ -323,6 +337,17 @@ public static class ProductValidator
 
         return null;
     }
+
+    public static string? ValidatePackage(int? weightGrams, decimal? lengthCm, decimal? widthCm, decimal? heightCm)
+    {
+        var values = new decimal?[] { weightGrams, lengthCm, widthCm, heightCm };
+        if (values.All(x => x is null)) return null;
+        if (values.Any(x => x is null)) return "Completá el peso y las tres dimensiones del producto empaquetado.";
+        if (weightGrams is <= 0 or > 1_000_000) return "El peso empaquetado debe estar entre 1 y 1.000.000 gramos.";
+        if (new[] { lengthCm!.Value, widthCm!.Value, heightCm!.Value }.Any(x => x <= 0 || x > 1000 || decimal.Round(x, 2) != x))
+            return "Cada dimensión empaquetada debe estar entre 0,01 y 1.000 cm, con hasta dos decimales.";
+        return null;
+    }
 }
 
 internal static class ProductMapper
@@ -339,11 +364,21 @@ internal static class ProductMapper
             product.IsActive,
             product.Category is null ? null : new CategorySummaryResponse(product.Category.Id, product.Category.Name, product.Category.Slug),
             product.Variants.OrderBy(x => x.Id).Select(x => new ProductVariantResponse(x.Id, x.Sku, x.Price ?? product.Price, x.Stock, x.IsActive,
-                x.Attributes.OrderBy(a => a.Name).ToDictionary(a => a.Name, a => a.Value), x.Attributes.Where(a => a.ProductAttributeOptionId.HasValue).Select(a => a.ProductAttributeOptionId!.Value).ToList())).ToList(),
+                x.Attributes.OrderBy(a => a.Name).ToDictionary(a => a.Name, a => a.Value), x.Attributes.Where(a => a.ProductAttributeOptionId.HasValue).Select(a => a.ProductAttributeOptionId!.Value).ToList(),
+                x.PackageWeightGrams, x.PackageLengthCm, x.PackageWidthCm, x.PackageHeightCm,
+                (x.PackageWeightGrams ?? product.PackageWeightGrams).HasValue
+                    && (x.PackageLengthCm ?? product.PackageLengthCm).HasValue
+                    && (x.PackageWidthCm ?? product.PackageWidthCm).HasValue
+                    && (x.PackageHeightCm ?? product.PackageHeightCm).HasValue)).ToList(),
             product.ColorImages.SelectMany(x => x.ProductAttributeOptionId.HasValue ? new[] { new KeyValuePair<string,string>(x.ProductAttributeOptionId.Value.ToString(), x.ImageUrl), new KeyValuePair<string,string>(x.Color, x.ImageUrl) } : new[] { new KeyValuePair<string,string>(x.Color, x.ImageUrl) }).GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(x => x.Key, x => x.First().Value, StringComparer.OrdinalIgnoreCase),
             product.Variants.SelectMany(v => v.Attributes).Where(x => x.ProductAttributeOption != null).GroupBy(x => x.ProductAttributeOption!.ProductAttribute)
                 .OrderBy(g => g.Key.DisplayOrder).ThenBy(g => g.Key.Name).Select(g => new ProductAttributeSelectionResponse(g.Key.Id, g.Key.Name, g.Key.Presentation, g.Key.DisplayOrder,
-                    g.Select(x => x.ProductAttributeOption!).DistinctBy(x => x.Id).OrderBy(x => x.DisplayOrder).ThenBy(x => x.Value).Select(x => new ProductAttributeOptionSelectionResponse(x.Id, x.Value, x.VisualValue, x.DisplayOrder)).ToList())).ToList()
+                    g.Select(x => x.ProductAttributeOption!).DistinctBy(x => x.Id).OrderBy(x => x.DisplayOrder).ThenBy(x => x.Value).Select(x => new ProductAttributeOptionSelectionResponse(x.Id, x.Value, x.VisualValue, x.DisplayOrder)).ToList())).ToList(),
+            product.PackageWeightGrams,
+            product.PackageLengthCm,
+            product.PackageWidthCm,
+            product.PackageHeightCm,
+            product.PackageWeightGrams.HasValue && product.PackageLengthCm.HasValue && product.PackageWidthCm.HasValue && product.PackageHeightCm.HasValue
         );
     }
 }
@@ -361,6 +396,11 @@ internal static class ProductVariantManager
         if (variants.Any(v => string.IsNullOrWhiteSpace(v.Sku))) return "Cada variante debe tener SKU.";
         if (variants.GroupBy(v => v.Sku.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) return "Los SKU de variantes no pueden repetirse.";
         if (variants.Any(v => v.Price is <= 0 || v.Stock < 0)) return "Precio y stock de variante no son válidos.";
+        foreach (var variant in variants)
+        {
+            var packageError = ValidatePackageOverrides(variant);
+            if (packageError is not null) return packageError;
+        }
         if (variants.All(v => (v.OptionIds is null || v.OptionIds.Count == 0) && v.Attributes is { Count: > 0 })) {
             var legacy = variants.Select(v => string.Join("|", v.Attributes!.OrderBy(a => a.Key).Select(a => $"{a.Key.Trim().ToLowerInvariant()}={a.Value.Trim().ToLowerInvariant()}")));
             return legacy.Distinct().Count() == variants.Count ? null : "No puede haber combinaciones de atributos repetidas.";
@@ -385,10 +425,24 @@ internal static class ProductVariantManager
             var variant = input.Id.HasValue ? product.Variants.SingleOrDefault(x => x.Id == input.Id) : null;
             if (variant is null) { variant = new ProductVariant(); product.Variants.Add(variant); }
             variant.Sku = input.Sku.Trim(); variant.Price = input.Price; variant.Stock = input.Stock; variant.IsActive = input.IsActive;
+            variant.PackageWeightGrams = input.PackageWeightGrams;
+            variant.PackageLengthCm = input.PackageLengthCm;
+            variant.PackageWidthCm = input.PackageWidthCm;
+            variant.PackageHeightCm = input.PackageHeightCm;
             variant.Attributes.Clear();
             if (input.OptionIds is { Count: > 0 }) foreach (var option in input.OptionIds.Select(id => options.Single(x => x.Id == id)).OrderBy(x => x.ProductAttribute.DisplayOrder)) variant.Attributes.Add(new ProductVariantAttribute { ProductAttributeOptionId = option.Id, Name = option.ProductAttribute.Name, Value = option.Value });
             else foreach (var attribute in input.Attributes!.OrderBy(x => x.Key)) variant.Attributes.Add(new ProductVariantAttribute { Name = attribute.Key.Trim(), Value = attribute.Value.Trim() });
         }
+    }
+
+    private static string? ValidatePackageOverrides(ProductVariantInput variant)
+    {
+        if (variant.PackageWeightGrams is <= 0 or > 1_000_000)
+            return $"El peso empaquetado de la variante {variant.Sku} debe estar entre 1 y 1.000.000 gramos.";
+        var dimensions = new[] { variant.PackageLengthCm, variant.PackageWidthCm, variant.PackageHeightCm };
+        if (dimensions.Where(x => x.HasValue).Any(x => x <= 0 || x > 1000 || decimal.Round(x!.Value, 2) != x.Value))
+            return $"Las dimensiones empaquetadas de la variante {variant.Sku} no son válidas.";
+        return null;
     }
 
     public static string? ValidateColorImages(Dictionary<string, string>? images, List<ProductAttributeOption> options)

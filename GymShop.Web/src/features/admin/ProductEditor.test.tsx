@@ -5,7 +5,7 @@ import App from '../../App'
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 const category = { id: 4, name: 'Fuerza', slug: 'fuerza', description: null, displayOrder: 1 }
-const product = { id: 7, name: 'Kettlebell 16kg', description: 'Hierro', price: 42000, stock: 6, imageUrl: '/images/products/kettlebell-16kg.webp', isActive: false, category }
+const product = { id: 7, name: 'Kettlebell 16kg', description: 'Hierro', price: 42000, stock: 6, imageUrl: '/images/products/kettlebell-16kg.webp', isActive: false, category, packageWeightGrams: 16500, packageLengthCm: 32, packageWidthCm: 28, packageHeightCm: 28 }
 
 function signIn(role: 'User' | 'Admin' | 'SuperAdmin' = 'Admin') {
   localStorage.setItem('gymshop.token', 'jwt')
@@ -30,6 +30,10 @@ async function fillValidCreateForm() {
   await userEvent.type(screen.getByLabelText('Stock'), '4')
   await userEvent.selectOptions(screen.getByLabelText('Categoría'), '4')
   await userEvent.type(screen.getByLabelText('URL de imagen'), '/images/products/nuevo.webp')
+  await userEvent.type(screen.getByLabelText('Peso empaquetado'), '1500')
+  await userEvent.type(screen.getByLabelText('Largo empaquetado'), '30')
+  await userEvent.type(screen.getByLabelText('Ancho empaquetado'), '20')
+  await userEvent.type(screen.getByLabelText('Alto empaquetado'), '15')
 }
 
 describe('alta y edición administrativa de productos', () => {
@@ -96,7 +100,9 @@ describe('alta y edición administrativa de productos', () => {
     render(<App />); await screen.findByRole('button', { name: 'Crear producto' }); await fillValidCreateForm()
     await userEvent.dblClick(screen.getByRole('button', { name: 'Crear producto' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Producto nuevo fue creado correctamente.')
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+    const creates = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+    expect(creates).toHaveLength(1)
+    expect(JSON.parse(String(creates[0][1]?.body))).toMatchObject({ packageWeightGrams: 1500, packageLengthCm: 30, packageWidthCm: 20, packageHeightCm: 15 })
     expect(window.location.pathname).toBe('/admin/productos')
   })
 

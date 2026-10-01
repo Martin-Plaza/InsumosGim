@@ -7,6 +7,10 @@ public class ProductVariant
     public string Sku { get; set; } = string.Empty;
     public decimal? Price { get; set; }
     public int Stock { get; set; }
+    public int? PackageWeightGrams { get; set; }
+    public decimal? PackageLengthCm { get; set; }
+    public decimal? PackageWidthCm { get; set; }
+    public decimal? PackageHeightCm { get; set; }
     public bool IsActive { get; set; } = true;
     public uint RowVersion { get; set; }
 

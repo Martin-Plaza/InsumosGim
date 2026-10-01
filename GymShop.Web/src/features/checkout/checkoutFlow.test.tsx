@@ -119,6 +119,8 @@ describe('checkout y pago por orderId', () => {
     expect(calls.filter(call => call.url.endsWith('/api/cart/checkout') && call.method === 'POST')).toHaveLength(1)
     const checkoutCall = calls.find(call => call.url.endsWith('/api/cart/checkout') && call.method === 'POST')
     expect(JSON.parse(checkoutCall!.body || '{}')).toMatchObject({ deliveryMethod: 'HomeDelivery', expectedShippingCost: 6500, expectedSubtotal: 84000, expectedDiscount: 0 })
+    expect(JSON.parse(checkoutCall!.body || '{}').idempotencyKey).toEqual(expect.any(String))
+    expect(localStorage.getItem('gymshop.checkout-key.7')).toBeNull()
     const paymentCall = calls.find(call => call.url.endsWith('/api/orders/81/payments') && call.method === 'POST')
     expect(paymentCall).toBeTruthy()
     expect(JSON.parse(paymentCall!.body || '{}').provider).toBe('BankTransfer')

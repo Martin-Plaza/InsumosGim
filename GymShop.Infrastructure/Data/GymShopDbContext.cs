@@ -259,10 +259,16 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.TrackingNumber).HasMaxLength(100);
             entity.Property(x => x.TrackingUrl).HasMaxLength(500);
             entity.Property(x => x.CancellationReason).HasMaxLength(500);
+            entity.Property(x => x.CheckoutIdempotencyKey).HasMaxLength(ValidationLimits.IdempotencyKey);
+            entity.Property(x => x.CheckoutRequestFingerprint).HasMaxLength(64);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(x => x.UpdatedAt).IsConcurrencyToken();
 
             entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => new { x.UserId, x.CheckoutIdempotencyKey })
+                .IsUnique()
+                .HasDatabaseName("UX_Orders_UserId_CheckoutIdempotencyKey")
+                .HasFilter("\"CheckoutIdempotencyKey\" IS NOT NULL");
             entity.HasIndex(x => x.UserId)
                 .IsUnique()
                 .HasDatabaseName("UX_Orders_UserId_Pending")

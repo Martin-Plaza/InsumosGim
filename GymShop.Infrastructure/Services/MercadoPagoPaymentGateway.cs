@@ -187,6 +187,36 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         );
     }
 
+    public async Task ExpirePreferenceAsync(string providerPreferenceId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(providerPreferenceId))
+        {
+            throw new PaymentGatewayException("El id de la preferencia de Mercado Pago es obligatorio.");
+        }
+
+        ConfigureAuthorization();
+        var expirationDateTo = DateTimeOffset.UtcNow.AddSeconds(-1);
+        var payload = new
+        {
+            expires = true,
+            expiration_date_from = expirationDateTo.AddDays(-1),
+            expiration_date_to = expirationDateTo
+        };
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"checkout/preferences/{Uri.EscapeDataString(providerPreferenceId.Trim())}")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new PaymentGatewayException(
+                $"Mercado Pago no pudo invalidar la preferencia: {(int)response.StatusCode}.");
+        }
+    }
+
     private void ConfigureAuthorization()
     {
         var accessToken = _options.AccessToken;

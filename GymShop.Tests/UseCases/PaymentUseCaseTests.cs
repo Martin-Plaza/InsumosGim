@@ -148,6 +148,37 @@ public class PaymentUseCaseTests
         Assert.Equal(PaymentStatus.Approved.ToString(), result.Value?.Status);
         Assert.Equal(PaymentStatus.Approved, db.Payments.Single().Status);
         Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(["pref-123"], gateway.ExpiredPreferenceIds);
+    }
+
+    [Fact]
+    public async Task Webhook_approved_retries_preference_expiration_without_applying_payment_twice()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var order = await SeedOrderAsync(db, user.Id, stock: 5, quantity: 2, price: 100);
+        var payment = await CreatePendingPaymentAsync(db, order.Id, order.Total, "MercadoPago");
+        var gateway = new FakeMercadoPagoGateway
+        {
+            PaymentStatus = "approved",
+            Amount = order.Total,
+            ExternalReference = $"order-{order.Id}",
+            ExpirationFailuresRemaining = 1
+        };
+        var useCase = new HandlePaymentWebhookUseCase(db, [gateway]);
+
+        var first = await useCase.ExecuteAsync("MercadoPago", "mp-pay-1");
+        var second = await useCase.ExecuteAsync("MercadoPago", "mp-pay-1");
+
+        Assert.False(first.IsSuccess);
+        Assert.Equal(AppErrorType.Unavailable, first.Error?.Type);
+        Assert.Equal("payment_preference_invalidation_failed", first.Error?.Code);
+        Assert.True(second.IsSuccess);
+        Assert.Equal(PaymentStatus.Approved, payment.Status);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(["pref-123", "pref-123"], gateway.ExpiredPreferenceIds);
+        Assert.Single(db.AuditEntries.Where(x => x.Action == "PaymentPreferenceInvalidationFailed"));
+        Assert.Single(db.AuditEntries.Where(x => x.Action == "PaymentResolvedByProvider"));
     }
 
     [Fact]
@@ -210,6 +241,7 @@ public class PaymentUseCaseTests
         Assert.True(second.IsSuccess);
         Assert.Equal(OrderStatus.Canceled, order.Status);
         Assert.Equal(5, product.Stock);
+        Assert.Empty(gateway.ExpiredPreferenceIds);
     }
 
     [Fact]
@@ -711,6 +743,8 @@ public class PaymentUseCaseTests
         public string ExternalReference { get; set; } = "order-1";
         public decimal Amount { get; set; } = 200;
         public string? LastExternalReference { get; private set; }
+        public int ExpirationFailuresRemaining { get; set; }
+        public List<string> ExpiredPreferenceIds { get; } = [];
 
         public bool CanHandle(string provider) => string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
 
@@ -724,6 +758,18 @@ public class PaymentUseCaseTests
         public Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new ProviderPaymentResult(providerPaymentId, ExternalReference, PaymentStatus, Amount, "ARS", null));
+        }
+
+        public Task ExpirePreferenceAsync(string providerPreferenceId, CancellationToken cancellationToken = default)
+        {
+            ExpiredPreferenceIds.Add(providerPreferenceId);
+            if (ExpirationFailuresRemaining > 0)
+            {
+                ExpirationFailuresRemaining--;
+                throw new PaymentGatewayException("No se pudo invalidar la preferencia de prueba.");
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

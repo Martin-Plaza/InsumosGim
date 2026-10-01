@@ -571,7 +571,7 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
-        return await PaymentStatusApplier.ApplyAsync(
+        var applyResult = await PaymentStatusApplier.ApplyAsync(
             _db,
             payment,
             status.Value,
@@ -580,6 +580,40 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             isProviderNotification: true,
             _auditContext,
             cancellationToken);
+
+        if (!applyResult.IsSuccess || status != PaymentStatus.Approved ||
+            string.IsNullOrWhiteSpace(payment.ProviderPreferenceId))
+        {
+            return applyResult;
+        }
+
+        try
+        {
+            await gateway.ExpirePreferenceAsync(payment.ProviderPreferenceId, cancellationToken);
+        }
+        catch (PaymentGatewayException ex)
+        {
+            var alreadyRecorded = await _db.AuditEntries.AsNoTracking().AnyAsync(
+                x => x.Action == "PaymentPreferenceInvalidationFailed" &&
+                     x.EntityType == "Payment" &&
+                     x.EntityId == payment.Id.ToString(),
+                cancellationToken);
+            if (!alreadyRecorded)
+            {
+                AuditTrail.Add(_db, _auditContext, "PaymentPreferenceInvalidationFailed", "Payment", payment.Id,
+                    null,
+                    new { payment.ProviderPreferenceId },
+                    ex.Message);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+
+            return AppResult<PaymentResponse>.Failure(
+                AppErrorType.Unavailable,
+                "El pago fue confirmado, pero no se pudo cerrar el checkout. La notificacion puede reintentarse.",
+                "payment_preference_invalidation_failed");
+        }
+
+        return applyResult;
     }
 
     private async Task<bool> HasUnmatchedIncidentAsync(

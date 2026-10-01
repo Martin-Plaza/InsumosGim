@@ -120,6 +120,39 @@ public sealed class MercadoPagoGatewayHttpTests
         Assert.Equal("order-42", refunded.ExternalReference);
     }
 
+    [Fact]
+    public async Task Expire_preference_sends_an_already_expired_validity_window()
+    {
+        string? requestBody = null;
+        var handler = new StubHttpHandler(request =>
+        {
+            requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.OK, "{}");
+        });
+
+        await CreateGateway(handler).ExpirePreferenceAsync("pref-http-1");
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/checkout/preferences/pref-http-1", request.RequestUri?.AbsolutePath);
+        Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+        using var payload = JsonDocument.Parse(requestBody!);
+        Assert.True(payload.RootElement.GetProperty("expires").GetBoolean());
+        var expiration = payload.RootElement.GetProperty("expiration_date_to").GetDateTimeOffset();
+        Assert.True(expiration <= DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task Expire_preference_reports_provider_failure()
+    {
+        var gateway = CreateGateway(new StubHttpHandler(_ => Json(HttpStatusCode.BadRequest, "{}")));
+
+        var error = await Assert.ThrowsAsync<PaymentGatewayException>(() =>
+            gateway.ExpirePreferenceAsync("pref-http-1"));
+
+        Assert.Contains("400", error.Message);
+    }
+
     private static MercadoPagoPaymentGateway CreateGateway(HttpMessageHandler handler)
     {
         var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.mercadopago.test/") };

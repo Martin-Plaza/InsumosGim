@@ -277,19 +277,43 @@ public class CartUseCaseTests
             .ExecuteAsync(user.Id, new GymShop.Application.DTOs.Coupons.ApplyCouponRequest("FREE100"));
         var checkout = new CheckoutCartUseCase(db, shippingSettings: new TestShippingSettings(50));
 
-        var first = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200));
-        var retry = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200));
+        var first = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200, "checkout-free-key"));
+        var retry = await checkout.ExecuteAsync(user.Id, new CheckoutCartRequest("StorePickup", null, 0, 200, 200, "checkout-free-key"));
 
         Assert.True(first.IsSuccess);
         Assert.Equal(0, first.Value!.Total);
         Assert.Equal(OrderStatus.Paid.ToString(), first.Value.Status);
-        Assert.False(retry.IsSuccess);
+        Assert.True(retry.IsSuccess);
+        Assert.Equal(first.Value.Id, retry.Value!.Id);
         Assert.Single(db.Orders);
         Assert.Empty(db.Payments);
         Assert.Equal(3, product.Stock);
         Assert.Single(db.StockMovements);
         Assert.Equal(CouponRedemptionStatus.Consumed, db.CouponRedemptions.Single().Status);
         Assert.Equal("FreeOrderConfirmed", db.AuditEntries.Single().Action);
+    }
+
+    [Fact]
+    public async Task Checkout_rejects_reusing_idempotency_key_with_different_request_data()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = SeedProduct(db, stock: 5, price: 100);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+        var checkout = new CheckoutCartUseCase(db);
+
+        var first = await checkout.ExecuteAsync(user.Id,
+            new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 100, 0, "checkout-stable-key"));
+        var conflictingRetry = await checkout.ExecuteAsync(user.Id,
+            new CheckoutCartRequest("HomeDelivery", "Otra calle 456", 0, 100, 0, "checkout-stable-key"));
+
+        Assert.True(first.IsSuccess);
+        Assert.False(conflictingRetry.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, conflictingRetry.Error?.Type);
+        Assert.Equal("checkout_idempotency_conflict", conflictingRetry.Error?.Code);
+        Assert.Single(db.Orders);
+        Assert.Equal(4, product.Stock);
     }
 
     [Fact]

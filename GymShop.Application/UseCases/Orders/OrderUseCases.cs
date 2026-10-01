@@ -161,7 +161,7 @@ public class GetOrdersUseCase : IGetOrdersUseCase
 public sealed class GetOrderHistoryUseCase : IGetOrderHistoryUseCase
 {
     private static readonly string[] OrderActions = ["OrderStatusChanged", "OrderTrackingUpdated", "OrderCanceled", "OrderExpiredAdministratively", "PaymentWebhookUnmatched", "FreeOrderConfirmed"];
-    private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged", "PaymentApprovedAfterOrderCancellation"];
+    private static readonly string[] PaymentActions = ["PaymentResolvedByProvider", "PaymentResolvedManually", "PaymentRefundedByProvider", "PaymentPartialRefundFlagged", "PaymentApprovedAfterOrderCancellation", "PaymentPreferenceInvalidationFailed"];
     private readonly IApplicationDbContext _db;
 
     public GetOrderHistoryUseCase(IApplicationDbContext db) => _db = db;

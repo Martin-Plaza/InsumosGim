@@ -8,6 +8,13 @@ namespace GymShop.Infrastructure.Data;
 
 public static class DatabaseInitializer
 {
+    public static async Task MigrateAsync(IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        using var scope = services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
+        await db.Database.MigrateAsync(cancellationToken);
+    }
+
     public static async Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken = default)
     {
         using var scope = services.CreateScope();

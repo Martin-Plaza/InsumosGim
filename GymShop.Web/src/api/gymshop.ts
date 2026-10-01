@@ -53,7 +53,7 @@ export const api = {
   applyCoupon: (code: string) => request<Cart>('/api/cart/coupon', json('POST', { code })),
   removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),
   shippingOptions: () => request<ShippingOptions>('/api/cart/shipping-options'),
-  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number }) => request<Order>('/api/cart/checkout', json('POST', data)),
+  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string }) => request<Order>('/api/cart/checkout', json('POST', data)),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   orders: (filters: OrderFilters = {}) => {
     const query = new URLSearchParams()
@@ -90,6 +90,20 @@ export const api = {
     Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value) })
     return request<DashboardStatistics>(`/api/admin/dashboard?${query}`)
   },
+}
+
+export function checkoutKey(userId: number) {
+  const key = `gymshop.checkout-key.${userId}`
+  let value = localStorage.getItem(key)
+  if (!value) {
+    value = crypto.randomUUID()
+    localStorage.setItem(key, value)
+  }
+  return value
+}
+
+export function clearCheckoutKey(userId: number) {
+  localStorage.removeItem(`gymshop.checkout-key.${userId}`)
 }
 
 export function paymentKey(orderId: number) {

@@ -160,6 +160,12 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+if (args.Any(argument => string.Equals(argument, "--migrate-only", StringComparison.OrdinalIgnoreCase)))
+{
+    await DatabaseInitializer.MigrateAsync(app.Services);
+    return;
+}
+
 if (storeTimeZone.IsFallback)
 {
     app.Logger.LogWarning("Store:TimeZone is invalid. Dashboard date calculations are falling back to UTC.");

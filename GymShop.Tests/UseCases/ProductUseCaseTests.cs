@@ -31,6 +31,35 @@ public class ProductUseCaseTests
     }
 
     [Fact]
+    public async Task CreateProduct_persists_packaged_dimensions()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+
+        var result = await new CreateProductUseCase(db).ExecuteAsync(new CreateProductRequest(
+            "Banco regulable", "Listo para despachar", 150000, 2, "/images/banco.webp",
+            PackageWeightGrams: 18500, PackageLengthCm: 120.5m, PackageWidthCm: 42m, PackageHeightCm: 25.25m));
+
+        Assert.True(result.IsSuccess);
+        var product = Assert.Single(db.Products);
+        Assert.Equal(18500, product.PackageWeightGrams);
+        Assert.Equal(120.5m, product.PackageLengthCm);
+        Assert.True(result.Value!.HasCompletePackageDimensions);
+    }
+
+    [Fact]
+    public async Task CreateProduct_rejects_partial_packaged_dimensions()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+
+        var result = await new CreateProductUseCase(db).ExecuteAsync(new CreateProductRequest(
+            "Banco regulable", null, 150000, 2, "/images/banco.webp", PackageWeightGrams: 18500));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Validation, result.Error?.Type);
+        Assert.Empty(db.Products);
+    }
+
+    [Fact]
     public async Task CreateProduct_rejects_invalid_price()
     {
         await using var db = await TestDbContextFactory.CreateAsync();

@@ -10,7 +10,8 @@ public record CheckoutCartRequest(
     [StringLength(ValidationLimits.ShippingAddress)] string? ShippingAddress,
     [NonNegativeSqlDecimal] decimal ExpectedShippingCost,
     [SqlDecimal] decimal? ExpectedSubtotal = null,
-    [NonNegativeSqlDecimal] decimal? ExpectedDiscount = null);
+    [NonNegativeSqlDecimal] decimal? ExpectedDiscount = null,
+    [StringLength(ValidationLimits.IdempotencyKey)] string? IdempotencyKey = null);
 
 public record ShippingOptionsResponse(decimal HomeDeliveryCost, string PickupAddress, string PickupInstructions, string PickupHours);
 

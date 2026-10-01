@@ -8,6 +8,9 @@ using GymShop.Application.UseCases.Coupons;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace GymShop.Application.UseCases.Carts;
 
@@ -242,6 +245,14 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
     public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
     {
+        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
+            ? $"server-{Guid.NewGuid():N}"
+            : request.IdempotencyKey.Trim();
+        if (idempotencyKey.Length > ValidationLimits.IdempotencyKey)
+        {
+            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia no puede superar 100 caracteres.");
+        }
+
         if (!Enum.TryParse<DeliveryMethod>(request.DeliveryMethod, true, out var deliveryMethod) || !Enum.IsDefined(deliveryMethod))
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La modalidad de entrega no es valida.");
@@ -272,7 +283,27 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La configuracion de retiro en tienda supera los limites permitidos.", "pickup_configuration_invalid");
         }
 
+        var requestFingerprint = BuildRequestFingerprint(request, deliveryMethod);
         await using var transaction = await BeginCheckoutTransactionAsync(cancellationToken);
+
+        var idempotentOrder = await _db.Orders
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.UserId == userId && x.CheckoutIdempotencyKey == idempotencyKey,
+                cancellationToken);
+        if (idempotentOrder is not null)
+        {
+            if (!string.Equals(idempotentOrder.CheckoutRequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+            {
+                return AppResult<OrderResponse>.Failure(
+                    AppErrorType.Conflict,
+                    "La clave de idempotencia ya fue usada con otros datos de checkout.",
+                    "checkout_idempotency_conflict");
+            }
+
+            return AppResult<OrderResponse>.Success(
+                await OrderQueries.LoadOrderResponseAsync(_db, idempotentOrder.Id, cancellationToken));
+        }
 
         var cart = await _db.Carts
             .Include(x => x.Items)
@@ -336,6 +367,8 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         var order = new Order
         {
             UserId = userId,
+            CheckoutIdempotencyKey = idempotencyKey,
+            CheckoutRequestFingerprint = requestFingerprint,
             DeliveryMethod = deliveryMethod,
             ShippingAddress = deliveryMethod == DeliveryMethod.HomeDelivery ? request.ShippingAddress!.Trim() : string.Empty,
             PickupAddress = deliveryMethod == DeliveryMethod.StorePickup ? pickupAddress : string.Empty,
@@ -427,6 +460,20 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         return _transactionManager is null
             ? null
             : await _transactionManager.BeginCheckoutTransactionAsync(cancellationToken);
+    }
+
+    private static string BuildRequestFingerprint(CheckoutCartRequest request, DeliveryMethod deliveryMethod)
+    {
+        var normalizedAddress = deliveryMethod == DeliveryMethod.HomeDelivery
+            ? request.ShippingAddress?.Trim() ?? string.Empty
+            : string.Empty;
+        var canonical = string.Join('\n',
+            deliveryMethod.ToString(),
+            normalizedAddress,
+            request.ExpectedShippingCost.ToString("0.00", CultureInfo.InvariantCulture),
+            request.ExpectedSubtotal?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>",
+            request.ExpectedDiscount?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 }
 

@@ -721,17 +721,17 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Actor y permisos:** cualquier usuario autenticado.
 
-**Datos de entrada:** direccion de envio.
+**Datos de entrada:** modalidad y direccion de entrega, importes esperados y clave de idempotencia opcional de hasta 100 caracteres.
 
 **Precondiciones:** el carrito debe tener items; todos los productos deben existir, estar activos y tener stock; el usuario no debe poseer otra orden `Pending`.
 
-**Flujo esperado:** se validan nuevamente productos, precio y stock; se copian nombre y precio a las lineas de orden, se descuenta stock, se crea la orden `Pending` y se vacia el carrito dentro de una transaccion.
+**Flujo esperado:** dentro del bloqueo transaccional de checkout se busca primero una orden del usuario con la misma clave. Si existe y la huella de la solicitud coincide, se devuelve esa orden sin volver a leer ni modificar el carrito. Si no existe, se validan nuevamente productos, precio y stock; se copian nombre y precio a las lineas de orden, se descuenta stock, se crea la orden y se vacia el carrito dentro de la misma transaccion.
 
-**Reglas de negocio:** la direccion es obligatoria y admite hasta 300 caracteres; sólo puede existir una orden pendiente por usuario; el total usa precios actuales al confirmar, no precios historicos del carrito.
+**Reglas de negocio:** la direccion es obligatoria para envio y admite hasta 300 caracteres; sólo puede existir una orden pendiente por usuario; el total usa precios actuales al confirmar, no precios historicos del carrito. La clave es unica por usuario. Repetirla con los mismos datos devuelve la orden original incluso si ya cambio de estado; reutilizarla con modalidad, direccion o importes esperados diferentes se rechaza. Si un cliente antiguo omite la clave, el servidor genera una clave de una sola solicitud para mantener compatibilidad.
 
-**Resultado:** devuelve la orden creada con items, total y estado `Pending`.
+**Resultado:** devuelve la orden creada o la orden original de un reintento idempotente, sin duplicar stock, cupones, movimientos ni pagos.
 
-**Errores esperados:** `400 Bad Request` por direccion, carrito, productos o stock invalidos; `409 Conflict` si ya existe una orden pendiente; `401 Unauthorized`.
+**Errores esperados:** `400 Bad Request` por clave, direccion, carrito, productos o stock invalidos; `409 Conflict` si ya existe otra orden pendiente, cambió el precio esperado o la misma clave fue usada con otros datos; `401 Unauthorized`.
 
 **Que queda explicitamente fuera:** no crea el pago, no garantiza entrega y no mantiene los items en el carrito despues del exito.
 
@@ -969,17 +969,17 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Actor y permisos:** Mercado Pago como sistema externo; endpoint anonimo protegido por firma cuando existe un secreto configurado y por rate limiting.
 
-**Datos de entrada:** `data.id` en query o cuerpo, `x-signature` y `x-request-id` cuando la firma esta habilitada.
+**Datos de entrada:** `data.id` en query o cuerpo, `x-signature` y `x-request-id` cuando la firma esta habilitada. Un Webhook firmado puede informar `data.id` en la URL y enviar el cuerpo vacio.
 
 **Precondiciones:** la integracion debe estar habilitada, el ID debe existir y debe haber un pago local correlacionable por proveedor, referencia externa y orden.
 
 **Flujo esperado:** se extrae el ID, se valida HMAC-SHA256, se consulta el pago al gateway, se valida referencia, importe y moneda, y se aplica idempotentemente el estado informado.
 
-**Reglas de negocio:** nunca se confia sólo en el cuerpo del webhook; la informacion se vuelve a consultar al proveedor; un reembolso total restaura stock sólo si la orden no fue enviada; un reembolso parcial se marca para gestion manual.
+**Reglas de negocio:** nunca se confia sólo en el cuerpo ni en el estado declarado por el webhook; la informacion se vuelve a consultar al proveedor. Los Webhooks firmados aceptan el ID en query o cuerpo. La compatibilidad IPN sin firma se limita a `topic=payment` con ID numerico. Un reembolso total restaura stock sólo si la orden no fue enviada; un reembolso parcial se marca para gestion manual. Tras el primer pago aprobado se invalida la preferencia para impedir un segundo cobro desde otra pestaña abierta.
 
 **Resultado:** responde `200 OK` con `received: true` y actualiza pago, orden, stock y auditoria cuando corresponda.
 
-**Errores esperados:** `400 Bad Request` por ID o datos del proveedor invalidos, `401 Unauthorized` por firma invalida, `404 Not Found` si la integracion o pago local no existe, `409 Conflict` por importe, moneda o estados incompatibles y `429 Too Many Requests`.
+**Errores esperados:** `400 Bad Request` por ID o datos del proveedor invalidos, `401 Unauthorized` por firma invalida, `404 Not Found` si la integracion o pago local no existe, `409 Conflict` por importe, moneda o estados incompatibles, `429 Too Many Requests` y `503 Service Unavailable` cuando el pago ya fue aplicado pero Mercado Pago no pudo invalidar la preferencia y debe reintentar la notificacion.
 
 **Que queda explicitamente fuera:** no inicia pagos, no confia en estados enviados sin verificacion y no resuelve automaticamente reembolsos parciales.
 
@@ -1209,6 +1209,23 @@ La integracion cubre:
 - Cancelacion y restauracion de stock cuando el pago se rechaza, cancela o expira.
 - Manejo seguro de notificaciones repetidas.
 
+### Estado de validacion en staging
+
+El modulo de Mercado Pago se considero finalizado en staging el 1 de octubre de 2026 con las siguientes comprobaciones:
+
+- Una compra aprobada desde Checkout Pro actualiza el pago a `Approved` y la orden a `Paid` mediante la notificacion automatica del proveedor.
+- El simulador de Webhooks de Mercado Pago obtiene `200 OK` para una notificacion valida.
+- Un Webhook firmado con `data.id` en la URL y cuerpo vacio se procesa correctamente.
+- Una firma invalida se rechaza con `401 Unauthorized` sin consultar ni modificar el pago.
+- Las notificaciones repetidas son idempotentes y no duplican cambios de estado, consumo de cupones ni movimientos de stock.
+- Despues del primer pago aprobado se invalida la preferencia. Un segundo intento desde un checkout que habia quedado abierto es rechazado por Mercado Pago.
+- Si el `PUT` de invalidacion falla, la orden permanece pagada, se registra `PaymentPreferenceInvalidationFailed` y se devuelve `503` para que Mercado Pago reintente el cierre sin aplicar nuevamente el pago.
+- Los estados rechazado, cancelado y expirado, incluida la restitucion unica de stock, estan cubiertos por pruebas automatizadas.
+
+Las pruebas manuales de escenarios controlados con las tarjetas publicas `APRO` (aprobado) y `OTHE` (rechazado) no pudieron completarse porque el sandbox de Mercado Pago redirigio a `/fatal/` antes de crear un pago. Esa respuesta no incluyo `payment_id`, no produjo una notificacion y dejo correctamente la orden local en `Pending`. Las tarjetas predeterminadas de la cuenta compradora si permitieron completar pagos, por lo que el incidente se registra como una limitacion externa del sandbox y no como un defecto abierto de GymShop.
+
+Este cierre corresponde a staging. Antes de habilitar cobros reales debe ejecutarse una prueba controlada de bajo importe con credenciales productivas, comprobar el Webhook automatico, verificar la invalidacion del checkout y realizar el reembolso desde Mercado Pago.
+
 ## Cancelaciones y reembolsos
 
 GymShop distingue una cancelacion previa a completar la venta de un reembolso confirmado por el proveedor:
@@ -1229,6 +1246,14 @@ Los webhooks `refunded` repetidos son idempotentes. Si el pedido todavia estaba 
 Los reembolsos parciales no se automatizan: el pago conserva `Approved`, la orden conserva `Paid` o `Shipped`, no se modifica stock y `FailureReason` indica que el caso requiere gestion manual.
 
 Las transiciones incompatibles con el estado actual responden `409 Conflict`. Los estados o formatos desconocidos continúan respondiendo errores de validacion.
+
+## Idempotencia al crear ordenes
+
+`POST /api/cart/checkout` acepta `idempotencyKey`. El frontend genera un UUID estable por usuario y lo conserva en `localStorage` hasta recibir la orden o recuperar una orden pendiente despues de un error incierto. Un reintento con la misma clave y los mismos datos devuelve el mismo `OrderId`, aunque el primer request ya haya vaciado el carrito o la orden haya cambiado de estado.
+
+La orden guarda la clave y una huella SHA-256 de los datos normalizados de checkout. La direccion no se duplica dentro de esa huella en texto legible. El indice unico `UX_Orders_UserId_CheckoutIdempotencyKey` respalda la garantia en PostgreSQL y permite que usuarios distintos utilicen accidentalmente el mismo UUID sin colisionar entre si.
+
+La consulta idempotente se realiza despues de adquirir el bloqueo transaccional y antes de validar el carrito. Por eso dos requests concurrentes con la misma clave convergen en una sola orden: el primero crea y confirma; el segundo observa el resultado confirmado y lo reutiliza. Una misma clave con una huella distinta responde `409 Conflict` con el codigo `checkout_idempotency_conflict`.
 
 ## Concurrencia al crear pagos
 
@@ -1549,7 +1574,7 @@ GET  /api/payments/orders/{orderId}
 
 El pago siempre envía `provider: "Mock"`. No se utiliza ni se recrea `/api/payments/current`.
 
-El botón de confirmación usa un bloqueo sincrónico además del estado visual de carga. Esto evita dobles envíos dentro de la misma instancia de la interfaz. Sin embargo, `POST /api/cart/checkout` no acepta una clave de idempotencia: un corte de red después de que el servidor creó la orden no permite demostrar desde el cliente si la respuesta se perdió. Ante un error incierto o un `409`, el frontend consulta las órdenes pendientes y ofrece recuperar la encontrada antes de permitir otro intento. Una garantía completa requeriría agregar, con una decisión explícita de contrato, idempotencia para la creación de órdenes en backend.
+El botón de confirmación usa un bloqueo sincrónico además del estado visual de carga. El frontend también conserva una clave de idempotencia estable por usuario hasta recibir la respuesta: si la red se corta despues de confirmar la transaccion, repetir el checkout devuelve la misma orden. Ante un error incierto conserva la clave y, como recuperacion adicional, consulta las ordenes pendientes. La clave se elimina solamente al recibir la orden o recuperar una pendiente existente.
 
 La creación del pago sí utiliza una clave estable por orden. Actualizar un pago `Pending` solo vuelve a consultar su estado y no crea otro intento. Si un pago `Creating` necesita retomarse se conserva la misma clave. Un nuevo intento después de `CreationFailed`, `Rejected`, `Canceled` o `Expired` genera una clave nueva porque representa otra operación de negocio. Esto evita duplicar un mismo intento sin impedir que el usuario vuelva a pagar después de un resultado terminal.
 
@@ -1573,13 +1598,20 @@ Ventajas del diseño:
 
 Limitaciones actuales:
 
-- La creación de la orden no tiene idempotencia distribuida.
 - No hay cálculo de envío, promociones, impuestos ni cuotas.
 - El proveedor Mock no representa una aprobación financiera real.
 - Para staging será necesario definir las reglas comerciales de entrega antes de ampliar los campos.
 
 La aplicacion aplica migraciones y datos demo cuando `DatabaseInitialization:Enabled=true`.
 Compose establece ese valor explicitamente; fuera de Compose permanece deshabilitado por defecto.
+
+En ambientes desplegados se pueden aplicar solamente las migraciones, sin ejecutar seeds ni iniciar el servidor HTTP, con:
+
+```bash
+dotnet GymShop.Api.dll --migrate-only
+```
+
+En Railway este comando debe configurarse como **Pre-deploy Command**. Se ejecuta dentro de la imagen publicada y con las variables del servicio; si una migracion falla, el despliegue se detiene antes de reemplazar la version activa. No es necesario volver a habilitar `DatabaseInitialization__Enabled`.
 
 El historial valido para Npgsql contiene un unico baseline, `20260910144849_InitialPostgreSql`,
 en `GymShop.Infrastructure/Data/PostgresMigrations`. El snapshot asociado se mantiene en
@@ -1713,6 +1745,7 @@ La suite cubre, entre otros puntos:
 - Pipeline HTTP real: login, JWT, 401/403, roles, serializacion, ProblemDetails, errores 500, productos inactivos, rate limiting y webhook HMAC.
 - Migraciones desde una base vacia, restricciones, indices filtrados, concurrencia con `xmin`, rollback de checkout y consultas traducidas por PostgreSQL.
 - Concurrencia sobre ultimo stock, actualizacion de stock y creacion de pagos activos.
+- Reintentos secuenciales y concurrentes de checkout con la misma clave, reutilizacion de una sola orden y rechazo de claves usadas con datos diferentes.
 - Gateway HTTP de Mercado Pago ante exito, timeout, JSON invalido, 4xx/5xx, reintento idempotente y estado refunded.
 
 ## CI

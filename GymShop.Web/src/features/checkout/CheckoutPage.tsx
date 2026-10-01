@@ -1,8 +1,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
-import { api, paymentKey, savePaymentProvider } from '../../api/gymshop'
+import { api, checkoutKey, clearCheckoutKey, paymentKey, savePaymentProvider } from '../../api/gymshop'
 import type { DeliveryMethod, OrderSummary, PaymentMethods, PaymentProvider, ShippingOptions } from '../../api/types'
+import { session } from '../../auth/session'
 import { ProductImage } from '../catalog/ProductImage'
 import { money } from '../../config/storefront'
 import { useCart } from '../cart/useCart'
@@ -53,6 +54,8 @@ export function CheckoutPage() {
     try {
       const pending = (await api.myOrders()).filter(order => order.status === 'Pending').sort((a, b) => b.id - a.id)[0]
       setRecoveryOrder(pending ?? null)
+      const currentUserId = session.user()?.id
+      if (pending && currentUserId) clearCheckoutKey(currentUserId)
     } catch { /* el error original sigue siendo el dato útil */ }
   }
 
@@ -68,9 +71,12 @@ export function CheckoutPage() {
     const isFreeCheckout = cart.total + shippingCost === 0
     if (!isFreeCheckout && paymentMethodsLoading) { setError('Esperá mientras verificamos los medios de pago disponibles.'); return }
     if (!isFreeCheckout && paymentProvider === 'MercadoPago' && !paymentMethods?.mercadoPagoAvailable) { setError(paymentMethods?.mercadoPagoUnavailableReason || 'Mercado Pago no está disponible.'); return }
+    const currentUserId = session.user()?.id
+    if (!currentUserId) { setError('Iniciá sesión para confirmar la compra.'); return }
     submitting.current = true; setBusy(true); setError(''); setRecoveryOrder(null)
     try {
-      const order = await api.checkout({ deliveryMethod, shippingAddress: deliveryMethod === 'HomeDelivery' ? normalizedAddress : null, expectedShippingCost: shippingCost, expectedSubtotal: cart.subtotal, expectedDiscount: cart.discount })
+      const order = await api.checkout({ deliveryMethod, shippingAddress: deliveryMethod === 'HomeDelivery' ? normalizedAddress : null, expectedShippingCost: shippingCost, expectedSubtotal: cart.subtotal, expectedDiscount: cart.discount, idempotencyKey: checkoutKey(currentUserId) })
+      clearCheckoutKey(currentUserId)
       sessionStorage.setItem('gymshop.last-order', String(order.id))
       await cart.refresh()
       let paymentError = ''

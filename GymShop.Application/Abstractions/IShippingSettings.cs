@@ -6,6 +6,14 @@ public interface IShippingSettings
     string PickupAddress { get; }
     string PickupInstructions { get; }
     string PickupHours { get; }
+    string OriginPostalCode => string.Empty;
+    string OriginProvince => string.Empty;
+    string OriginCity => string.Empty;
+    string OriginStreet => string.Empty;
+    string OriginStreetNumber => string.Empty;
+    int QuoteLifetimeMinutes => 15;
+    int EstimatedDeliveryMinDays => 1;
+    int EstimatedDeliveryMaxDays => 3;
 }
 
 public sealed class FreeShippingSettings : IShippingSettings

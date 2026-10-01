@@ -11,7 +11,31 @@ public record CheckoutCartRequest(
     [NonNegativeSqlDecimal] decimal ExpectedShippingCost,
     [SqlDecimal] decimal? ExpectedSubtotal = null,
     [NonNegativeSqlDecimal] decimal? ExpectedDiscount = null,
-    [StringLength(ValidationLimits.IdempotencyKey)] string? IdempotencyKey = null);
+    [StringLength(ValidationLimits.IdempotencyKey)] string? IdempotencyKey = null,
+    Guid? ShippingQuoteId = null,
+    ShippingAddressRequest? ShippingDestination = null);
+
+public sealed record ShippingAddressRequest(
+    [Required, StringLength(ValidationLimits.ShippingPostalCode)] string PostalCode,
+    [Required, StringLength(ValidationLimits.ShippingProvince)] string Province,
+    [Required, StringLength(ValidationLimits.ShippingCity)] string City,
+    [Required, StringLength(ValidationLimits.ShippingStreet)] string Street,
+    [Required, StringLength(ValidationLimits.ShippingStreetNumber)] string StreetNumber,
+    [StringLength(ValidationLimits.ShippingFloor)] string? Floor = null,
+    [StringLength(ValidationLimits.ShippingApartment)] string? Apartment = null,
+    [StringLength(ValidationLimits.ShippingNotes)] string? Notes = null);
+
+public sealed record CreateShippingQuoteRequest([Required] ShippingAddressRequest Destination);
+
+public sealed record ShippingQuoteResponse(
+    Guid Id,
+    string ProviderCode,
+    string ServiceCode,
+    string ServiceName,
+    decimal Price,
+    DateTime EstimatedDeliveryFrom,
+    DateTime EstimatedDeliveryTo,
+    DateTime ExpiresAtUtc);
 
 public record ShippingOptionsResponse(decimal HomeDeliveryCost, string PickupAddress, string PickupInstructions, string PickupHours);
 

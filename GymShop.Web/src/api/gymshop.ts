@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingOptions, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
@@ -53,7 +53,8 @@ export const api = {
   applyCoupon: (code: string) => request<Cart>('/api/cart/coupon', json('POST', { code })),
   removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),
   shippingOptions: () => request<ShippingOptions>('/api/cart/shipping-options'),
-  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string }) => request<Order>('/api/cart/checkout', json('POST', data)),
+  shippingQuotes: (destination: ShippingAddressInput) => request<ShippingQuote[]>('/api/cart/shipping-quotes', json('POST', { destination })),
+  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string; shippingQuoteId?: string | null; shippingDestination?: ShippingAddressInput | null }) => request<Order>('/api/cart/checkout', json('POST', data)),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   orders: (filters: OrderFilters = {}) => {
     const query = new URLSearchParams()

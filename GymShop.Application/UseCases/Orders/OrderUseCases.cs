@@ -606,7 +606,19 @@ internal static class OrderMapper
                     x.FailureReason,
                     order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved &&
                     string.Equals(x.Provider, "MercadoPago", StringComparison.OrdinalIgnoreCase)))
-                .ToList()
+                .ToList(),
+            string.IsNullOrWhiteSpace(order.ShippingPostalCode) ? null : new OrderShippingAddressResponse(
+                order.ShippingPostalCode,
+                order.ShippingProvince ?? string.Empty,
+                order.ShippingCity ?? string.Empty,
+                order.ShippingStreet ?? string.Empty,
+                order.ShippingStreetNumber ?? string.Empty,
+                order.ShippingFloor,
+                order.ShippingApartment,
+                order.ShippingNotes),
+            order.ShippingProviderCode,
+            order.ShippingServiceCode,
+            order.ShippingServiceName
         );
     }
 

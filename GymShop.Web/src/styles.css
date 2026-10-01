@@ -208,6 +208,10 @@ header nav a.active { color: var(--lime); background: #242822; }
 }
 
 /* Checkout separado: revisión, entrega y resultado. */
+.shipping-address-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+.shipping-address-grid .shipping-address-notes, .shipping-address-grid > button, .shipping-address-grid > .notice { grid-column: 1 / -1; }
+.shipping-address-grid > button { justify-self: start; }
+@media (max-width: 640px) { .shipping-address-grid { grid-template-columns: 1fr; } }
 .payment-methods { border: 1px solid var(--border, #3a3f39); border-radius: 12px; display: grid; gap: .65rem; margin: 1rem 0; padding: 1rem; }
 .payment-methods label { align-items: flex-start; display: grid; grid-template-columns: auto 1fr; gap: .25rem .6rem; }
 .payment-methods small { grid-column: 2; }

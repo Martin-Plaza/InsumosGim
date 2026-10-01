@@ -12,6 +12,17 @@ public static class ValidationLimits
     public const int ProductDescription = 1000;
     public const int ImageUrl = 500;
     public const int ShippingAddress = 300;
+    public const int ShippingPostalCode = 16;
+    public const int ShippingProvince = 100;
+    public const int ShippingCity = 100;
+    public const int ShippingStreet = 150;
+    public const int ShippingStreetNumber = 20;
+    public const int ShippingFloor = 20;
+    public const int ShippingApartment = 20;
+    public const int ShippingNotes = 300;
+    public const int ShippingProviderCode = 50;
+    public const int ShippingServiceCode = 100;
+    public const int ShippingServiceName = 150;
     public const int PickupHours = 300;
     public const int PickupInstructions = 1000;
     public const int Carrier = 100;

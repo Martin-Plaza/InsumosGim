@@ -47,8 +47,22 @@ public record OrderResponse(
     string? CancellationReason,
     DateTime? UpdatedAt,
     List<OrderItemResponse> Items,
-    List<OrderPaymentResponse> Payments
+    List<OrderPaymentResponse> Payments,
+    OrderShippingAddressResponse? ShippingDestination = null,
+    string? ShippingProviderCode = null,
+    string? ShippingServiceCode = null,
+    string? ShippingServiceName = null
 );
+
+public sealed record OrderShippingAddressResponse(
+    string PostalCode,
+    string Province,
+    string City,
+    string Street,
+    string StreetNumber,
+    string? Floor,
+    string? Apartment,
+    string? Notes);
 
 public record OrderSummaryResponse(
     int Id,

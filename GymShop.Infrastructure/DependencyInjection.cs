@@ -26,7 +26,12 @@ public static class DependencyInjection
         var shippingOptions = configuration.GetSection(ShippingOptions.SectionName).Get<ShippingOptions>() ?? new ShippingOptions();
         if (shippingOptions.HomeDeliveryCost < 0)
             throw new InvalidOperationException("Shipping:HomeDeliveryCost cannot be negative.");
+        if (shippingOptions.QuoteLifetimeMinutes is < 1 or > 1440)
+            throw new InvalidOperationException("Shipping:QuoteLifetimeMinutes must be between 1 and 1440.");
+        if (shippingOptions.EstimatedDeliveryMinDays < 0 || shippingOptions.EstimatedDeliveryMaxDays < shippingOptions.EstimatedDeliveryMinDays)
+            throw new InvalidOperationException("Shipping estimated delivery days are invalid.");
         services.AddSingleton<IShippingSettings>(shippingOptions);
+        services.AddSingleton<IShippingProvider, OwnFleetShippingProvider>();
         services.AddOptions<ProductImageStorageOptions>()
             .Configure(options => options.BucketName = configuration["PRODUCT_IMAGE_BUCKET"] ?? string.Empty);
         services.AddSingleton<IProductImageStorage>(provider =>

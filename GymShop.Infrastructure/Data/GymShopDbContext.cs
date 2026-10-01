@@ -32,6 +32,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
     public DbSet<Coupon> Coupons => Set<Coupon>();
     public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
+    public DbSet<ShippingQuoteReservation> ShippingQuoteReservations => Set<ShippingQuoteReservation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -265,6 +266,17 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .HasMaxLength(30)
                 .IsRequired();
             entity.Property(x => x.ShippingAddress).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.ShippingPostalCode).HasMaxLength(ValidationLimits.ShippingPostalCode);
+            entity.Property(x => x.ShippingProvince).HasMaxLength(ValidationLimits.ShippingProvince);
+            entity.Property(x => x.ShippingCity).HasMaxLength(ValidationLimits.ShippingCity);
+            entity.Property(x => x.ShippingStreet).HasMaxLength(ValidationLimits.ShippingStreet);
+            entity.Property(x => x.ShippingStreetNumber).HasMaxLength(ValidationLimits.ShippingStreetNumber);
+            entity.Property(x => x.ShippingFloor).HasMaxLength(ValidationLimits.ShippingFloor);
+            entity.Property(x => x.ShippingApartment).HasMaxLength(ValidationLimits.ShippingApartment);
+            entity.Property(x => x.ShippingNotes).HasMaxLength(ValidationLimits.ShippingNotes);
+            entity.Property(x => x.ShippingProviderCode).HasMaxLength(ValidationLimits.ShippingProviderCode);
+            entity.Property(x => x.ShippingServiceCode).HasMaxLength(ValidationLimits.ShippingServiceCode);
+            entity.Property(x => x.ShippingServiceName).HasMaxLength(ValidationLimits.ShippingServiceName);
             entity.Property(x => x.PickupAddress).HasMaxLength(ValidationLimits.ShippingAddress).IsRequired();
             entity.Property(x => x.PickupHours).HasMaxLength(ValidationLimits.PickupHours).IsRequired();
             entity.Property(x => x.PickupInstructions).HasMaxLength(ValidationLimits.PickupInstructions).IsRequired();
@@ -278,6 +290,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.UpdatedAt).IsConcurrencyToken();
 
             entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.ShippingQuoteId).IsUnique().HasFilter("\"ShippingQuoteId\" IS NOT NULL");
             entity.HasIndex(x => new { x.UserId, x.CheckoutIdempotencyKey })
                 .IsUnique()
                 .HasDatabaseName("UX_Orders_UserId_CheckoutIdempotencyKey")
@@ -292,6 +305,36 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .WithMany(x => x.Orders)
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ShippingQuoteReservation>()
+                .WithOne()
+                .HasForeignKey<Order>(x => x.ShippingQuoteId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ShippingQuoteReservation>(entity =>
+        {
+            entity.ToTable("ShippingQuoteReservations", table =>
+            {
+                table.HasCheckConstraint("CK_ShippingQuoteReservations_Price_NonNegative", "\"Price\" >= 0");
+                table.HasCheckConstraint("CK_ShippingQuoteReservations_Expiration", "\"ExpiresAtUtc\" > \"CreatedAtUtc\"");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProviderCode).HasMaxLength(ValidationLimits.ShippingProviderCode).IsRequired();
+            entity.Property(x => x.ServiceCode).HasMaxLength(ValidationLimits.ShippingServiceCode).IsRequired();
+            entity.Property(x => x.ServiceName).HasMaxLength(ValidationLimits.ShippingServiceName).IsRequired();
+            entity.Property(x => x.Price).HasPrecision(18, 2);
+            entity.Property(x => x.CartFingerprint).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PostalCode).HasMaxLength(ValidationLimits.ShippingPostalCode).IsRequired();
+            entity.Property(x => x.Province).HasMaxLength(ValidationLimits.ShippingProvince).IsRequired();
+            entity.Property(x => x.City).HasMaxLength(ValidationLimits.ShippingCity).IsRequired();
+            entity.Property(x => x.Street).HasMaxLength(ValidationLimits.ShippingStreet).IsRequired();
+            entity.Property(x => x.StreetNumber).HasMaxLength(ValidationLimits.ShippingStreetNumber).IsRequired();
+            entity.Property(x => x.Floor).HasMaxLength(ValidationLimits.ShippingFloor);
+            entity.Property(x => x.Apartment).HasMaxLength(ValidationLimits.ShippingApartment);
+            entity.Property(x => x.Notes).HasMaxLength(ValidationLimits.ShippingNotes);
+            entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Cart>().WithMany().HasForeignKey(x => x.CartId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Cart>(entity =>

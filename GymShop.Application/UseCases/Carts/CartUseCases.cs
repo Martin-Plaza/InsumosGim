@@ -258,7 +258,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La modalidad de entrega no es valida.");
         }
 
-        if (deliveryMethod == DeliveryMethod.HomeDelivery && string.IsNullOrWhiteSpace(request.ShippingAddress))
+        if (deliveryMethod == DeliveryMethod.HomeDelivery && !request.ShippingQuoteId.HasValue && string.IsNullOrWhiteSpace(request.ShippingAddress))
         {
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
         }
@@ -343,6 +343,32 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             }
         }
 
+        ShippingQuoteReservation? shippingQuote = null;
+        ShippingAddress? shippingDestination = null;
+        if (deliveryMethod == DeliveryMethod.HomeDelivery && request.ShippingQuoteId.HasValue)
+        {
+            var destinationResult = ShippingQuoteRules.NormalizeAddress(request.ShippingDestination);
+            if (!destinationResult.IsSuccess)
+                return AppResult<OrderResponse>.Failure(destinationResult.Error!.Type, destinationResult.Error.Message, destinationResult.Error.Code);
+            shippingDestination = destinationResult.Value!;
+
+            shippingQuote = await _db.ShippingQuoteReservations.SingleOrDefaultAsync(
+                x => x.Id == request.ShippingQuoteId.Value && x.UserId == userId && x.CartId == cart.Id,
+                cancellationToken);
+            if (shippingQuote is null)
+                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La cotización de envío no existe o no pertenece a este carrito.", "shipping_quote_invalid");
+            if (shippingQuote.ExpiresAtUtc <= DateTime.UtcNow)
+                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "La cotización de envío venció. Volvé a cotizar antes de confirmar.", "shipping_quote_expired");
+            if (!ShippingQuoteRules.Matches(shippingQuote, shippingDestination))
+                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "La dirección cambió después de cotizar el envío.", "shipping_quote_address_changed");
+
+            var packageResult = await ShippingQuoteRules.BuildPackagesAsync(_db, cart, cancellationToken);
+            if (!packageResult.IsSuccess)
+                return AppResult<OrderResponse>.Failure(packageResult.Error!.Type, packageResult.Error.Message, packageResult.Error.Code);
+            if (!string.Equals(packageResult.Value!.CartFingerprint, shippingQuote.CartFingerprint, StringComparison.Ordinal))
+                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El carrito cambió después de cotizar el envío.", "shipping_quote_cart_changed");
+        }
+
         var orderLines = cart.Items
             .OrderBy(x => x.Id)
             .Select(item =>
@@ -370,7 +396,21 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             CheckoutIdempotencyKey = idempotencyKey,
             CheckoutRequestFingerprint = requestFingerprint,
             DeliveryMethod = deliveryMethod,
-            ShippingAddress = deliveryMethod == DeliveryMethod.HomeDelivery ? request.ShippingAddress!.Trim() : string.Empty,
+            ShippingAddress = deliveryMethod == DeliveryMethod.HomeDelivery
+                ? shippingDestination is null ? request.ShippingAddress!.Trim() : ShippingQuoteRules.Format(shippingDestination)
+                : string.Empty,
+            ShippingPostalCode = shippingDestination?.PostalCode,
+            ShippingProvince = shippingDestination?.Province,
+            ShippingCity = shippingDestination?.City,
+            ShippingStreet = shippingDestination?.Street,
+            ShippingStreetNumber = shippingDestination?.StreetNumber,
+            ShippingFloor = shippingDestination?.Floor,
+            ShippingApartment = shippingDestination?.Apartment,
+            ShippingNotes = shippingDestination?.Notes,
+            ShippingQuoteId = shippingQuote?.Id,
+            ShippingProviderCode = shippingQuote?.ProviderCode,
+            ShippingServiceCode = shippingQuote?.ServiceCode,
+            ShippingServiceName = shippingQuote?.ServiceName,
             PickupAddress = deliveryMethod == DeliveryMethod.StorePickup ? pickupAddress : string.Empty,
             PickupHours = deliveryMethod == DeliveryMethod.StorePickup ? pickupHours : string.Empty,
             PickupInstructions = deliveryMethod == DeliveryMethod.StorePickup ? pickupInstructions : string.Empty,
@@ -391,7 +431,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         }
         order.Subtotal = subtotal;
         order.DiscountAmount = discount;
-        order.ShippingCost = deliveryMethod == DeliveryMethod.HomeDelivery ? _shippingSettings.HomeDeliveryCost : 0;
+        order.ShippingCost = deliveryMethod == DeliveryMethod.HomeDelivery ? shippingQuote?.Price ?? _shippingSettings.HomeDeliveryCost : 0;
         if (order.ShippingCost < 0)
             return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El costo de envio configurado no es valido.");
         if (request.ExpectedShippingCost != order.ShippingCost ||
@@ -465,11 +505,16 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
     private static string BuildRequestFingerprint(CheckoutCartRequest request, DeliveryMethod deliveryMethod)
     {
         var normalizedAddress = deliveryMethod == DeliveryMethod.HomeDelivery
-            ? request.ShippingAddress?.Trim() ?? string.Empty
+            ? request.ShippingDestination is null
+                ? request.ShippingAddress?.Trim() ?? string.Empty
+                : string.Join('|', request.ShippingDestination.PostalCode?.Trim().ToUpperInvariant(), request.ShippingDestination.Province?.Trim(),
+                    request.ShippingDestination.City?.Trim(), request.ShippingDestination.Street?.Trim(), request.ShippingDestination.StreetNumber?.Trim(),
+                    request.ShippingDestination.Floor?.Trim(), request.ShippingDestination.Apartment?.Trim(), request.ShippingDestination.Notes?.Trim())
             : string.Empty;
         var canonical = string.Join('\n',
             deliveryMethod.ToString(),
             normalizedAddress,
+            request.ShippingQuoteId?.ToString("D") ?? "<legacy>",
             request.ExpectedShippingCost.ToString("0.00", CultureInfo.InvariantCulture),
             request.ExpectedSubtotal?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>",
             request.ExpectedDiscount?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>");

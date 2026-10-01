@@ -8,12 +8,23 @@ const product = { id: 4, name: 'Kettlebell 16kg', price: 42000, stock: 12, image
 const cart = { id: 1, userId: 7, subtotal: 84000, discount: 0, couponCode: null, total: 84000, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000, stock: product.stock, imageUrl: product.imageUrl }] }
 const emptyCart = { ...cart, total: 0, items: [] }
 const order: Order = { id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', createdAt: '2026-08-11T10:00:00Z', updatedAt: null, total: 84000, status: 'Pending', shippingAddress: 'Av. Siempre Viva 742, Córdoba', cancellationReason: null, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000 }], payments: [] }
+const quote = { id: '4ad310db-2407-4d8e-b114-52a59a620b67', providerCode: 'OwnFleet', serviceCode: 'standard', serviceName: 'Envío estándar', price: 6500, estimatedDeliveryFrom: '2026-08-12T10:00:00Z', estimatedDeliveryTo: '2026-08-14T10:00:00Z', expiresAtUtc: '2099-08-11T10:15:00Z' }
 const payment = (status: Payment['status']): Payment => ({ id: 91, orderId: 81, provider: 'BankTransfer', externalReference: 'order-81', providerPreferenceId: null, providerPaymentId: null, idempotencyKey: 'key', amount: 84000, currency: 'ARS', status, checkoutUrl: null, failureReason: status === 'Rejected' ? 'Transferencia rechazada.' : null, createdAt: '2026-08-11T10:00:01Z', updatedAt: null, paidAt: null })
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } }))
 
 function authenticate() {
   localStorage.setItem('gymshop.token', 'jwt')
   localStorage.setItem('gymshop.user', JSON.stringify({ id: 7, email: 'u@gym.com', name: 'Usuario', role: 'User' }))
+}
+
+async function fillAddressAndQuote() {
+  await userEvent.type(await screen.findByLabelText('Código postal'), 'C1414ABC')
+  await userEvent.type(screen.getByLabelText('Provincia'), 'CABA')
+  await userEvent.type(screen.getByLabelText('Ciudad o localidad'), 'Villa Crespo')
+  await userEvent.type(screen.getByLabelText('Calle'), 'Av. Corrientes')
+  await userEvent.type(screen.getByLabelText('Número'), '5500')
+  await userEvent.click(screen.getByRole('button', { name: 'Calcular envío' }))
+  await screen.findByText(/Envío estándar:/)
 }
 
 describe('checkout y pago por orderId', () => {
@@ -40,6 +51,7 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: false, mercadoPagoUnavailableReason: 'Mercado Pago no está disponible en este momento.' })
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkoutPosts++; return json(order) }
       if (url.endsWith('/api/cart')) return json(cart)
@@ -57,6 +69,7 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : cart)
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; return json(order) }
       if (url.endsWith('/api/orders/81/payments') && method === 'POST') return json({ detail: 'No se pudo crear la preferencia.' }, 503)
@@ -68,7 +81,7 @@ describe('checkout y pago por orderId', () => {
     })
     const first = render(<App />)
     await userEvent.click(await screen.findByRole('radio', { name: /Mercado Pago/ }))
-    await userEvent.type(screen.getByLabelText('Dirección completa'), order.shippingAddress)
+    await fillAddressAndQuote()
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
     expect(await screen.findByRole('radio', { name: /Mercado Pago/ })).toBeChecked()
     expect(localStorage.getItem('gymshop.payment-provider.81')).toBe('MercadoPago')
@@ -102,6 +115,7 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'; calls.push({ url, method, body: init?.body ? String(init.body) : null })
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : cart)
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; return json(order) }
       if (url.endsWith('/api/orders/81/payments') && method === 'POST') return json(payment('Creating'), 202)
@@ -111,14 +125,14 @@ describe('checkout y pago por orderId', () => {
     })
     render(<App />)
     await screen.findByRole('heading', { name: 'Confirmá tu compra' })
-    await userEvent.type(screen.getByLabelText('Dirección completa'), order.shippingAddress)
+    await fillAddressAndQuote()
     const confirm = screen.getByRole('button', { name: 'Confirmar y pagar' })
     await userEvent.dblClick(confirm)
     expect(await screen.findByRole('heading', { name: 'Estamos confirmando tu pago' })).toBeInTheDocument()
     expect(screen.getByText(/todavía no tiene un enlace/)).toBeInTheDocument()
     expect(calls.filter(call => call.url.endsWith('/api/cart/checkout') && call.method === 'POST')).toHaveLength(1)
     const checkoutCall = calls.find(call => call.url.endsWith('/api/cart/checkout') && call.method === 'POST')
-    expect(JSON.parse(checkoutCall!.body || '{}')).toMatchObject({ deliveryMethod: 'HomeDelivery', expectedShippingCost: 6500, expectedSubtotal: 84000, expectedDiscount: 0 })
+    expect(JSON.parse(checkoutCall!.body || '{}')).toMatchObject({ deliveryMethod: 'HomeDelivery', expectedShippingCost: 6500, expectedSubtotal: 84000, expectedDiscount: 0, shippingQuoteId: quote.id, shippingDestination: { postalCode: 'C1414ABC', streetNumber: '5500' } })
     expect(JSON.parse(checkoutCall!.body || '{}').idempotencyKey).toEqual(expect.any(String))
     expect(localStorage.getItem('gymshop.checkout-key.7')).toBeNull()
     const paymentCall = calls.find(call => call.url.endsWith('/api/orders/81/payments') && call.method === 'POST')
@@ -135,6 +149,7 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : freeCart)
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; checkoutPosts++; return json(freeOrder) }
       if (url.endsWith('/api/orders/81/payments') && method === 'POST') { paymentPosts++; return json(payment('Pending')) }
@@ -159,13 +174,14 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart/checkout') && method === 'POST') return json({ title: 'Conflicto', detail: 'Ya tenes una orden pendiente.', code: 'pending_order_exists' }, 409)
       if (url.endsWith('/api/orders/my')) return json([{ id: 70, userId: 7, createdAt: '2026-08-11T09:00:00Z', total: 84000, status: 'Pending', lastPaymentStatus: null, lastPaymentId: null }])
       if (url.endsWith('/api/cart')) return json(cart)
       return json([])
     })
     render(<App />)
-    await userEvent.type(await screen.findByLabelText('Dirección completa'), order.shippingAddress)
+    await fillAddressAndQuote()
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Ya tenes una orden pendiente')
     expect(await screen.findByRole('link', { name: 'Ver orden' })).toHaveAttribute('href', '/checkout/orden/70')
@@ -176,6 +192,7 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart') && method === 'GET') return json(checkedOut ? emptyCart : cart)
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; return json(order) }
       if (url.endsWith('/api/orders/81/payments') && method === 'POST') return json({ title: 'Demasiadas solicitudes' }, 429, { 'Retry-After': '9' })
@@ -184,21 +201,22 @@ describe('checkout y pago por orderId', () => {
       return json([])
     })
     render(<App />)
-    await userEvent.type(await screen.findByLabelText('Dirección completa'), order.shippingAddress)
+    await fillAddressAndQuote()
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
     expect(await screen.findByRole('heading', { name: 'Orden creada' })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('9 segundos')
     expect(sessionStorage.getItem('gymshop.last-order')).toBe('81')
   })
 
-  it('bloquea domicilio si falla el costo, permite reintentar y actualiza el total', async () => {
+  it('bloquea domicilio si fallan las opciones, permite reintentar y luego cotizar', async () => {
     let attempts = 0
-    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      const url = String(input)
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) {
         attempts += 1
         return attempts === 1 ? json({ message: 'sin tarifa' }, 503) : json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
       }
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart')) return json(cart)
       return json([])
     })
@@ -207,8 +225,9 @@ describe('checkout y pago por orderId', () => {
     expect(confirm).toBeDisabled()
     expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos obtener las opciones de entrega')
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar opciones de entrega' }))
-    await waitFor(() => expect(confirm).toBeEnabled())
     expect(screen.queryByText('No pudimos obtener las opciones de entrega')).not.toBeInTheDocument()
+    await fillAddressAndQuote()
+    await waitFor(() => expect(confirm).toBeEnabled())
     expect(screen.getByText(/90\.500,00/)).toBeInTheDocument()
   })
 
@@ -234,7 +253,7 @@ describe('checkout y pago por orderId', () => {
     await userEvent.click(await screen.findByRole('radio', { name: /Retiro en tienda/ }))
     const confirm = screen.getByRole('button', { name: 'Confirmar y pagar' })
     expect(confirm).toBeDisabled()
-    expect(screen.queryByLabelText('Dirección completa')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Código postal')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar opciones de entrega' }))
     await waitFor(() => expect(confirm).toBeEnabled())
     await userEvent.click(confirm)
@@ -281,16 +300,18 @@ describe('checkout y pago por orderId', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = String(input); const method = init?.method || 'GET'
       if (url.endsWith('/api/cart/shipping-options')) { shippingReads += 1; return json({ homeDeliveryCost: shippingReads === 1 ? 6500 : 8000, pickupAddress: 'Local', pickupInstructions: '', pickupHours: '' }) }
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
       if (url.endsWith('/api/cart') && method === 'GET') { cartReads += 1; return json(cartReads === 1 ? cart : updatedCart) }
       if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkoutPosts += 1; return json({ message: 'El precio, descuento o costo de envio cambio. Revisa el resumen antes de confirmar.', code: 'checkout_pricing_changed' }, 409) }
       if (url.endsWith('/api/orders/my')) { pendingOrderReads += 1; return json([]) }
       return json([])
     })
     render(<App />)
-    await userEvent.type(await screen.findByLabelText('Dirección completa'), order.shippingAddress)
+    await fillAddressAndQuote()
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Revisá el nuevo total y confirmá nuevamente')
-    expect(screen.getByText(/88\.000,00/)).toBeInTheDocument()
+    expect(screen.getByText(/80\.000,00/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirmar y pagar' })).toBeDisabled()
     expect(screen.getByText(/Descuento \(NUEVO\)/)).toBeInTheDocument()
     expect(checkoutPosts).toBe(1)
     expect(shippingReads).toBe(2)

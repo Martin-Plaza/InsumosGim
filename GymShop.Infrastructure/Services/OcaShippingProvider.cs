@@ -88,13 +88,17 @@ public sealed class OcaShippingProvider : IShippingProvider
             }
 
             await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var quoteData = ParseQuote(responseStream);
-            if (quoteData is null)
+            var parsed = ParseQuote(responseStream);
+            if (parsed.Quote is null)
             {
-                _logger.LogWarning("OCA quote response did not contain a valid tariff.");
+                _logger.LogWarning(
+                    "OCA quote response did not contain a valid tariff. Reason: {Reason}; ContentType: {ContentType}.",
+                    parsed.FailureReason,
+                    response.Content.Headers.ContentType?.MediaType ?? "unknown");
                 return [];
             }
 
+            var quoteData = parsed.Quote;
             var now = _timeProvider.GetUtcNow();
             var estimatedDelivery = now.AddDays(quoteData.DeliveryDays);
             var serviceName = string.IsNullOrWhiteSpace(quoteData.Scope)
@@ -131,7 +135,7 @@ public sealed class OcaShippingProvider : IShippingProvider
     public Task<ShippingTrackingResult> GetTrackingAsync(string externalShipmentId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("El seguimiento OCA se incorporará en la etapa operativa.");
 
-    private static OcaQuoteData? ParseQuote(Stream xml)
+    private static OcaQuoteParseResult ParseQuote(Stream xml)
     {
         try
         {
@@ -142,8 +146,19 @@ public sealed class OcaShippingProvider : IShippingProvider
                 MaxCharactersInDocument = 1_000_000
             });
             var document = XDocument.Load(xmlReader, LoadOptions.None);
+            var providerError = document.Descendants()
+                .FirstOrDefault(element => element.Name.LocalName == "Error")?.Value;
+            if (!string.IsNullOrWhiteSpace(providerError))
+            {
+                var reason = providerError.Contains("CUIT", StringComparison.OrdinalIgnoreCase) ||
+                             providerError.Contains("operativa", StringComparison.OrdinalIgnoreCase)
+                    ? "invalid_cuit_or_operativa"
+                    : "provider_rejected_request";
+                return new OcaQuoteParseResult(null, reason);
+            }
+
             var row = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "Table");
-            if (row is null) return null;
+            if (row is null) return new OcaQuoteParseResult(null, "missing_tariff");
 
             var totalText = Value(row, "Total");
             var deliveryText = Value(row, "PlazoEntrega");
@@ -151,13 +166,15 @@ public sealed class OcaShippingProvider : IShippingProvider
             if (!decimal.TryParse(totalText, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) || total < 0 ||
                 !int.TryParse(deliveryText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var deliveryDays) || deliveryDays < 0 ||
                 !int.TryParse(serviceTypeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var serviceTypeId))
-                return null;
+                return new OcaQuoteParseResult(null, "invalid_tariff_fields");
 
-            return new OcaQuoteData(total, deliveryDays, serviceTypeId, Value(row, "Ambito"));
+            return new OcaQuoteParseResult(
+                new OcaQuoteData(total, deliveryDays, serviceTypeId, Value(row, "Ambito")),
+                string.Empty);
         }
         catch (XmlException)
         {
-            return null;
+            return new OcaQuoteParseResult(null, "invalid_xml");
         }
     }
 
@@ -172,4 +189,5 @@ public sealed class OcaShippingProvider : IShippingProvider
     }
 
     private sealed record OcaQuoteData(decimal Total, int DeliveryDays, int ServiceTypeId, string? Scope);
+    private sealed record OcaQuoteParseResult(OcaQuoteData? Quote, string FailureReason);
 }

@@ -33,6 +33,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<Coupon> Coupons => Set<Coupon>();
     public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
     public DbSet<ShippingQuoteReservation> ShippingQuoteReservations => Set<ShippingQuoteReservation>();
+    public DbSet<BillingDocument> BillingDocuments => Set<BillingDocument>();
+    public DbSet<BillingDocumentItem> BillingDocumentItems => Set<BillingDocumentItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -309,6 +311,79 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .WithOne()
                 .HasForeignKey<Order>(x => x.ShippingQuoteId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<BillingDocument>(entity =>
+        {
+            entity.ToTable("BillingDocuments", table =>
+            {
+                table.HasCheckConstraint("CK_BillingDocuments_Amounts_NonNegative", "\"Subtotal\" >= 0 AND \"DiscountAmount\" >= 0 AND \"ShippingAmount\" >= 0 AND \"NetTaxedAmount\" >= 0 AND \"NetUntaxedAmount\" >= 0 AND \"ExemptAmount\" >= 0 AND \"VatAmount\" >= 0 AND \"OtherTaxesAmount\" >= 0 AND \"Total\" >= 0");
+                table.HasCheckConstraint("CK_BillingDocuments_PointOfSale_Range", "\"PointOfSale\" IS NULL OR (\"PointOfSale\" >= 1 AND \"PointOfSale\" <= 99999)");
+                table.HasCheckConstraint("CK_BillingDocuments_DocumentNumber_Positive", "\"DocumentNumber\" IS NULL OR \"DocumentNumber\" > 0");
+                table.HasCheckConstraint("CK_BillingDocuments_FiscalAuthorization", "\"Type\" = 'PurchaseReceipt' OR \"Status\" <> 'Authorized' OR (\"PointOfSale\" IS NOT NULL AND \"DocumentNumber\" IS NOT NULL AND \"Cae\" IS NOT NULL AND \"CaeExpiresOn\" IS NOT NULL AND \"AuthorizedAtUtc\" IS NOT NULL)");
+                table.HasCheckConstraint("CK_BillingDocuments_Category_Type", "(\"Category\" = 'Receipt' AND \"Type\" = 'PurchaseReceipt') OR (\"Category\" = 'Invoice' AND \"Type\" IN ('InvoiceA', 'InvoiceB', 'InvoiceC')) OR (\"Category\" = 'CreditNote' AND \"Type\" IN ('CreditNoteA', 'CreditNoteB', 'CreditNoteC'))");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(ValidationLimits.IdempotencyKey).IsRequired();
+            entity.Property(x => x.Category).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.IssuerBusinessName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.IssuerCuit).HasMaxLength(13).IsRequired();
+            entity.Property(x => x.IssuerTaxCondition).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.IssuerFiscalAddress).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.IssuerGrossIncomeNumber).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.RecipientName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.RecipientDocumentType).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.RecipientDocumentNumber).HasMaxLength(30);
+            entity.Property(x => x.RecipientTaxCondition).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.RecipientEmail).HasMaxLength(ValidationLimits.Email);
+            entity.Property(x => x.RecipientAddress).HasMaxLength(300);
+            entity.Property(x => x.Subtotal).HasPrecision(18, 2);
+            entity.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(x => x.ShippingAmount).HasPrecision(18, 2);
+            entity.Property(x => x.NetTaxedAmount).HasPrecision(18, 2);
+            entity.Property(x => x.NetUntaxedAmount).HasPrecision(18, 2);
+            entity.Property(x => x.ExemptAmount).HasPrecision(18, 2);
+            entity.Property(x => x.VatAmount).HasPrecision(18, 2);
+            entity.Property(x => x.OtherTaxesAmount).HasPrecision(18, 2);
+            entity.Property(x => x.Total).HasPrecision(18, 2);
+            entity.Property(x => x.AuthorizationProvider).HasMaxLength(50);
+            entity.Property(x => x.ProviderRequestId).HasMaxLength(100);
+            entity.Property(x => x.Cae).HasMaxLength(20);
+            entity.Property(x => x.RejectionCode).HasMaxLength(100);
+            entity.Property(x => x.RejectionReason).HasMaxLength(1000);
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(x => x.UpdatedAtUtc).IsConcurrencyToken();
+            entity.HasIndex(x => x.IdempotencyKey).IsUnique().HasDatabaseName("UX_BillingDocuments_IdempotencyKey");
+            entity.HasIndex(x => new { x.OrderId, x.Category }).IsUnique().HasDatabaseName("UX_BillingDocuments_OrderId_SaleCategory").HasFilter("\"Category\" IN ('Receipt', 'Invoice')");
+            entity.HasIndex(x => new { x.PointOfSale, x.Type, x.DocumentNumber }).IsUnique().HasDatabaseName("UX_BillingDocuments_FiscalNumber").HasFilter("\"PointOfSale\" IS NOT NULL AND \"DocumentNumber\" IS NOT NULL");
+            entity.HasIndex(x => new { x.OrderId, x.CreatedAtUtc });
+            entity.HasOne(x => x.Order).WithMany(x => x.BillingDocuments).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Payment).WithMany(x => x.BillingDocuments).HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.RelatedDocument).WithMany(x => x.RelatedDocuments).HasForeignKey(x => x.RelatedDocumentId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<BillingDocumentItem>(entity =>
+        {
+            entity.ToTable("BillingDocumentItems", table =>
+            {
+                table.HasCheckConstraint("CK_BillingDocumentItems_Quantity_Positive", "\"Quantity\" > 0");
+                table.HasCheckConstraint("CK_BillingDocumentItems_Amounts_NonNegative", "\"UnitPrice\" >= 0 AND \"DiscountAmount\" >= 0 AND \"NetAmount\" >= 0 AND \"VatAmount\" >= 0 AND \"TotalAmount\" >= 0");
+                table.HasCheckConstraint("CK_BillingDocumentItems_VatRate_Range", "\"VatRate\" >= 0 AND \"VatRate\" <= 100");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Description).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            entity.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(x => x.NetAmount).HasPrecision(18, 2);
+            entity.Property(x => x.VatRate).HasPrecision(5, 2);
+            entity.Property(x => x.VatAmount).HasPrecision(18, 2);
+            entity.Property(x => x.TotalAmount).HasPrecision(18, 2);
+            entity.HasIndex(x => x.BillingDocumentId);
+            entity.HasOne(x => x.BillingDocument).WithMany(x => x.Items).HasForeignKey(x => x.BillingDocumentId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.OrderItem).WithMany(x => x.BillingDocumentItems).HasForeignKey(x => x.OrderItemId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ShippingQuoteReservation>(entity =>

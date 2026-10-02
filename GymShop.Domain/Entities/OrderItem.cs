@@ -16,5 +16,6 @@ public class OrderItem
     public Order Order { get; set; } = null!;
     public Product Product { get; set; } = null!;
     public ProductVariant? ProductVariant { get; set; }
+    public ICollection<BillingDocumentItem> BillingDocumentItems { get; set; } = new List<BillingDocumentItem>();
 }
 

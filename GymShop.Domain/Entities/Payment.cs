@@ -21,5 +21,6 @@ public class Payment
     public DateTime? PaidAt { get; set; }
 
     public Order Order { get; set; } = null!;
+    public ICollection<BillingDocument> BillingDocuments { get; set; } = new List<BillingDocument>();
 }
 

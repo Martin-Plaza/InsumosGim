@@ -1591,6 +1591,10 @@ Los valores admitidos para `Billing__TaxCondition` son `None`, `Monotributo`, `R
 
 En modo electrónico son obligatorios la razón social, un CUIT válido, la condición fiscal, el domicilio fiscal, Ingresos Brutos, la fecha de inicio de actividades y un punto de venta entre 1 y 99999. Una configuración incompleta impide que la API inicie para evitar operar con datos fiscales incorrectos. El endpoint protegido `GET /api/admin/billing/profile` permite a administradores verificar la configuración efectiva y si está completa. Esta etapa todavía no emite facturas ni se comunica con ARCA.
 
+Los comprobantes se persisten en `BillingDocuments` y sus renglones en `BillingDocumentItems`. Cada registro conserva snapshots del emisor, receptor, importes y productos: cambiar después el perfil fiscal, el usuario o la orden no modifica el documento histórico. El modelo admite comprobante interno, facturas A/B/C y notas de crédito A/B/C con los estados `Draft`, `PendingAuthorization`, `Authorized` y `Rejected`.
+
+La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. Las notas de crédito pueden relacionarse con el documento original. Los campos de CAE, vencimiento, proveedor y rechazo ya están reservados, pero todavía no existe un caso de uso que emita documentos ni una llamada a ARCA.
+
 La configuración incluye el origen y la vigencia de las cotizaciones:
 
 ```text

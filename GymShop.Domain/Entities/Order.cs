@@ -41,6 +41,7 @@ public class Order
     public User User { get; set; } = null!;
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    public ICollection<BillingDocument> BillingDocuments { get; set; } = new List<BillingDocument>();
     public CouponRedemption? CouponRedemption { get; set; }
 }
 

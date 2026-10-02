@@ -27,5 +27,7 @@ public interface IApplicationDbContext
     DbSet<Coupon> Coupons { get; }
     DbSet<CouponRedemption> CouponRedemptions { get; }
     DbSet<ShippingQuoteReservation> ShippingQuoteReservations { get; }
+    DbSet<BillingDocument> BillingDocuments { get; }
+    DbSet<BillingDocumentItem> BillingDocumentItems { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

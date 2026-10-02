@@ -39,6 +39,38 @@ public class DependencyInjectionTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IApplicationDbContext>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ITransactionManager>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICreatePaymentUseCase>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IBillingProfile>());
+    }
+
+    [Fact]
+    public void Fiscal_profile_is_bound_from_configuration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Port=5432;Database=GymShopDiTest;Username=postgres;Password=postgres",
+                ["Billing:Mode"] = "ElectronicInvoice",
+                ["Billing:TaxCondition"] = "Monotributo",
+                ["Billing:BusinessName"] = "Comercio de prueba",
+                ["Billing:Cuit"] = "30-53625919-4",
+                ["Billing:FiscalAddress"] = "Catamarca 2730, Rosario, Santa Fe",
+                ["Billing:GrossIncomeNumber"] = "Exento",
+                ["Billing:ActivityStartDate"] = "2020-01-01",
+                ["Billing:PointOfSale"] = "1",
+                ["Billing:ArcaEnabled"] = "true"
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplication();
+        services.AddInfrastructure(configuration, new TestHostEnvironment());
+
+        using var provider = services.BuildServiceProvider();
+        var profile = provider.GetRequiredService<IBillingProfile>();
+
+        Assert.Equal(GymShop.Domain.Enums.BillingMode.ElectronicInvoice, profile.Mode);
+        Assert.Equal(GymShop.Domain.Enums.SellerTaxCondition.Monotributo, profile.TaxCondition);
+        Assert.True(profile.ElectronicInvoicingReady);
     }
 
     [Fact]

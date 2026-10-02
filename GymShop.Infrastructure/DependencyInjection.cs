@@ -23,6 +23,12 @@ public static class DependencyInjection
 
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<GymShopDbContext>());
         services.AddScoped<ITransactionManager, EfTransactionManager>();
+        var billingOptions = configuration.GetSection(BillingOptions.SectionName).Get<BillingOptions>() ?? new BillingOptions();
+        var billingFailures = billingOptions.Validate();
+        if (billingFailures.Count > 0)
+            throw new InvalidOperationException(string.Join(' ', billingFailures));
+        services.AddSingleton<IBillingProfile>(billingOptions);
+
         var shippingOptions = configuration.GetSection(ShippingOptions.SectionName).Get<ShippingOptions>() ?? new ShippingOptions();
         if (shippingOptions.HomeDeliveryCost < 0)
             throw new InvalidOperationException("Shipping:HomeDeliveryCost cannot be negative.");

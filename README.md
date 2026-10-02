@@ -1571,6 +1571,26 @@ El adaptador `OwnFleetShippingProvider` representa reparto propio y usa `Shippin
 
 En esta etapa OCA y Correo Argentino implementan cotización. La creación de despachos, etiquetas, cancelación y seguimiento quedan para el módulo operativo siguiente.
 
+### Perfil fiscal configurable
+
+El perfil fiscal se configura mediante variables de entorno y no queda ligado a una condición tributaria concreta. Por defecto la aplicación funciona en modo comprobante interno, sin afirmar que ese documento sea una factura fiscal:
+
+```text
+Billing__Mode=ReceiptOnly
+Billing__TaxCondition=None
+Billing__BusinessName=
+Billing__Cuit=
+Billing__FiscalAddress=
+Billing__GrossIncomeNumber=
+Billing__ActivityStartDate=       # AAAA-MM-DD
+Billing__PointOfSale=
+Billing__ArcaEnabled=false
+```
+
+Los valores admitidos para `Billing__TaxCondition` son `None`, `Monotributo`, `RegisteredTaxpayer` y `Exempt`. Cuando el comercio tenga alta fiscal, certificado y punto de venta para Web Services, puede habilitarse la base de facturación electrónica con `Billing__Mode=ElectronicInvoice` y `Billing__ArcaEnabled=true`.
+
+En modo electrónico son obligatorios la razón social, un CUIT válido, la condición fiscal, el domicilio fiscal, Ingresos Brutos, la fecha de inicio de actividades y un punto de venta entre 1 y 99999. Una configuración incompleta impide que la API inicie para evitar operar con datos fiscales incorrectos. El endpoint protegido `GET /api/admin/billing/profile` permite a administradores verificar la configuración efectiva y si está completa. Esta etapa todavía no emite facturas ni se comunica con ARCA.
+
 La configuración incluye el origen y la vigencia de las cotizaciones:
 
 ```text

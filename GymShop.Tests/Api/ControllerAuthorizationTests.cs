@@ -111,6 +111,15 @@ public class ControllerAuthorizationTests
     }
 
     [Fact]
+    public void Billing_profile_is_restricted_to_admin_and_superadmin()
+    {
+        var authorize = typeof(BillingController).GetCustomAttribute<AuthorizeAttribute>();
+        Assert.NotNull(authorize);
+        Assert.Equal("Admin,SuperAdmin", authorize!.Roles);
+        Assert.DoesNotContain("User", SplitRoles(authorize.Roles));
+    }
+
+    [Fact]
     public void Stock_management_is_restricted_to_admin_and_superadmin()
     {
         var authorize = typeof(StockController).GetCustomAttribute<AuthorizeAttribute>();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../../api/gymshop'
-import type { Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderStatus } from '../../api/types'
+import type { BillingDocument, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderStatus } from '../../api/types'
 import { money, storefront } from '../../config/storefront'
 import { describeAdminError } from './adminErrors'
 import { AdminEmpty, AdminFeedback, AdminLoading } from './adminUi'
@@ -19,7 +19,7 @@ const transitionGuidance: Record<OrderStatus, string> = {
   Canceled: 'El pedido fue cancelado y no admite más cambios administrativos.',
   Refunded: 'El reembolso se resolvió desde el flujo de pagos; no admite cambios administrativos.'
 }
-const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', FreeOrderConfirmed: 'Pedido gratuito confirmado', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
+const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', FreeOrderConfirmed: 'Pedido gratuito confirmado', PurchaseReceiptCreated: 'Comprobante interno generado', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
 const sourceLabels = { Manual: 'Manual', Automatic: 'Automático', Provider: 'Proveedor' }
 const formatDate = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const utcStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : undefined
@@ -75,6 +75,7 @@ export function AdminOrders() {
   const [history, setHistory] = useState<OrderHistoryEvent[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
+  const [billingDocuments, setBillingDocuments] = useState<BillingDocument[]>([])
   const [tracking, setTracking] = useState({ carrier: '', trackingNumber: '', trackingUrl: '' })
   const [transferReference, setTransferReference] = useState('')
   const [cancellationReason, setCancellationReason] = useState('')
@@ -112,8 +113,8 @@ export function AdminOrders() {
   const open = async (id: number) => {
     openOrderId.current = id; historyRequest.current += 1
     setPending(true); setError(''); setSuccess('')
-    setHistory([]); setHistoryError(''); setHistoryLoading(false)
-    try { const order = await api.order(id); setDetail(order); setTracking({ carrier: order.carrier || '', trackingNumber: order.trackingNumber || '', trackingUrl: order.trackingUrl || '' }); void loadHistory(id) } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
+    setHistory([]); setHistoryError(''); setHistoryLoading(false); setBillingDocuments([])
+    try { const [order, documents] = await Promise.all([api.order(id), api.orderBillingDocuments(id)]); setDetail(order); setBillingDocuments(documents); setTracking({ carrier: order.carrier || '', trackingNumber: order.trackingNumber || '', trackingUrl: order.trackingUrl || '' }); void loadHistory(id) } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
   const changeStatus = async (status: OrderStatus) => {
     if (!detail || pending || !window.confirm(`¿Cambiar el pedido #${detail.id} a “${orderStatusLabel(status, detail.deliveryMethod)}”?`)) return
@@ -149,12 +150,23 @@ export function AdminOrders() {
       await Promise.all([load(normalized.filters), loadHistory(detail.id)])
     } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
+  const createReceipt = async () => {
+    if (!detail || pending || !window.confirm(`¿Generar el comprobante interno del pedido #${detail.id}?`)) return
+    setPending(true); setError(''); setSuccess('')
+    try {
+      const document = await api.createOrderReceipt(detail.id)
+      setBillingDocuments(current => [document, ...current.filter(item => item.id !== document.id)])
+      setSuccess(`Comprobante interno del pedido #${detail.id} generado correctamente.`)
+      await loadHistory(detail.id)
+    } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
+  }
   const transitions = detail ? nextStatuses[detail.status] || [] : []
   const canCancelFreeOrder = Boolean(detail && detail.total === 0 &&
     (detail.status === 'Paid' || detail.status === 'Preparing') &&
     detail.payments.length === 0)
   const canCancelOrder = detail?.status === 'Pending' || canCancelFreeOrder
-  const closeDetail = () => { openOrderId.current = null; historyRequest.current += 1; setDetail(null); setHistory([]); setHistoryError(''); setHistoryLoading(false) }
+  const canGenerateReceipt = Boolean(detail && ['Paid', 'Preparing', 'Shipped', 'Delivered'].includes(detail.status) && !billingDocuments.some(document => document.category === 'Receipt'))
+  const closeDetail = () => { openOrderId.current = null; historyRequest.current += 1; setDetail(null); setBillingDocuments([]); setHistory([]); setHistoryError(''); setHistoryLoading(false) }
 
   return <section className="admin-page">
     <div className="admin-page-heading"><div><p className="eyebrow">OPERACIONES</p><h1>Pedidos</h1><p>Gestioná el ciclo de los pedidos y consultá sus pagos.</p></div><strong>{page.totalItems} pedidos</strong></div>
@@ -176,6 +188,7 @@ export function AdminOrders() {
       <section><h3>Entrega</h3><p><strong>{detail.deliveryMethod === 'StorePickup' ? 'Retiro en tienda' : 'Envío a domicilio'}</strong><br />Costo: {detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</p>{detail.shippingAddress && <p>{detail.shippingAddress}</p>}{(detail.status === 'Preparing' || detail.status === 'Shipped') && detail.deliveryMethod !== 'StorePickup' && <div className="tracking-form"><label>Empresa transportista<input value={tracking.carrier} maxLength={100} onChange={event => setTracking(current => ({ ...current, carrier: event.target.value }))} /></label><label>Número de seguimiento<input value={tracking.trackingNumber} maxLength={100} onChange={event => setTracking(current => ({ ...current, trackingNumber: event.target.value }))} /></label><label>URL de seguimiento (HTTPS)<input type="url" value={tracking.trackingUrl} maxLength={500} placeholder="https://…" onChange={event => setTracking(current => ({ ...current, trackingUrl: event.target.value }))} /></label>{detail.status === 'Shipped' && <button type="button" disabled={pending} onClick={() => void changeStatus('Shipped')}>Corregir seguimiento</button>}</div>}{detail.trackingUrl && <a href={detail.trackingUrl} target="_blank" rel="noopener noreferrer">Abrir seguimiento</a>}</section>
       <section><h3>Productos</h3>{detail.items.map(item => <div className="list-row" key={item.productId}><span>{item.quantity} × {item.productName}<small>{money(item.unitPrice)} c/u</small></span><strong>{money(item.subtotal)}</strong></div>)}{Boolean(detail.discountAmount) && <div className="list-row"><span>Descuento</span><strong>−{money(detail.discountAmount || 0)}</strong></div>}<div className="list-row"><span>Envío</span><strong>{detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</strong></div><div className="list-row"><strong>Total</strong><strong>{money(detail.total)}</strong></div></section>
       <section><h3>Pago</h3>{detail.payments.some(payment => payment.requiresReview) && <div className="error payment-incident" role="alert"><strong>Pago aprobado después de cancelar</strong><span>Mercado Pago informó una acreditación para este pedido cancelado. Requiere revisión y devolución.</span></div>}{detail.payments.length === 0 ? <p>Sin pagos registrados.</p> : detail.payments.map(payment => <div className="payment" key={payment.id}><span>#{payment.id} · {payment.provider}<small>{money(payment.amount)} {payment.currency}</small></span><Status value={payment.status} /><small>Creado: {formatDate(payment.createdAt)}{payment.paidAt ? ` · Pagado: ${formatDate(payment.paidAt)}` : ''}</small>{payment.provider === 'BankTransfer' && payment.status === 'Pending' && <div className="transfer-confirmation"><label>Referencia o motivo de acreditación<input value={transferReference} maxLength={500} onChange={event => setTransferReference(event.target.value)} placeholder="Movimiento bancario, fecha o motivo" /></label><button className="primary" type="button" disabled={pending || !transferReference.trim()} onClick={() => void confirmTransfer(payment.id)}>{pending ? 'Confirmando…' : 'Confirmar acreditación verificada'}</button><small>Confirmá únicamente después de comprobar que el dinero fue acreditado.</small></div>}</div>)}</section>
+      <section><h3>Comprobantes</h3>{billingDocuments.length === 0 ? <p>Todavía no se generó ningún comprobante.</p> : billingDocuments.map(document => <article className="payment" key={document.id}><span><strong>Comprobante interno</strong><small>{formatDate(document.authorizedAtUtc || document.createdAtUtc)}</small></span><Status value={document.status} /><p>A nombre de {document.recipientName} · {money(document.total)} {document.currency}</p><small>Identificador: {document.id}</small></article>)}{canGenerateReceipt && <button className="primary" type="button" disabled={pending} onClick={() => void createReceipt()}>{pending ? 'Generando…' : 'Generar comprobante'}</button>}{(canGenerateReceipt || billingDocuments.some(document => document.category === 'Receipt')) && <p className="admin-footnote">Es una constancia interna de compra; no reemplaza una factura fiscal de ARCA.</p>}</section>
       <section><h3>Fechas</h3><p>Creado: {formatDate(detail.createdAt)}<br />Última actualización: {detail.updatedAt ? formatDate(detail.updatedAt) : 'Sin cambios posteriores'}</p>{detail.cancellationReason && <p>Motivo: {detail.cancellationReason}</p>}</section>
       <section className="order-history" aria-labelledby="order-history-title"><h3 id="order-history-title">Historial</h3>
         {historyLoading ? <AdminLoading label="Cargando historial…" /> : historyError ? <div className="history-error"><p role="alert">{historyError}</p><button type="button" onClick={() => void loadHistory(detail.id)}>Reintentar historial</button></div> : history.length === 0 ? <p className="admin-footnote">Todavía no hay eventos relevantes.</p> : <ol className="order-timeline">{history.map(event => <li key={event.id} className={`history-${event.source.toLowerCase()}`}><div className="timeline-marker" aria-hidden="true" /><article><div className="timeline-heading"><strong>{actionLabels[event.action] || event.action}</strong><span>{sourceLabels[event.source]}</span></div><time dateTime={event.createdAtUtc}>{formatDate(event.createdAtUtc)}</time>{(event.previousStatus || event.newStatus) && <p>{event.previousStatus ? orderStatusLabel(event.previousStatus, detail.deliveryMethod) : '—'} <span aria-hidden="true">→</span><span className="sr-only"> a </span> {event.newStatus ? orderStatusLabel(event.newStatus, detail.deliveryMethod) : '—'}</p>}{event.reason && <p className="timeline-reason">{event.reason}</p>}<small>{event.actorName ? `${event.actorName}${event.actorEmail ? ` · ${event.actorEmail}` : ''}` : event.source === 'Provider' ? 'Proveedor de pagos' : 'Sistema'}</small></article></li>)}</ol>}

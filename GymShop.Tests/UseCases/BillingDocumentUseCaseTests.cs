@@ -1,0 +1,175 @@
+using GymShop.Application.Abstractions;
+using GymShop.Application.Common;
+using GymShop.Application.UseCases.Billing;
+using GymShop.Domain.Entities;
+using GymShop.Domain.Enums;
+using GymShop.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
+
+namespace GymShop.Tests.UseCases;
+
+public sealed class BillingDocumentUseCaseTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 10, 2, 18, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task CreateReceipt_snapshots_paid_order_and_approved_payment()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var useCase = CreateUseCase(db);
+
+        var result = await useCase.ExecuteAsync(order.Id, "receipt-order-1");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(order.Id, result.Value!.OrderId);
+        Assert.Equal(order.Payments.Single().Id, result.Value.PaymentId);
+        Assert.Equal("PurchaseReceipt", result.Value.Type);
+        Assert.Equal("Authorized", result.Value.Status);
+        Assert.Equal(35000, result.Value.Total);
+        Assert.Equal("Cliente Prueba", result.Value.RecipientName);
+        Assert.Equal("Disco 20 kg (DISCO-20)", Assert.Single(result.Value.Items).Description);
+        var persisted = await db.BillingDocuments.Include(x => x.Items).SingleAsync();
+        Assert.Equal("Internal", persisted.AuthorizationProvider);
+        Assert.Equal(Now.UtcDateTime, persisted.AuthorizedAtUtc);
+        Assert.Contains(db.AuditEntries, x => x.Action == "PurchaseReceiptCreated" && x.EntityId == order.Id.ToString());
+    }
+
+    [Fact]
+    public async Task CreateReceipt_is_idempotent_even_when_retry_uses_a_new_key()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Preparing, 35000, PaymentStatus.Approved);
+        var useCase = CreateUseCase(db);
+
+        var first = await useCase.ExecuteAsync(order.Id, "receipt-order-2");
+        var sameKey = await useCase.ExecuteAsync(order.Id, "receipt-order-2");
+        var otherKey = await useCase.ExecuteAsync(order.Id, "receipt-order-2-retry");
+
+        Assert.True(first.IsSuccess);
+        Assert.Equal(first.Value!.Id, sameKey.Value!.Id);
+        Assert.Equal(first.Value.Id, otherKey.Value!.Id);
+        Assert.Equal(1, await db.BillingDocuments.CountAsync());
+        Assert.Equal(1, db.AuditEntries.Count(x => x.Action == "PurchaseReceiptCreated"));
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Pending)]
+    [InlineData(OrderStatus.Canceled)]
+    [InlineData(OrderStatus.Refunded)]
+    public async Task CreateReceipt_rejects_orders_that_are_not_in_paid_lifecycle(OrderStatus status)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, status, 35000, PaymentStatus.Approved);
+
+        var result = await CreateUseCase(db).ExecuteAsync(order.Id, $"receipt-{status}");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.Empty(db.BillingDocuments);
+    }
+
+    [Fact]
+    public async Task CreateReceipt_rejects_non_free_order_without_approved_payment()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Pending);
+
+        var result = await CreateUseCase(db).ExecuteAsync(order.Id, "receipt-without-payment");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.Contains("pago aprobado", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateReceipt_allows_a_paid_free_order_without_payment()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 0, null);
+
+        var result = await CreateUseCase(db).ExecuteAsync(order.Id, "receipt-free-order");
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value!.PaymentId);
+        Assert.Equal(0, result.Value.Total);
+    }
+
+    [Fact]
+    public async Task CreateReceipt_blocks_electronic_mode_until_Arca_is_integrated()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var profile = new TestBillingProfile { Mode = BillingMode.ElectronicInvoice, ArcaEnabled = true };
+
+        var result = await CreateUseCase(db, profile).ExecuteAsync(order.Id, "fiscal-attempt");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.Equal("electronic_invoicing_not_implemented", result.Error.Code);
+        Assert.Empty(db.BillingDocuments);
+    }
+
+    [Fact]
+    public async Task ListDocuments_returns_not_found_for_unknown_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+
+        var result = await new GetOrderBillingDocumentsUseCase(db).ExecuteAsync(999);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, result.Error!.Type);
+    }
+
+    private static CreateOrderReceiptUseCase CreateUseCase(
+        GymShop.Infrastructure.Data.GymShopDbContext db,
+        IBillingProfile? profile = null) =>
+        new(db, profile ?? new TestBillingProfile(), new FixedTimeProvider(Now));
+
+    private static async Task<Order> AddOrder(
+        GymShop.Infrastructure.Data.GymShopDbContext db,
+        OrderStatus status,
+        decimal total,
+        PaymentStatus? paymentStatus)
+    {
+        var user = new User { RoleId = 1, Name = "Cliente", LastName = "Prueba", Email = "cliente@example.com", PasswordHash = "hash" };
+        var product = new Product { Name = "Disco 20 kg", Price = 30000, Stock = 1 };
+        var order = new Order
+        {
+            User = user,
+            Status = status,
+            ShippingAddress = "Catamarca 2730, Rosario",
+            Subtotal = total == 0 ? 0 : 30000,
+            ShippingCost = total == 0 ? 0 : 5000,
+            Total = total,
+            Items =
+            {
+                new OrderItem { Product = product, ProductName = product.Name, VariantSku = "DISCO-20", UnitPrice = total == 0 ? 0 : 30000, Quantity = 1, Subtotal = total == 0 ? 0 : 30000 }
+            }
+        };
+        if (paymentStatus.HasValue)
+            order.Payments.Add(new Payment { Provider = "MercadoPago", ExternalReference = "order-test", Amount = total, Currency = "ARS", Status = paymentStatus.Value, PaidAt = paymentStatus == PaymentStatus.Approved ? Now.UtcDateTime : null });
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+        return order;
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => value;
+    }
+
+    private sealed class TestBillingProfile : IBillingProfile
+    {
+        public BillingMode Mode { get; init; } = BillingMode.ReceiptOnly;
+        public SellerTaxCondition TaxCondition { get; init; } = SellerTaxCondition.None;
+        public string BusinessName { get; init; } = "GymShop";
+        public string Cuit { get; init; } = string.Empty;
+        public string FiscalAddress { get; init; } = "Catamarca 2730, Rosario";
+        public string GrossIncomeNumber { get; init; } = string.Empty;
+        public DateOnly? ActivityStartDate { get; init; }
+        public int? PointOfSale { get; init; }
+        public bool ArcaEnabled { get; init; }
+        public bool ElectronicInvoicingReady => false;
+    }
+}

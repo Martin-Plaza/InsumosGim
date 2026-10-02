@@ -1,5 +1,5 @@
 import { json, request } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, AuditPage, AuthResponse, BillingDocument, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
@@ -63,6 +63,8 @@ export const api = {
   },
   order: (id: number) => request<Order>(`/api/orders/${id}`),
   orderHistory: (id: number) => request<OrderHistoryEvent[]>(`/api/orders/${id}/history`),
+  orderBillingDocuments: (id: number) => request<BillingDocument[]>(`/api/admin/billing/orders/${id}/documents`),
+  createOrderReceipt: (id: number) => request<BillingDocument>(`/api/admin/billing/orders/${id}/receipts`, { method: 'POST', headers: { 'Idempotency-Key': `receipt-order-${id}` } }),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
   setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null, tracking?: { carrier: string; trackingNumber: string; trackingUrl: string }) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt, ...tracking })),
   createPayment: (orderId: number, provider: PaymentProvider, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider, idempotencyKey })),

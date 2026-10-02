@@ -1,4 +1,6 @@
 using GymShop.Application.Abstractions;
+using GymShop.Application.DTOs.Billing;
+using GymShop.Application.UseCases.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,7 +9,10 @@ namespace GymShop.Api.Controllers;
 [ApiController]
 [Authorize(Roles = "Admin,SuperAdmin")]
 [Route("api/admin/billing")]
-public sealed class BillingController(IBillingProfile profile) : ControllerBase
+public sealed class BillingController(
+    IBillingProfile profile,
+    ICreateOrderReceiptUseCase createOrderReceipt,
+    IGetOrderBillingDocumentsUseCase getOrderBillingDocuments) : ApiControllerBase
 {
     [HttpGet("profile")]
     [ProducesResponseType(typeof(BillingProfileResponse), StatusCodes.Status200OK)]
@@ -24,6 +29,22 @@ public sealed class BillingController(IBillingProfile profile) : ControllerBase
         profile.PointOfSale,
         profile.ArcaEnabled,
         profile.ElectronicInvoicingReady));
+
+    [HttpGet("orders/{orderId:int}/documents")]
+    [ProducesResponseType(typeof(List<BillingDocumentResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<List<BillingDocumentResponse>>> GetOrderDocuments(int orderId, CancellationToken cancellationToken) =>
+        FromResult(await getOrderBillingDocuments.ExecuteAsync(orderId, cancellationToken));
+
+    [HttpPost("orders/{orderId:int}/receipts")]
+    [ProducesResponseType(typeof(BillingDocumentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<BillingDocumentResponse>> CreateReceipt(
+        int orderId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken) =>
+        FromResult(await createOrderReceipt.ExecuteAsync(orderId, idempotencyKey, cancellationToken));
 }
 
 public sealed record BillingProfileResponse(

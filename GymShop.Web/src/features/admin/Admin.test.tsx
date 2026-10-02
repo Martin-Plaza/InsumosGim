@@ -191,6 +191,34 @@ describe('panel administrativo', () => {
     expect(screen.queryByRole('button', { name: 'Cancelar pedido' })).not.toBeInTheDocument()
   })
 
+  it('genera una sola constancia interna para un pedido cobrado', async () => {
+    signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const paidOrder = { ...orderDetail, status: 'Paid', payments: [{ id: 50, provider: 'MercadoPago', amount: 15000, currency: 'ARS', status: 'Approved', createdAt: '2026-09-20T12:00:00Z', paidAt: '2026-09-20T12:05:00Z' }] }
+    const receipt = { id: 'fd6c39f0-1b67-4b95-9edf-78a37db693cd', orderId: 10, paymentId: 50, category: 'Receipt', type: 'PurchaseReceipt', status: 'Authorized', currency: 'ARS', issuerBusinessName: 'GymShop', recipientName: 'Cliente Gym', recipientEmail: 'cliente@gym.com', recipientAddress: 'Av. Siempre Viva 742', subtotal: 15000, discountAmount: 0, shippingAmount: 0, total: 15000, createdAtUtc: '2026-09-20T12:10:00Z', authorizedAtUtc: '2026-09-20T12:10:00Z', items: [] }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/admin/billing/orders/10/receipts')) return response(receipt)
+      if (url.includes('/api/admin/billing/orders/10/documents')) return response([])
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(paidOrder)
+      return apiMock(input, init)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Generar comprobante' }))
+
+    expect(await screen.findByText('Comprobante interno', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.getByText(/no reemplaza una factura fiscal/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generar comprobante' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/billing/orders/10/receipts'),
+      expect.objectContaining({ method: 'POST', headers: expect.any(Headers) }))
+    const receiptCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/receipts'))
+    expect((receiptCall?.[1]?.headers as Headers).get('Idempotency-Key')).toBe('receipt-order-10')
+  })
+
   it('mantiene el detalle visible si falla el historial y permite reintentarlo', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
     let historyLoads = 0

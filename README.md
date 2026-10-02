@@ -1567,7 +1567,9 @@ Cada cotización se persiste con usuario, carrito, destino, proveedor, servicio,
 
 La orden conserva tanto el texto legible de la dirección como su snapshot estructurado y los códigos de proveedor y servicio. Las órdenes anteriores siguen siendo compatibles porque estos campos nuevos son opcionales. El request legado con `shippingAddress` se mantiene temporalmente para clientes anteriores, pero el frontend nuevo siempre usa cotización estructurada.
 
-El adaptador `OwnFleetShippingProvider` representa reparto propio y usa `Shipping:HomeDeliveryCost`. `OcaShippingProvider` integra el cotizador e-Pak de OCA: envía código postal de origen y destino, peso total, volumen total, cantidad de paquetes y valor declarado, y usa el costo y plazo devueltos por OCA. La abstracción `IShippingProvider` permite sumar Correo Argentino sin cambiar el checkout: cada integración solamente debe implementar cotización, sucursales, creación, etiqueta, cancelación y tracking según sus capacidades. En esta etapa OCA implementa cotización; la creación de despachos, etiquetas, cancelación y seguimiento quedan para el módulo operativo siguiente.
+El adaptador `OwnFleetShippingProvider` representa reparto propio y usa `Shipping:HomeDeliveryCost`. `OcaShippingProvider` integra el cotizador e-Pak de OCA: envía código postal de origen y destino, peso total, volumen total, cantidad de paquetes y valor declarado, y usa el costo y plazo devueltos por OCA. `CorreoArgentinoShippingProvider` integra la API MiCorreo: obtiene y reutiliza el JWT de la API, consulta `/rates` por cada tipo de bulto y expone solamente los servicios a domicilio disponibles para todos los bultos de la compra. La abstracción `IShippingProvider` permite alternar o combinar proveedores sin cambiar el checkout.
+
+En esta etapa OCA y Correo Argentino implementan cotización. La creación de despachos, etiquetas, cancelación y seguimiento quedan para el módulo operativo siguiente.
 
 La configuración incluye el origen y la vigencia de las cotizaciones:
 
@@ -1594,6 +1596,24 @@ Oca__TimeoutSeconds
 ```
 
 Para usar solamente la tarifa real de OCA, configurar `Shipping__OwnFleetEnabled=false` y `Oca__Enabled=true`. Las URLs de QA y producción son fijas y no se aceptan desde variables, para impedir que una configuración redirija las solicitudes a un host arbitrario. Las credenciales y operativas productivas deben ser provistas por OCA; los datos públicos de prueba sirven únicamente para validar QA.
+
+Correo Argentino se configura de forma independiente:
+
+```text
+CorreoArgentino__Enabled
+CorreoArgentino__Environment                 # Qa o Production
+CorreoArgentino__ApiUsername                 # credencial API MiCorreo del ambiente
+CorreoArgentino__ApiPassword                 # credencial API MiCorreo del ambiente
+CorreoArgentino__CustomerId                  # cliente MiCorreo del ambiente
+CorreoArgentino__QuoteLifetimeMinutes
+CorreoArgentino__EstimatedDeliveryMinDays
+CorreoArgentino__EstimatedDeliveryMaxDays
+CorreoArgentino__TimeoutSeconds
+```
+
+Las credenciales de MiCorreo son específicas de QA o producción y deben solicitarse a Correo Argentino. Mientras no estén disponibles, no se agrega ninguna de estas variables y el proveedor permanece desactivado. Para habilitarlo se cargan las tres credenciales del mismo ambiente, se configura `CorreoArgentino__Enabled=true` y, si debe ser el único cotizador, también `Shipping__OwnFleetEnabled=false` y `Oca__Enabled=false`.
+
+MiCorreo admite hasta 25.000 g por bulto y hasta 150 cm por dimensión. Las medidas decimales se redondean hacia arriba antes de cotizar. Los bultos idénticos se consultan una sola vez y su tarifa se multiplica por cantidad; si una compra contiene formas de bulto distintas, se cotiza cada una y se suman solamente los productos de envío que estén disponibles para todas. Una tarifa vencida según `validTo` nunca se guarda. Las URLs de QA y producción también son fijas en el código.
 
 Los productos que participen en envíos deben tener peso, largo, ancho y alto del paquete. Una variante puede sobrescribir cada medida; si no lo hace, hereda la del producto. Si falta alguna medida, la API responde `shipping_dimensions_missing` y no inventa un costo.
 
@@ -1634,7 +1654,8 @@ Ventajas del diseño:
 Limitaciones actuales:
 
 - Todavía no se crean despachos, etiquetas ni eventos de tracking; esta etapa cubre dirección, bultos y cotización segura.
-- OCA y Correo Argentino todavía no tienen adaptador concreto ni credenciales configuradas.
+- OCA y Correo Argentino cotizan a domicilio, pero todavía no exponen sucursales o puntos de retiro.
+- Correo Argentino requiere credenciales MiCorreo propias para poder activarse; queda deshabilitado por defecto.
 - El proveedor Mock no representa una aprobación financiera real.
 
 La aplicacion aplica migraciones y datos demo cuando `DatabaseInitialization:Enabled=true`.

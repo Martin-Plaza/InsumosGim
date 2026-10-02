@@ -45,6 +45,23 @@ public static class DependencyInjection
                 client.Timeout = TimeSpan.FromSeconds(ocaOptions.TimeoutSeconds));
             services.AddTransient<IShippingProvider>(provider => provider.GetRequiredService<OcaShippingProvider>());
         }
+
+        var correoArgentinoOptions = configuration.GetSection(CorreoArgentinoOptions.SectionName)
+            .Get<CorreoArgentinoOptions>() ?? new CorreoArgentinoOptions();
+        var correoArgentinoFailures = correoArgentinoOptions.Validate();
+        if (correoArgentinoFailures.Count > 0)
+            throw new InvalidOperationException(string.Join(' ', correoArgentinoFailures));
+        services.AddSingleton(correoArgentinoOptions);
+        services.AddSingleton<CorreoArgentinoTokenCache>();
+        if (correoArgentinoOptions.Enabled)
+        {
+            services.AddHttpClient<CorreoArgentinoShippingProvider>(client =>
+            {
+                client.BaseAddress = correoArgentinoOptions.BaseAddress;
+                client.Timeout = TimeSpan.FromSeconds(correoArgentinoOptions.TimeoutSeconds);
+            });
+            services.AddTransient<IShippingProvider>(provider => provider.GetRequiredService<CorreoArgentinoShippingProvider>());
+        }
         services.AddOptions<ProductImageStorageOptions>()
             .Configure(options => options.BucketName = configuration["PRODUCT_IMAGE_BUCKET"] ?? string.Empty);
         services.AddSingleton<IProductImageStorage>(provider =>

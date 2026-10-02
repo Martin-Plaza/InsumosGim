@@ -83,7 +83,34 @@ public sealed class OcaShippingProviderTests
         Assert.Contains(failures, failure => failure.Contains("Operativa", StringComparison.Ordinal));
     }
 
-    private static OcaShippingProvider CreateProvider(RecordingHandler handler, DateTimeOffset now) =>
+    [Fact]
+    public async Task Quote_logs_sanitized_reason_when_oca_rejects_cuit_or_operativa()
+    {
+        const string responseXml = """
+            <DataSet xmlns="#Oca_e_Pak">
+              <NewDataSet xmlns="">
+                <Table1><Error>El CUIT o la operativa son inválidos.</Error></Table1>
+              </NewDataSet>
+            </DataSet>
+            """;
+        var handler = new RecordingHandler(responseXml);
+        var logger = new RecordingLogger();
+        var provider = CreateProvider(handler, DateTimeOffset.UtcNow, logger);
+        var request = new ShippingQuoteRequest(
+            Address("2000"),
+            Address("4400"),
+            [new ShippingPackage(21_000, 40, 40, 19.99m, 30_000)],
+            ShippingDeliveryType.HomeDelivery);
+
+        Assert.Empty(await provider.QuoteAsync(request));
+        Assert.Contains("invalid_cuit_or_operativa", logger.Messages.Single(), StringComparison.Ordinal);
+        Assert.DoesNotContain("El CUIT o la operativa", logger.Messages.Single(), StringComparison.Ordinal);
+    }
+
+    private static OcaShippingProvider CreateProvider(
+        RecordingHandler handler,
+        DateTimeOffset now,
+        Microsoft.Extensions.Logging.ILogger<OcaShippingProvider>? logger = null) =>
         new(
             new HttpClient(handler),
             new OcaOptions
@@ -95,7 +122,7 @@ public sealed class OcaShippingProviderTests
                 QuoteLifetimeMinutes = 15
             },
             new FixedTimeProvider(now),
-            NullLogger<OcaShippingProvider>.Instance);
+            logger ?? NullLogger<OcaShippingProvider>.Instance);
 
     private static ShippingAddress Address(string postalCode) =>
         new(postalCode, "Santa Fe", "Rosario", "Catamarca", "2730", null, null, null);
@@ -126,5 +153,19 @@ public sealed class OcaShippingProviderTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<OcaShippingProvider>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

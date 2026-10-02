@@ -2,6 +2,7 @@ using GymShop.Application;
 using GymShop.Application.Abstractions;
 using GymShop.Application.UseCases.Payments;
 using GymShop.Infrastructure;
+using GymShop.Infrastructure.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -38,6 +39,37 @@ public class DependencyInjectionTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IApplicationDbContext>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ITransactionManager>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICreatePaymentUseCase>());
+    }
+
+    [Fact]
+    public void Oca_can_replace_own_fleet_through_configuration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Port=5432;Database=GymShopDiTest;Username=postgres;Password=postgres",
+                ["Shipping:OwnFleetEnabled"] = "false",
+                ["Oca:Enabled"] = "true",
+                ["Oca:Environment"] = "Qa",
+                ["Oca:Cuit"] = "30-53625919-4",
+                ["Oca:Operativa"] = "64665"
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        services.AddApplication();
+        services.AddInfrastructure(configuration, new TestHostEnvironment());
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+
+        var shippingProviders = provider.GetServices<IShippingProvider>().ToList();
+        var shippingProvider = Assert.Single(shippingProviders);
+        Assert.IsType<OcaShippingProvider>(shippingProvider);
     }
 
     private sealed class TestHostEnvironment : IHostEnvironment

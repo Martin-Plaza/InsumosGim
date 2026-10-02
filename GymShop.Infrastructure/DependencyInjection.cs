@@ -31,7 +31,20 @@ public static class DependencyInjection
         if (shippingOptions.EstimatedDeliveryMinDays < 0 || shippingOptions.EstimatedDeliveryMaxDays < shippingOptions.EstimatedDeliveryMinDays)
             throw new InvalidOperationException("Shipping estimated delivery days are invalid.");
         services.AddSingleton<IShippingSettings>(shippingOptions);
-        services.AddSingleton<IShippingProvider, OwnFleetShippingProvider>();
+        if (shippingOptions.OwnFleetEnabled)
+            services.AddSingleton<IShippingProvider, OwnFleetShippingProvider>();
+
+        var ocaOptions = configuration.GetSection(OcaOptions.SectionName).Get<OcaOptions>() ?? new OcaOptions();
+        var ocaFailures = ocaOptions.Validate();
+        if (ocaFailures.Count > 0)
+            throw new InvalidOperationException(string.Join(' ', ocaFailures));
+        services.AddSingleton(ocaOptions);
+        if (ocaOptions.Enabled)
+        {
+            services.AddHttpClient<OcaShippingProvider>(client =>
+                client.Timeout = TimeSpan.FromSeconds(ocaOptions.TimeoutSeconds));
+            services.AddTransient<IShippingProvider>(provider => provider.GetRequiredService<OcaShippingProvider>());
+        }
         services.AddOptions<ProductImageStorageOptions>()
             .Configure(options => options.BucketName = configuration["PRODUCT_IMAGE_BUCKET"] ?? string.Empty);
         services.AddSingleton<IProductImageStorage>(provider =>

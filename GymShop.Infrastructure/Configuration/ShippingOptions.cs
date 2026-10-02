@@ -5,6 +5,7 @@ namespace GymShop.Infrastructure.Configuration;
 public sealed class ShippingOptions : IShippingSettings
 {
     public const string SectionName = "Shipping";
+    public bool OwnFleetEnabled { get; set; } = true;
     public decimal HomeDeliveryCost { get; set; }
     public string PickupAddress { get; set; } = string.Empty;
     public string PickupInstructions { get; set; } = string.Empty;

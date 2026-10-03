@@ -37,7 +37,7 @@ public sealed class ArcaOptionsTests
     }
 
     [Fact]
-    public void Load_certificate_returns_an_ephemeral_certificate_that_can_sign_cms()
+    public void Load_signing_material_returns_a_matching_key_that_can_sign_cms()
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=GymShop ARCA Homologation", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -48,12 +48,14 @@ public sealed class ArcaOptionsTests
             PrivateKeyPemBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(rsa.ExportPkcs8PrivateKeyPem()))
         };
 
-        using var certificate = options.LoadCertificate();
+        var signingMaterial = options.LoadSigningMaterial();
+        using var certificate = signingMaterial.Certificate;
+        using var privateKey = signingMaterial.PrivateKey;
         var signedCms = new SignedCms(new ContentInfo("probe"u8.ToArray()));
 
-        signedCms.ComputeSignature(new CmsSigner(certificate), silent: true);
+        signedCms.ComputeSignature(new CmsSigner(certificate) { PrivateKey = privateKey }, silent: true);
 
-        Assert.True(certificate.HasPrivateKey);
+        Assert.False(certificate.HasPrivateKey);
         Assert.NotEmpty(signedCms.Encode());
     }
 }

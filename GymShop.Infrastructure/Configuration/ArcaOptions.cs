@@ -60,16 +60,34 @@ public sealed class ArcaOptions
     {
         var certificatePem = DecodePem(CertificatePemBase64);
         var privateKeyPem = DecodePem(PrivateKeyPemBase64);
-        using var pemCertificate = X509Certificate2.CreateFromPem(certificatePem, privateKeyPem);
+        return X509Certificate2.CreateFromPem(certificatePem, privateKeyPem);
+    }
 
-        // Re-import the pair as PKCS#12 so the private key is backed by the
-        // platform certificate implementation. SignedCms cannot reliably use
-        // the transient PEM key directly in Linux containers.
-        var pkcs12 = pemCertificate.Export(X509ContentType.Pkcs12, string.Empty);
-        return X509CertificateLoader.LoadPkcs12(
-            pkcs12,
-            string.Empty,
-            X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+    public (X509Certificate2 Certificate, RSA PrivateKey) LoadSigningMaterial()
+    {
+        var certificatePem = DecodePem(CertificatePemBase64);
+        var privateKeyPem = DecodePem(PrivateKeyPemBase64);
+        var certificate = X509Certificate2.CreateFromPem(certificatePem);
+        var privateKey = RSA.Create();
+
+        try
+        {
+            privateKey.ImportFromPem(privateKeyPem);
+            using var certificateKey = certificate.GetRSAPublicKey()
+                ?? throw new CryptographicException("The ARCA certificate does not contain an RSA public key.");
+            if (!CryptographicOperations.FixedTimeEquals(
+                    certificateKey.ExportSubjectPublicKeyInfo(),
+                    privateKey.ExportSubjectPublicKeyInfo()))
+                throw new CryptographicException("The ARCA certificate and private key do not match.");
+
+            return (certificate, privateKey);
+        }
+        catch
+        {
+            certificate.Dispose();
+            privateKey.Dispose();
+            throw;
+        }
     }
 
     private static string DecodePem(string value) =>

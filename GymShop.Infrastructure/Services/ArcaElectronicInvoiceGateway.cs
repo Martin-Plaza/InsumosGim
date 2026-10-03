@@ -92,12 +92,15 @@ public sealed class ArcaElectronicInvoiceGateway(
                     new XElement("expirationTime", now.AddMinutes(10).ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture))),
                 new XElement("service", "wsfe")));
 
-        using var certificate = LoadSigningCertificate();
+        var signingMaterial = LoadSigningMaterial();
+        using var certificate = signingMaterial.Certificate;
+        using var privateKey = signingMaterial.PrivateKey;
         var content = new ContentInfo(Encoding.UTF8.GetBytes(loginTicketRequest.ToString(SaveOptions.DisableFormatting)));
         var signedCms = new SignedCms(content, detached: false);
         var signer = new CmsSigner(SubjectIdentifierType.IssuerAndSerialNumber, certificate)
         {
-            IncludeOption = X509IncludeOption.EndCertOnly
+            IncludeOption = X509IncludeOption.EndCertOnly,
+            PrivateKey = privateKey
         };
         try
         {
@@ -145,11 +148,11 @@ public sealed class ArcaElectronicInvoiceGateway(
         return new ArcaAccessTicket(token, sign, expiresAt);
     }
 
-    private X509Certificate2 LoadSigningCertificate()
+    private (X509Certificate2 Certificate, RSA PrivateKey) LoadSigningMaterial()
     {
         try
         {
-            return options.LoadCertificate();
+            return options.LoadSigningMaterial();
         }
         catch (Exception exception) when (exception is FormatException or CryptographicException or ArgumentException)
         {

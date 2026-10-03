@@ -92,14 +92,24 @@ public sealed class ArcaElectronicInvoiceGateway(
                     new XElement("expirationTime", now.AddMinutes(10).ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture))),
                 new XElement("service", "wsfe")));
 
-        using var certificate = options.LoadCertificate();
+        using var certificate = LoadSigningCertificate();
         var content = new ContentInfo(Encoding.UTF8.GetBytes(loginTicketRequest.ToString(SaveOptions.DisableFormatting)));
         var signedCms = new SignedCms(content, detached: false);
         var signer = new CmsSigner(SubjectIdentifierType.IssuerAndSerialNumber, certificate)
         {
             IncludeOption = X509IncludeOption.EndCertOnly
         };
-        signedCms.ComputeSignature(signer, silent: true);
+        try
+        {
+            signedCms.ComputeSignature(signer, silent: true);
+        }
+        catch (CryptographicException)
+        {
+            throw new ArcaGatewayException(
+                "arca_certificate_signing_failed",
+                "El certificado se cargo, pero el servidor no pudo firmar la solicitud para ARCA.",
+                false);
+        }
         var cms = Convert.ToBase64String(signedCms.Encode());
 
         XNamespace soap = "http://schemas.xmlsoap.org/soap/envelope/";
@@ -133,6 +143,21 @@ public sealed class ArcaElectronicInvoiceGateway(
             throw new ArcaGatewayException("arca_wsaa_invalid_response", "WSAA no devolvio un ticket de acceso completo.", false);
 
         return new ArcaAccessTicket(token, sign, expiresAt);
+    }
+
+    private X509Certificate2 LoadSigningCertificate()
+    {
+        try
+        {
+            return options.LoadCertificate();
+        }
+        catch (Exception exception) when (exception is FormatException or CryptographicException or ArgumentException)
+        {
+            throw new ArcaGatewayException(
+                "arca_certificate_load_failed",
+                "No se pudo cargar el certificado de homologacion o su clave privada.",
+                false);
+        }
     }
 
     private async Task<IReadOnlyList<int>> GetPointsOfSaleAsync(ArcaAccessTicket ticket, CancellationToken cancellationToken)

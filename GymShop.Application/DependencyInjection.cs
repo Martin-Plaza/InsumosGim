@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddScoped<IGetDashboardStatisticsUseCase, GetDashboardStatisticsUseCase>();
         services.AddScoped<ICreateOrderReceiptUseCase, CreateOrderReceiptUseCase>();
         services.AddScoped<IGetOrderBillingDocumentsUseCase, GetOrderBillingDocumentsUseCase>();
+        services.AddScoped<IGetBillingDocumentPdfUseCase, GetBillingDocumentPdfUseCase>();
 
         services.AddScoped<IGetProductsUseCase, GetProductsUseCase>();
         services.AddScoped<IAttributeAdminService, AttributeAdminService>();

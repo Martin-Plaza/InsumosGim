@@ -121,6 +121,27 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal(AppErrorType.NotFound, result.Error!.Type);
     }
 
+    [Fact]
+    public async Task GetPdf_returns_only_an_authorized_receipt_belonging_to_the_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var created = await CreateUseCase(db).ExecuteAsync(order.Id, "receipt-pdf-order");
+        var renderer = new TestReceiptPdfRenderer();
+        var useCase = new GetBillingDocumentPdfUseCase(db, renderer);
+
+        var result = await useCase.ExecuteAsync(order.Id, created.Value!.Id);
+        var wrongOrder = await useCase.ExecuteAsync(order.Id + 1, created.Value.Id);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("application/pdf", result.Value!.ContentType);
+        Assert.Equal([1, 2, 3], result.Value.Content);
+        Assert.Contains($"pedido-{order.Id}-comprobante-", result.Value.FileName);
+        Assert.Equal(1, renderer.Calls);
+        Assert.False(wrongOrder.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, wrongOrder.Error!.Type);
+    }
+
     private static CreateOrderReceiptUseCase CreateUseCase(
         GymShop.Infrastructure.Data.GymShopDbContext db,
         IBillingProfile? profile = null) =>
@@ -171,5 +192,15 @@ public sealed class BillingDocumentUseCaseTests
         public int? PointOfSale { get; init; }
         public bool ArcaEnabled { get; init; }
         public bool ElectronicInvoicingReady => false;
+    }
+
+    private sealed class TestReceiptPdfRenderer : IReceiptPdfRenderer
+    {
+        public int Calls { get; private set; }
+        public byte[] Render(BillingDocument document)
+        {
+            Calls++;
+            return [1, 2, 3];
+        }
     }
 }

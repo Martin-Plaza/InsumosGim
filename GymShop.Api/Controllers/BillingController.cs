@@ -12,7 +12,8 @@ namespace GymShop.Api.Controllers;
 public sealed class BillingController(
     IBillingProfile profile,
     ICreateOrderReceiptUseCase createOrderReceipt,
-    IGetOrderBillingDocumentsUseCase getOrderBillingDocuments) : ApiControllerBase
+    IGetOrderBillingDocumentsUseCase getOrderBillingDocuments,
+    IGetBillingDocumentPdfUseCase getBillingDocumentPdf) : ApiControllerBase
 {
     [HttpGet("profile")]
     [ProducesResponseType(typeof(BillingProfileResponse), StatusCodes.Status200OK)]
@@ -45,6 +46,18 @@ public sealed class BillingController(
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken) =>
         FromResult(await createOrderReceipt.ExecuteAsync(orderId, idempotencyKey, cancellationToken));
+
+    [HttpGet("orders/{orderId:int}/documents/{documentId:guid}/pdf")]
+    [Produces("application/pdf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> GetDocumentPdf(int orderId, Guid documentId, CancellationToken cancellationToken)
+    {
+        var result = await getBillingDocumentPdf.ExecuteAsync(orderId, documentId, cancellationToken);
+        if (!result.IsSuccess) return ToErrorResponse(result.Error!);
+        return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName, enableRangeProcessing: true);
+    }
 }
 
 public sealed record BillingProfileResponse(

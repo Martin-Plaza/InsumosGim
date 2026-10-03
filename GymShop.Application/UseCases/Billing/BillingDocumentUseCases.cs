@@ -22,6 +22,11 @@ public interface IGetBillingDocumentPdfUseCase
     Task<AppResult<BillingDocumentPdfResponse>> ExecuteAsync(int orderId, Guid documentId, CancellationToken cancellationToken = default);
 }
 
+public interface IGetArcaConnectionStatusUseCase
+{
+    Task<AppResult<ArcaConnectionStatus>> ExecuteAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed class CreateOrderReceiptUseCase(
     IApplicationDbContext db,
     IBillingProfile billingProfile,
@@ -197,6 +202,12 @@ public sealed class GetBillingDocumentPdfUseCase(
             content,
             $"pedido-{orderId}-comprobante-{document.Id:N}.pdf"));
     }
+}
+
+public sealed class GetArcaConnectionStatusUseCase(IArcaElectronicInvoiceGateway gateway) : IGetArcaConnectionStatusUseCase
+{
+    public async Task<AppResult<ArcaConnectionStatus>> ExecuteAsync(CancellationToken cancellationToken = default) =>
+        AppResult<ArcaConnectionStatus>.Success(await gateway.CheckConnectionAsync(cancellationToken));
 }
 
 internal static class BillingDocumentMapper

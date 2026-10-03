@@ -29,6 +29,14 @@ public static class DependencyInjection
             throw new InvalidOperationException(string.Join(' ', billingFailures));
         services.AddSingleton<IBillingProfile>(billingOptions);
         services.AddSingleton<IReceiptPdfRenderer, InternalReceiptPdfRenderer>();
+        var arcaOptions = configuration.GetSection(ArcaOptions.SectionName).Get<ArcaOptions>() ?? new ArcaOptions();
+        var arcaFailures = arcaOptions.Validate(billingOptions.ArcaEnabled);
+        if (arcaFailures.Count > 0)
+            throw new InvalidOperationException(string.Join(' ', arcaFailures));
+        services.AddSingleton(arcaOptions);
+        services.AddSingleton<ArcaAccessTicketCache>();
+        services.AddHttpClient<IArcaElectronicInvoiceGateway, ArcaElectronicInvoiceGateway>(client =>
+            client.Timeout = TimeSpan.FromSeconds(arcaOptions.TimeoutSeconds));
 
         var shippingOptions = configuration.GetSection(ShippingOptions.SectionName).Get<ShippingOptions>() ?? new ShippingOptions();
         if (shippingOptions.HomeDeliveryCost < 0)

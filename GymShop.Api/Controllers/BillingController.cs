@@ -13,7 +13,8 @@ public sealed class BillingController(
     IBillingProfile profile,
     ICreateOrderReceiptUseCase createOrderReceipt,
     IGetOrderBillingDocumentsUseCase getOrderBillingDocuments,
-    IGetBillingDocumentPdfUseCase getBillingDocumentPdf) : ApiControllerBase
+    IGetBillingDocumentPdfUseCase getBillingDocumentPdf,
+    IGetArcaConnectionStatusUseCase getArcaConnectionStatus) : ApiControllerBase
 {
     [HttpGet("profile")]
     [ProducesResponseType(typeof(BillingProfileResponse), StatusCodes.Status200OK)]
@@ -58,6 +59,12 @@ public sealed class BillingController(
         if (!result.IsSuccess) return ToErrorResponse(result.Error!);
         return File(result.Value!.Content, result.Value.ContentType, result.Value.FileName, enableRangeProcessing: true);
     }
+
+    [HttpGet("arca/status")]
+    [Authorize(Roles = "SuperAdmin")]
+    [ProducesResponseType(typeof(ArcaConnectionStatus), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ArcaConnectionStatus>> GetArcaStatus(CancellationToken cancellationToken) =>
+        FromResult(await getArcaConnectionStatus.ExecuteAsync(cancellationToken));
 }
 
 public sealed record BillingProfileResponse(

@@ -7,6 +7,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.FileProviders;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 
 namespace GymShop.Tests.Api;
 
@@ -45,6 +48,7 @@ public class DependencyInjectionTests
     [Fact]
     public void Fiscal_profile_is_bound_from_configuration()
     {
+        var (certificate, privateKey) = CreateArcaSecrets();
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -57,7 +61,10 @@ public class DependencyInjectionTests
                 ["Billing:GrossIncomeNumber"] = "Exento",
                 ["Billing:ActivityStartDate"] = "2020-01-01",
                 ["Billing:PointOfSale"] = "1",
-                ["Billing:ArcaEnabled"] = "true"
+                ["Billing:ArcaEnabled"] = "true",
+                ["Arca:Environment"] = "Homologation",
+                ["Arca:CertificatePemBase64"] = certificate,
+                ["Arca:PrivateKeyPemBase64"] = privateKey
             })
             .Build();
         var services = new ServiceCollection();
@@ -71,6 +78,16 @@ public class DependencyInjectionTests
         Assert.Equal(GymShop.Domain.Enums.BillingMode.ElectronicInvoice, profile.Mode);
         Assert.Equal(GymShop.Domain.Enums.SellerTaxCondition.Monotributo, profile.TaxCondition);
         Assert.True(profile.ElectronicInvoicingReady);
+    }
+
+    private static (string Certificate, string PrivateKey) CreateArcaSecrets()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest("CN=GymShop ARCA Test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
+        return (
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(certificate.ExportCertificatePem())),
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(rsa.ExportPkcs8PrivateKeyPem())));
     }
 
     [Fact]

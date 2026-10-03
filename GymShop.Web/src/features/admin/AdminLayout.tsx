@@ -27,6 +27,7 @@ export function AdminLayout({ user, onLogout }: { user: User; onLogout(): void }
       <nav aria-label="Navegación administrativa">
         {links.map(link => <NavLink key={link.to} end={link.end} to={link.to} onClick={close}>{link.label}</NavLink>)}
         {isSuperAdmin(user) && <NavLink to="/admin/usuarios" onClick={close}>Usuarios</NavLink>}
+        {isSuperAdmin(user) && <NavLink to="/admin/facturacion" onClick={close}>Facturación</NavLink>}
         {isSuperAdmin(user) && <NavLink to="/admin/auditoria" onClick={close}>Auditoría</NavLink>}
       </nav>
       <div className="admin-account">

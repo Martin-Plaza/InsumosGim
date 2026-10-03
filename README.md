@@ -1589,7 +1589,33 @@ Billing__ArcaEnabled=false
 
 Los valores admitidos para `Billing__TaxCondition` son `None`, `Monotributo`, `RegisteredTaxpayer` y `Exempt`. Cuando el comercio tenga alta fiscal, certificado y punto de venta para Web Services, puede habilitarse la base de facturación electrónica con `Billing__Mode=ElectronicInvoice` y `Billing__ArcaEnabled=true`.
 
-En modo electrónico son obligatorios la razón social, un CUIT válido, la condición fiscal, el domicilio fiscal, Ingresos Brutos, la fecha de inicio de actividades y un punto de venta entre 1 y 99999. Una configuración incompleta impide que la API inicie para evitar operar con datos fiscales incorrectos. El endpoint protegido `GET /api/admin/billing/profile` permite a administradores verificar la configuración efectiva y si está completa. Esta etapa todavía no emite facturas ni se comunica con ARCA.
+En modo electrónico son obligatorios la razón social, un CUIT válido, la condición fiscal, el domicilio fiscal, Ingresos Brutos, la fecha de inicio de actividades y un punto de venta entre 1 y 99999. Una configuración incompleta impide que la API inicie para evitar operar con datos fiscales incorrectos. El endpoint protegido `GET /api/admin/billing/profile` permite a administradores verificar la configuración efectiva y si está completa.
+
+La primera etapa del conector ARCA trabaja exclusivamente contra homologación. Producción está bloqueada de forma intencional. El certificado y la clave privada se guardan como PEM codificado en Base64 para evitar problemas con saltos de línea en Railway:
+
+```text
+Arca__Environment=Homologation
+Arca__CertificatePemBase64=        # certificado PEM entregado por WSASS, codificado en Base64
+Arca__PrivateKeyPemBase64=         # clave privada PKCS#8 PEM, codificada en Base64
+Arca__TimeoutSeconds=20
+```
+
+Cuando `Billing__ArcaEnabled=true`, ambos secretos son obligatorios y deben corresponder entre sí. La aplicación firma el TRA localmente, obtiene y reutiliza el ticket WSAA hasta dos minutos antes de su vencimiento, verifica `FEDummy` y consulta los puntos de venta habilitados mediante WSFEv1. Los secretos, el token y la firma nunca se devuelven ni se registran.
+
+`GET /api/admin/billing/arca/status` ejecuta el diagnóstico completo y devuelve únicamente ambiente, disponibilidad, autenticación, puntos de venta y un error técnico acotado. El endpoint exige rol `Admin` o `SuperAdmin` y no emite comprobantes.
+
+Para generar la clave privada de 2048 bits y el CSR PKCS#10 con el DN requerido por WSASS puede usarse:
+
+```powershell
+.\scripts\New-ArcaHomologationCsr.ps1 `
+  -Cuit 20123456789 `
+  -Organization "GymShop pruebas" `
+  -OutputDirectory "C:\ruta-segura\arca"
+```
+
+Solo el archivo `.csr` se carga en WSASS. La clave privada debe conservarse fuera del repositorio. Después de descargar el certificado PEM de WSASS, ambos PEM se convierten por separado a Base64 y se cargan como variables secretas en Railway. El certificado debe autorizarse para el servicio `wsfe` y para el CUIT representado dentro de WSASS.
+
+Esta etapa valida autenticación y conectividad, pero todavía no solicita CAE ni emite facturas de prueba. La emisión se incorpora sobre esta conexión después de validar el punto de venta y la condición fiscal disponibles en homologación.
 
 Los comprobantes se persisten en `BillingDocuments` y sus renglones en `BillingDocumentItems`. Cada registro conserva snapshots del emisor, receptor, importes y productos: cambiar después el perfil fiscal, el usuario o la orden no modifica el documento histórico. El modelo admite comprobante interno, facturas A/B/C y notas de crédito A/B/C con los estados `Draft`, `PendingAuthorization`, `Authorized` y `Rejected`.
 

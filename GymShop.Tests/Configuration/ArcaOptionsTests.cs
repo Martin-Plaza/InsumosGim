@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.Pkcs;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using GymShop.Infrastructure.Configuration;
 
 namespace GymShop.Tests.Configuration;
@@ -30,5 +34,26 @@ public sealed class ArcaOptionsTests
         };
 
         Assert.Contains(options.Validate(enabled: true), value => value.Contains("Production is intentionally blocked", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Load_certificate_returns_an_ephemeral_certificate_that_can_sign_cms()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest("CN=GymShop ARCA Homologation", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var source = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+        var options = new ArcaOptions
+        {
+            CertificatePemBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(source.ExportCertificatePem())),
+            PrivateKeyPemBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(rsa.ExportPkcs8PrivateKeyPem()))
+        };
+
+        using var certificate = options.LoadCertificate();
+        var signedCms = new SignedCms(new ContentInfo("probe"u8.ToArray()));
+
+        signedCms.ComputeSignature(new CmsSigner(certificate), silent: true);
+
+        Assert.True(certificate.HasPrivateKey);
+        Assert.NotEmpty(signedCms.Encode());
     }
 }

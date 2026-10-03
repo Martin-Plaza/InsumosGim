@@ -60,7 +60,16 @@ public sealed class ArcaOptions
     {
         var certificatePem = DecodePem(CertificatePemBase64);
         var privateKeyPem = DecodePem(PrivateKeyPemBase64);
-        return X509Certificate2.CreateFromPem(certificatePem, privateKeyPem);
+        using var pemCertificate = X509Certificate2.CreateFromPem(certificatePem, privateKeyPem);
+
+        // Re-import the pair as PKCS#12 so the private key is backed by the
+        // platform certificate implementation. SignedCms cannot reliably use
+        // the transient PEM key directly in Linux containers.
+        var pkcs12 = pemCertificate.Export(X509ContentType.Pkcs12, string.Empty);
+        return X509CertificateLoader.LoadPkcs12(
+            pkcs12,
+            string.Empty,
+            X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
     }
 
     private static string DecodePem(string value) =>

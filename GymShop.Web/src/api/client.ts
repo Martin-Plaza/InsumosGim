@@ -62,4 +62,18 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return response.json() as Promise<T>
 }
 
+export async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers)
+  headers.set('Accept', 'application/pdf')
+  const token = session.token()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`${API_URL}${path}`, { ...init, headers })
+  if (!response.ok) {
+    const error = await normalizeError(response)
+    if (response.status === 401) session.clear()
+    throw error
+  }
+  return response.blob()
+}
+
 export const json = (method: string, body?: unknown): RequestInit => ({ method, body: body === undefined ? undefined : JSON.stringify(body) })

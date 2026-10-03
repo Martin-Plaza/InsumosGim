@@ -28,3 +28,8 @@ public sealed record BillingDocumentResponse(
     DateTime CreatedAtUtc,
     DateTime? AuthorizedAtUtc,
     IReadOnlyList<BillingDocumentItemResponse> Items);
+
+public sealed record BillingDocumentPdfResponse(
+    byte[] Content,
+    string FileName,
+    string ContentType = "application/pdf");

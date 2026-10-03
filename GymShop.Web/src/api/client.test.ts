@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, request } from './client'
+import { ApiError, request, requestBlob } from './client'
 import { api } from './gymshop'
 import { session } from '../auth/session'
 
@@ -77,5 +77,18 @@ describe('cliente HTTP y contrato GymShop', () => {
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('/api/payments/current')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ provider: 'BankTransfer', idempotencyKey: 'stable-key' })
     expect(payment).toMatchObject({ status: 'Creating', checkoutUrl: null })
+  })
+
+  it('descarga PDFs autenticados sin intentar interpretarlos como JSON', async () => {
+    session.save('token-pdf', { id: 1, email: 'admin@gym.com', name: 'Admin', role: 'Admin' })
+    const expected = new Blob(['%PDF-1.4'], { type: 'application/pdf' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(expected, { headers: { 'Content-Type': 'application/pdf' } }))
+
+    const result = await requestBlob('/api/admin/billing/orders/42/documents/id/pdf')
+
+    expect(result.type).toBe('application/pdf')
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
+    expect(headers.get('Accept')).toBe('application/pdf')
+    expect(headers.get('Authorization')).toBe('Bearer token-pdf')
   })
 })

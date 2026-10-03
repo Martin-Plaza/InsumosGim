@@ -28,6 +28,7 @@ public static class DependencyInjection
         if (billingFailures.Count > 0)
             throw new InvalidOperationException(string.Join(' ', billingFailures));
         services.AddSingleton<IBillingProfile>(billingOptions);
+        services.AddSingleton<IReceiptPdfRenderer, InternalReceiptPdfRenderer>();
 
         var shippingOptions = configuration.GetSection(ShippingOptions.SectionName).Get<ShippingOptions>() ?? new ShippingOptions();
         if (shippingOptions.HomeDeliveryCost < 0)

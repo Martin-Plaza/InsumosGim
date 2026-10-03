@@ -17,6 +17,11 @@ public interface IGetOrderBillingDocumentsUseCase
     Task<AppResult<List<BillingDocumentResponse>>> ExecuteAsync(int orderId, CancellationToken cancellationToken = default);
 }
 
+public interface IGetBillingDocumentPdfUseCase
+{
+    Task<AppResult<BillingDocumentPdfResponse>> ExecuteAsync(int orderId, Guid documentId, CancellationToken cancellationToken = default);
+}
+
 public sealed class CreateOrderReceiptUseCase(
     IApplicationDbContext db,
     IBillingProfile billingProfile,
@@ -163,6 +168,34 @@ public sealed class GetOrderBillingDocumentsUseCase(IApplicationDbContext db) : 
             .ToListAsync(cancellationToken);
 
         return AppResult<List<BillingDocumentResponse>>.Success(documents.Select(BillingDocumentMapper.ToResponse).ToList());
+    }
+}
+
+public sealed class GetBillingDocumentPdfUseCase(
+    IApplicationDbContext db,
+    IReceiptPdfRenderer renderer) : IGetBillingDocumentPdfUseCase
+{
+    public async Task<AppResult<BillingDocumentPdfResponse>> ExecuteAsync(
+        int orderId,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await db.BillingDocuments
+            .AsNoTracking()
+            .Include(x => x.Items)
+            .SingleOrDefaultAsync(x => x.Id == documentId && x.OrderId == orderId, cancellationToken);
+
+        if (document is null)
+            return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.NotFound, "Comprobante no encontrado.");
+        if (document.Category != BillingDocumentCategory.Receipt || document.Type != BillingDocumentType.PurchaseReceipt)
+            return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El documento solicitado no es un comprobante interno descargable.");
+        if (document.Status != BillingDocumentStatus.Authorized)
+            return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El comprobante todavia no esta autorizado.");
+
+        var content = renderer.Render(document);
+        return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
+            content,
+            $"pedido-{orderId}-comprobante-{document.Id:N}.pdf"));
     }
 }
 

@@ -211,6 +211,8 @@ describe('panel administrativo', () => {
 
     expect(await screen.findByText('Comprobante interno', { selector: 'strong' })).toBeInTheDocument()
     expect(screen.getByText(/no reemplaza una factura fiscal/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ver PDF' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Descargar PDF' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Generar comprobante' })).not.toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/admin/billing/orders/10/receipts'),

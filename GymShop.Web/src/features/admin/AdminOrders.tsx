@@ -8,7 +8,7 @@ import { AdminEmpty, AdminFeedback, AdminLoading } from './adminUi'
 import { orderStatusLabel } from '../orders/orderPresentation'
 
 const initialPage: OrderPage = { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 }
-const statusLabels: Record<string, string> = { Pending: 'Pendiente', Paid: 'Pagado', Preparing: 'Preparando', Shipped: 'Enviado', Delivered: 'Entregado', Canceled: 'Cancelado', Refunded: 'Reembolsado', Creating: 'Creando pago', Approved: 'Aprobado', Rejected: 'Rechazado', Expired: 'Vencido' }
+const statusLabels: Record<string, string> = { Pending: 'Pendiente', Paid: 'Pagado', Preparing: 'Preparando', Shipped: 'Enviado', Delivered: 'Entregado', Canceled: 'Cancelado', Refunded: 'Reembolsado', Creating: 'Creando pago', Approved: 'Aprobado', Authorized: 'Generado', Rejected: 'Rechazado', Expired: 'Vencido' }
 const nextStatuses: Partial<Record<OrderStatus, OrderStatus[]>> = { Paid: ['Preparing'], Preparing: ['Shipped'], Shipped: ['Delivered'] }
 const transitionGuidance: Record<OrderStatus, string> = {
   Pending: 'Podés cancelarlo indicando un motivo. Si existe un pago tardío, quedará señalado para revisión.',
@@ -76,6 +76,7 @@ export function AdminOrders() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
   const [billingDocuments, setBillingDocuments] = useState<BillingDocument[]>([])
+  const [pdfAction, setPdfAction] = useState<string | null>(null)
   const [tracking, setTracking] = useState({ carrier: '', trackingNumber: '', trackingUrl: '' })
   const [transferReference, setTransferReference] = useState('')
   const [cancellationReason, setCancellationReason] = useState('')
@@ -160,6 +161,30 @@ export function AdminOrders() {
       await loadHistory(detail.id)
     } catch (value) { setError(describeAdminError(value)) } finally { setPending(false) }
   }
+  const getReceiptPdf = async (document: BillingDocument, download: boolean) => {
+    if (!detail || pdfAction) return
+    const action = `${document.id}:${download ? 'download' : 'view'}`
+    const popup = download ? null : window.open('about:blank', '_blank')
+    if (!download && !popup) { setError('El navegador bloqueó la nueva pestaña. Habilitá ventanas emergentes o descargá el PDF.'); return }
+    if (popup) popup.opener = null
+    setPdfAction(action); setError('')
+    try {
+      const blob = await api.billingDocumentPdf(detail.id, document.id)
+      const url = URL.createObjectURL(blob)
+      if (download) {
+        const link = window.document.createElement('a')
+        link.href = url
+        link.download = `pedido-${detail.id}-comprobante.pdf`
+        window.document.body.appendChild(link); link.click(); link.remove()
+      } else if (popup) {
+        popup.location.href = url
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (value) {
+      popup?.close()
+      setError(describeAdminError(value))
+    } finally { setPdfAction(null) }
+  }
   const transitions = detail ? nextStatuses[detail.status] || [] : []
   const canCancelFreeOrder = Boolean(detail && detail.total === 0 &&
     (detail.status === 'Paid' || detail.status === 'Preparing') &&
@@ -188,7 +213,7 @@ export function AdminOrders() {
       <section><h3>Entrega</h3><p><strong>{detail.deliveryMethod === 'StorePickup' ? 'Retiro en tienda' : 'Envío a domicilio'}</strong><br />Costo: {detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</p>{detail.shippingAddress && <p>{detail.shippingAddress}</p>}{(detail.status === 'Preparing' || detail.status === 'Shipped') && detail.deliveryMethod !== 'StorePickup' && <div className="tracking-form"><label>Empresa transportista<input value={tracking.carrier} maxLength={100} onChange={event => setTracking(current => ({ ...current, carrier: event.target.value }))} /></label><label>Número de seguimiento<input value={tracking.trackingNumber} maxLength={100} onChange={event => setTracking(current => ({ ...current, trackingNumber: event.target.value }))} /></label><label>URL de seguimiento (HTTPS)<input type="url" value={tracking.trackingUrl} maxLength={500} placeholder="https://…" onChange={event => setTracking(current => ({ ...current, trackingUrl: event.target.value }))} /></label>{detail.status === 'Shipped' && <button type="button" disabled={pending} onClick={() => void changeStatus('Shipped')}>Corregir seguimiento</button>}</div>}{detail.trackingUrl && <a href={detail.trackingUrl} target="_blank" rel="noopener noreferrer">Abrir seguimiento</a>}</section>
       <section><h3>Productos</h3>{detail.items.map(item => <div className="list-row" key={item.productId}><span>{item.quantity} × {item.productName}<small>{money(item.unitPrice)} c/u</small></span><strong>{money(item.subtotal)}</strong></div>)}{Boolean(detail.discountAmount) && <div className="list-row"><span>Descuento</span><strong>−{money(detail.discountAmount || 0)}</strong></div>}<div className="list-row"><span>Envío</span><strong>{detail.shippingCost ? money(detail.shippingCost) : 'Sin costo'}</strong></div><div className="list-row"><strong>Total</strong><strong>{money(detail.total)}</strong></div></section>
       <section><h3>Pago</h3>{detail.payments.some(payment => payment.requiresReview) && <div className="error payment-incident" role="alert"><strong>Pago aprobado después de cancelar</strong><span>Mercado Pago informó una acreditación para este pedido cancelado. Requiere revisión y devolución.</span></div>}{detail.payments.length === 0 ? <p>Sin pagos registrados.</p> : detail.payments.map(payment => <div className="payment" key={payment.id}><span>#{payment.id} · {payment.provider}<small>{money(payment.amount)} {payment.currency}</small></span><Status value={payment.status} /><small>Creado: {formatDate(payment.createdAt)}{payment.paidAt ? ` · Pagado: ${formatDate(payment.paidAt)}` : ''}</small>{payment.provider === 'BankTransfer' && payment.status === 'Pending' && <div className="transfer-confirmation"><label>Referencia o motivo de acreditación<input value={transferReference} maxLength={500} onChange={event => setTransferReference(event.target.value)} placeholder="Movimiento bancario, fecha o motivo" /></label><button className="primary" type="button" disabled={pending || !transferReference.trim()} onClick={() => void confirmTransfer(payment.id)}>{pending ? 'Confirmando…' : 'Confirmar acreditación verificada'}</button><small>Confirmá únicamente después de comprobar que el dinero fue acreditado.</small></div>}</div>)}</section>
-      <section><h3>Comprobantes</h3>{billingDocuments.length === 0 ? <p>Todavía no se generó ningún comprobante.</p> : billingDocuments.map(document => <article className="payment" key={document.id}><span><strong>Comprobante interno</strong><small>{formatDate(document.authorizedAtUtc || document.createdAtUtc)}</small></span><Status value={document.status} /><p>A nombre de {document.recipientName} · {money(document.total)} {document.currency}</p><small>Identificador: {document.id}</small></article>)}{canGenerateReceipt && <button className="primary" type="button" disabled={pending} onClick={() => void createReceipt()}>{pending ? 'Generando…' : 'Generar comprobante'}</button>}{(canGenerateReceipt || billingDocuments.some(document => document.category === 'Receipt')) && <p className="admin-footnote">Es una constancia interna de compra; no reemplaza una factura fiscal de ARCA.</p>}</section>
+      <section><h3>Comprobantes</h3>{billingDocuments.length === 0 ? <p>Todavía no se generó ningún comprobante.</p> : billingDocuments.map(document => <article className="payment" key={document.id}><span><strong>Comprobante interno</strong><small>{formatDate(document.authorizedAtUtc || document.createdAtUtc)}</small></span><Status value={document.status} /><p>A nombre de {document.recipientName} · {money(document.total)} {document.currency}</p><small>Identificador: {document.id}</small><div className="actions receipt-actions"><button type="button" disabled={Boolean(pdfAction)} onClick={() => void getReceiptPdf(document, false)}>{pdfAction === `${document.id}:view` ? 'Abriendo…' : 'Ver PDF'}</button><button type="button" disabled={Boolean(pdfAction)} onClick={() => void getReceiptPdf(document, true)}>{pdfAction === `${document.id}:download` ? 'Descargando…' : 'Descargar PDF'}</button></div></article>)}{canGenerateReceipt && <button className="primary" type="button" disabled={pending} onClick={() => void createReceipt()}>{pending ? 'Generando…' : 'Generar comprobante'}</button>}{(canGenerateReceipt || billingDocuments.some(document => document.category === 'Receipt')) && <p className="admin-footnote">Es una constancia interna de compra; no reemplaza una factura fiscal de ARCA.</p>}</section>
       <section><h3>Fechas</h3><p>Creado: {formatDate(detail.createdAt)}<br />Última actualización: {detail.updatedAt ? formatDate(detail.updatedAt) : 'Sin cambios posteriores'}</p>{detail.cancellationReason && <p>Motivo: {detail.cancellationReason}</p>}</section>
       <section className="order-history" aria-labelledby="order-history-title"><h3 id="order-history-title">Historial</h3>
         {historyLoading ? <AdminLoading label="Cargando historial…" /> : historyError ? <div className="history-error"><p role="alert">{historyError}</p><button type="button" onClick={() => void loadHistory(detail.id)}>Reintentar historial</button></div> : history.length === 0 ? <p className="admin-footnote">Todavía no hay eventos relevantes.</p> : <ol className="order-timeline">{history.map(event => <li key={event.id} className={`history-${event.source.toLowerCase()}`}><div className="timeline-marker" aria-hidden="true" /><article><div className="timeline-heading"><strong>{actionLabels[event.action] || event.action}</strong><span>{sourceLabels[event.source]}</span></div><time dateTime={event.createdAtUtc}>{formatDate(event.createdAtUtc)}</time>{(event.previousStatus || event.newStatus) && <p>{event.previousStatus ? orderStatusLabel(event.previousStatus, detail.deliveryMethod) : '—'} <span aria-hidden="true">→</span><span className="sr-only"> a </span> {event.newStatus ? orderStatusLabel(event.newStatus, detail.deliveryMethod) : '—'}</p>}{event.reason && <p className="timeline-reason">{event.reason}</p>}<small>{event.actorName ? `${event.actorName}${event.actorEmail ? ` · ${event.actorEmail}` : ''}` : event.source === 'Provider' ? 'Proveedor de pagos' : 'Sistema'}</small></article></li>)}</ol>}

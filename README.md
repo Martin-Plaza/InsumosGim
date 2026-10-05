@@ -1597,12 +1597,13 @@ La primera etapa del conector ARCA trabaja exclusivamente contra homologación. 
 Arca__Environment=Homologation
 Arca__CertificatePemBase64=        # certificado PEM entregado por WSASS, codificado en Base64
 Arca__PrivateKeyPemBase64=         # clave privada PKCS#8 PEM, codificada en Base64
+Arca__HomologationPointOfSale=1    # numeración aislada usada solo en homologación
 Arca__TimeoutSeconds=20
 ```
 
 Cuando `Billing__ArcaEnabled=true`, ambos secretos son obligatorios y deben corresponder entre sí. La aplicación firma el TRA localmente, obtiene y reutiliza el ticket WSAA hasta dos minutos antes de su vencimiento, verifica `FEDummy` y consulta los puntos de venta habilitados mediante WSFEv1. Los secretos, el token y la firma nunca se devuelven ni se registran.
 
-`GET /api/admin/billing/arca/status` ejecuta el diagnóstico completo y devuelve únicamente ambiente, disponibilidad, autenticación, puntos de venta y un error técnico acotado. El endpoint exige rol `Admin` o `SuperAdmin` y no emite comprobantes.
+`GET /api/admin/billing/arca/status` ejecuta el diagnóstico completo y devuelve únicamente ambiente, disponibilidad, autenticación, puntos de venta y un error técnico acotado. El endpoint exige rol `SuperAdmin` y no emite comprobantes. En cuentas de homologación nuevas, WSFE puede responder el código 602 al consultar puntos de venta; la aplicación lo interpreta como una autenticación válida sin puntos informados, no como un fallo del certificado.
 
 Para generar la clave privada de 2048 bits y el CSR PKCS#10 con el DN requerido por WSASS puede usarse:
 
@@ -1615,11 +1616,13 @@ Para generar la clave privada de 2048 bits y el CSR PKCS#10 con el DN requerido 
 
 Solo el archivo `.csr` se carga en WSASS. La clave privada debe conservarse fuera del repositorio. Después de descargar el certificado PEM de WSASS, ambos PEM se convierten por separado a Base64 y se cargan como variables secretas en Railway. El certificado debe autorizarse para el servicio `wsfe` y para el CUIT representado dentro de WSASS.
 
-Esta etapa valida autenticación y conectividad, pero todavía no solicita CAE ni emite facturas de prueba. La emisión se incorpora sobre esta conexión después de validar el punto de venta y la condición fiscal disponibles en homologación.
+La pantalla administrativa permite emitir manualmente una Factura C de prueba para un pedido pagado mediante `POST /api/admin/billing/arca/homologation/orders/{orderId}/invoice`. El endpoint es exclusivo de `SuperAdmin`, exige `Idempotency-Key`, consulta la última numeración autorizada y solicita el CAE en homologación. No activa facturación productiva ni requiere cambiar `Billing__Mode=ReceiptOnly` o `Billing__ArcaEnabled=false`.
+
+La emisión guarda primero el documento como `PendingAuthorization`. Si ARCA no responde, un reintento conserva la misma numeración; si autoriza, persiste CAE y vencimiento, y si rechaza, conserva el código y mensaje acotado. Solo se permite una factura por orden y el botón solicita confirmación explícita porque, aunque sea homologación, genera un comprobante dentro del entorno de pruebas de ARCA.
 
 Los comprobantes se persisten en `BillingDocuments` y sus renglones en `BillingDocumentItems`. Cada registro conserva snapshots del emisor, receptor, importes y productos: cambiar después el perfil fiscal, el usuario o la orden no modifica el documento histórico. El modelo admite comprobante interno, facturas A/B/C y notas de crédito A/B/C con los estados `Draft`, `PendingAuthorization`, `Authorized` y `Rejected`.
 
-La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. Las notas de crédito pueden relacionarse con el documento original. Los campos de CAE, vencimiento, proveedor y rechazo ya están reservados, pero todavía no existe un caso de uso que emita documentos ni una llamada a ARCA.
+La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. Las notas de crédito pueden relacionarse con el documento original. La etapa actual usa esos campos para la Factura C de homologación; la habilitación productiva y las notas de crédito siguen fuera de alcance.
 
 La configuración incluye el origen y la vigencia de las cotizaciones:
 

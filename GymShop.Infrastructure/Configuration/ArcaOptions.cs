@@ -12,6 +12,7 @@ public sealed class ArcaOptions
     public string Environment { get; set; } = HomologationEnvironment;
     public string CertificatePemBase64 { get; set; } = string.Empty;
     public string PrivateKeyPemBase64 { get; set; } = string.Empty;
+    public int HomologationPointOfSale { get; set; } = 1;
     public int TimeoutSeconds { get; set; } = 20;
 
     public Uri WsaaAddress => new("https://wsaahomo.afip.gov.ar/ws/services/LoginCms");
@@ -27,6 +28,8 @@ public sealed class ArcaOptions
         var failures = new List<string>();
         if (TimeoutSeconds is < 1 or > 120)
             failures.Add("Arca:TimeoutSeconds must be between 1 and 120.");
+        if (enabled && HomologationPointOfSale is (< 1 or > 99999))
+            failures.Add("Arca:HomologationPointOfSale must be between 1 and 99999.");
 
         if (!enabled) return failures;
 

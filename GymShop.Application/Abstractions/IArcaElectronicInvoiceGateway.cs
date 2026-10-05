@@ -3,6 +3,10 @@ namespace GymShop.Application.Abstractions;
 public interface IArcaElectronicInvoiceGateway
 {
     Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default);
+    Task<ArcaInvoiceSequence> GetNextHomologationInvoiceSequenceAsync(CancellationToken cancellationToken = default);
+    Task<ArcaInvoiceAuthorization> AuthorizeHomologationInvoiceAsync(
+        ArcaInvoiceAuthorizationRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ArcaConnectionStatus(
@@ -14,3 +18,22 @@ public sealed record ArcaConnectionStatus(
     string? ErrorCode,
     string? Message,
     DateTime CheckedAtUtc);
+
+public sealed record ArcaInvoiceSequence(int PointOfSale, int InvoiceType, long DocumentNumber);
+
+public sealed record ArcaInvoiceAuthorizationRequest(
+    int PointOfSale,
+    int InvoiceType,
+    long DocumentNumber,
+    DateOnly IssuedOn,
+    decimal Total);
+
+public sealed record ArcaInvoiceAuthorization(
+    bool Authorized,
+    int PointOfSale,
+    int InvoiceType,
+    long DocumentNumber,
+    string? Cae,
+    DateOnly? CaeExpiresOn,
+    string? RejectionCode,
+    string? RejectionReason);

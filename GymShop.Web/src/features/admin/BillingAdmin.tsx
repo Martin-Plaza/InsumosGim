@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/gymshop'
-import type { ArcaConnectionStatus, BillingProfile } from '../../api/types'
+import type { ArcaConnectionStatus, BillingDocument, BillingProfile } from '../../api/types'
 import { describeAdminError } from './adminErrors'
 import { AdminFeedback, AdminLoading } from './adminUi'
 
@@ -9,6 +9,9 @@ export function BillingAdmin() {
   const [status, setStatus] = useState<ArcaConnectionStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
+  const [issuing, setIssuing] = useState(false)
+  const [orderId, setOrderId] = useState('')
+  const [invoice, setInvoice] = useState<BillingDocument | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -21,6 +24,19 @@ export function BillingAdmin() {
     try { setStatus(await api.arcaStatus()) }
     catch (value) { setError(describeAdminError(value)) }
     finally { setChecking(false) }
+  }
+
+  const issueTestInvoice = async () => {
+    const parsedOrderId = Number(orderId)
+    if (issuing || !Number.isSafeInteger(parsedOrderId) || parsedOrderId <= 0) {
+      setError('Ingresá un número de pedido válido.')
+      return
+    }
+    if (!window.confirm(`¿Solicitar a ARCA una Factura C de homologación para el pedido #${parsedOrderId}? No tendrá validez fiscal productiva.`)) return
+    setIssuing(true); setError(''); setInvoice(null)
+    try { setInvoice(await api.createArcaHomologationInvoice(parsedOrderId)) }
+    catch (value) { setError(describeAdminError(value)) }
+    finally { setIssuing(false) }
   }
 
   return <section className="admin-page billing-admin">
@@ -36,6 +52,7 @@ export function BillingAdmin() {
     {status && <section className="dashboard-panel arca-diagnostic" aria-live="polite"><h2>Último diagnóstico</h2><dl className="billing-status-list">
       <div><dt>Ambiente</dt><dd>{status.environment}</dd></div><div><dt>Configuración</dt><dd>{status.configurationReady ? 'Completa' : 'Incompleta'}</dd></div><div><dt>WSFE</dt><dd>{status.wsfeReachable ? 'Disponible' : 'No disponible'}</dd></div><div><dt>WSAA</dt><dd>{status.wsaaAuthenticated ? 'Autenticado' : 'Sin autenticar'}</dd></div><div><dt>Puntos de venta</dt><dd>{status.pointsOfSale.length ? status.pointsOfSale.join(', ') : 'Ninguno informado'}</dd></div>
     </dl><p className={status.errorCode ? 'error' : 'notice'}>{status.message}</p>{status.errorCode && <small>Código técnico: {status.errorCode}</small>}</section>}
+    {status?.wsaaAuthenticated && <section className="dashboard-panel"><h2>Factura C de prueba</h2><p>Solicita manualmente un CAE en homologación para un pedido pagado. Este comprobante no pertenece al ambiente productivo.</p><form className="admin-filters" onSubmit={event => { event.preventDefault(); void issueTestInvoice() }}><label>Número de pedido<input type="number" min="1" step="1" value={orderId} onChange={event => setOrderId(event.target.value)} /></label><button className="primary" type="submit" disabled={issuing}>{issuing ? 'Solicitando CAE…' : 'Emitir factura de prueba'}</button></form>{invoice && <div className={invoice.status === 'Authorized' ? 'notice' : 'error'} role="status"><strong>{invoice.status === 'Authorized' ? 'Factura autorizada en homologación' : 'Factura rechazada por ARCA'}</strong><p>Pedido #{invoice.orderId} · Punto de venta {invoice.pointOfSale ?? '—'} · Número {invoice.documentNumber ?? '—'}</p>{invoice.cae && <p>CAE: {invoice.cae} · Vencimiento: {invoice.caeExpiresOn}</p>}{invoice.rejectionReason && <p>{invoice.rejectionCode ? `${invoice.rejectionCode}: ` : ''}{invoice.rejectionReason}</p>}</div>}</section>}
     <p className="admin-footnote">Esta pantalla no permite cargar secretos ni cambiar proveedores. La configuración se administra únicamente mediante Railway.</p>
   </section>
 }

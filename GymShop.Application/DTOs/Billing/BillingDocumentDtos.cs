@@ -25,6 +25,13 @@ public sealed record BillingDocumentResponse(
     decimal DiscountAmount,
     decimal ShippingAmount,
     decimal Total,
+    int? PointOfSale,
+    long? DocumentNumber,
+    string? AuthorizationProvider,
+    string? Cae,
+    DateOnly? CaeExpiresOn,
+    string? RejectionCode,
+    string? RejectionReason,
     DateTime CreatedAtUtc,
     DateTime? AuthorizedAtUtc,
     IReadOnlyList<BillingDocumentItemResponse> Items);

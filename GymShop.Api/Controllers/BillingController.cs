@@ -12,6 +12,7 @@ namespace GymShop.Api.Controllers;
 public sealed class BillingController(
     IBillingProfile profile,
     ICreateOrderReceiptUseCase createOrderReceipt,
+    ICreateArcaHomologationInvoiceUseCase createArcaHomologationInvoice,
     IGetOrderBillingDocumentsUseCase getOrderBillingDocuments,
     IGetBillingDocumentPdfUseCase getBillingDocumentPdf,
     IGetArcaConnectionStatusUseCase getArcaConnectionStatus) : ApiControllerBase
@@ -65,6 +66,19 @@ public sealed class BillingController(
     [ProducesResponseType(typeof(ArcaConnectionStatus), StatusCodes.Status200OK)]
     public async Task<ActionResult<ArcaConnectionStatus>> GetArcaStatus(CancellationToken cancellationToken) =>
         FromResult(await getArcaConnectionStatus.ExecuteAsync(cancellationToken));
+
+    [HttpPost("arca/homologation/orders/{orderId:int}/invoice")]
+    [Authorize(Roles = "SuperAdmin")]
+    [ProducesResponseType(typeof(BillingDocumentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<BillingDocumentResponse>> CreateArcaHomologationInvoice(
+        int orderId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken) =>
+        FromResult(await createArcaHomologationInvoice.ExecuteAsync(orderId, idempotencyKey, cancellationToken));
 }
 
 public sealed record BillingProfileResponse(

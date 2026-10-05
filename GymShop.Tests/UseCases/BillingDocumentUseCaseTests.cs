@@ -142,10 +142,139 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal(AppErrorType.NotFound, wrongOrder.Error!.Type);
     }
 
+    [Fact]
+    public async Task CreateHomologationInvoice_persists_authorized_invoice_c_with_cae()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(7, 11, 25),
+            Authorization = new ArcaInvoiceAuthorization(true, 7, 11, 25, "74123456789012", new DateOnly(2026, 10, 13), null, null)
+        };
+
+        var result = await CreateArcaUseCase(db, gateway).ExecuteAsync(order.Id, "arca-order-1");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("InvoiceC", result.Value!.Type);
+        Assert.Equal("Authorized", result.Value.Status);
+        Assert.Equal(7, result.Value.PointOfSale);
+        Assert.Equal(25, result.Value.DocumentNumber);
+        Assert.Equal("ARCA-Homologation", result.Value.AuthorizationProvider);
+        Assert.Equal("74123456789012", result.Value.Cae);
+        Assert.Equal(new DateOnly(2026, 10, 13), result.Value.CaeExpiresOn);
+        Assert.Equal(1, gateway.SequenceCalls);
+        Assert.Equal(1, gateway.AuthorizationCalls);
+        Assert.Equal(35000, gateway.LastRequest!.Total);
+        var persisted = await db.BillingDocuments.SingleAsync();
+        Assert.Equal(BillingDocumentStatus.Authorized, persisted.Status);
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationInvoiceRequested");
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationInvoiceAuthorized");
+    }
+
+    [Fact]
+    public async Task CreateHomologationInvoice_is_idempotent_after_authorization()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Preparing, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(1, 11, 1),
+            Authorization = new ArcaInvoiceAuthorization(true, 1, 11, 1, "74123456789012", new DateOnly(2026, 10, 13), null, null)
+        };
+        var useCase = CreateArcaUseCase(db, gateway);
+
+        var first = await useCase.ExecuteAsync(order.Id, "arca-order-2");
+        var retry = await useCase.ExecuteAsync(order.Id, "arca-order-2-retry");
+
+        Assert.True(first.IsSuccess);
+        Assert.Equal(first.Value!.Id, retry.Value!.Id);
+        Assert.Equal(1, await db.BillingDocuments.CountAsync());
+        Assert.Equal(1, gateway.SequenceCalls);
+        Assert.Equal(1, gateway.AuthorizationCalls);
+    }
+
+    [Fact]
+    public async Task CreateHomologationInvoice_persists_rejection_and_retries_same_number()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(3, 11, 9),
+            Authorization = new ArcaInvoiceAuthorization(false, 3, 11, 9, null, null, "10016", "Fecha invalida")
+        };
+        var useCase = CreateArcaUseCase(db, gateway);
+
+        var rejected = await useCase.ExecuteAsync(order.Id, "arca-order-3");
+        gateway.Authorization = new ArcaInvoiceAuthorization(true, 3, 11, 9, "74123456789013", new DateOnly(2026, 10, 13), null, null);
+        var authorized = await useCase.ExecuteAsync(order.Id, "arca-order-3");
+
+        Assert.Equal("Rejected", rejected.Value!.Status);
+        Assert.Equal("10016", rejected.Value.RejectionCode);
+        Assert.Equal("Authorized", authorized.Value!.Status);
+        Assert.Equal(9, authorized.Value.DocumentNumber);
+        Assert.Equal(1, gateway.SequenceCalls);
+        Assert.Equal(2, gateway.AuthorizationCalls);
+        Assert.Equal(1, await db.BillingDocuments.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateHomologationInvoice_keeps_pending_document_when_arca_does_not_respond()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(2, 11, 6),
+            AuthorizationException = new HttpRequestException("network unavailable")
+        };
+        var useCase = CreateArcaUseCase(db, gateway);
+
+        var unavailable = await useCase.ExecuteAsync(order.Id, "arca-order-4");
+        var pending = await db.BillingDocuments.SingleAsync();
+        var pendingStatus = pending.Status;
+        var pendingNumber = pending.DocumentNumber;
+        gateway.AuthorizationException = null;
+        gateway.Authorization = new ArcaInvoiceAuthorization(true, 2, 11, 6, "74123456789014", new DateOnly(2026, 10, 13), null, null);
+        var retried = await useCase.ExecuteAsync(order.Id, "arca-order-4");
+
+        Assert.False(unavailable.IsSuccess);
+        Assert.Equal(AppErrorType.Unavailable, unavailable.Error!.Type);
+        Assert.Equal(BillingDocumentStatus.PendingAuthorization, pendingStatus);
+        Assert.Equal(6, pendingNumber);
+        Assert.Equal("Authorized", retried.Value!.Status);
+        Assert.Equal(6, retried.Value.DocumentNumber);
+        Assert.Equal(1, gateway.SequenceCalls);
+        Assert.Equal(2, gateway.AuthorizationCalls);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Pending)]
+    [InlineData(OrderStatus.Canceled)]
+    public async Task CreateHomologationInvoice_rejects_unpaid_lifecycle_without_calling_arca(OrderStatus status)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, status, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway();
+
+        var result = await CreateArcaUseCase(db, gateway).ExecuteAsync(order.Id, $"arca-{status}");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.Equal(0, gateway.SequenceCalls);
+        Assert.Equal(0, gateway.AuthorizationCalls);
+    }
+
     private static CreateOrderReceiptUseCase CreateUseCase(
         GymShop.Infrastructure.Data.GymShopDbContext db,
         IBillingProfile? profile = null) =>
         new(db, profile ?? new TestBillingProfile(), new FixedTimeProvider(Now));
+
+    private static CreateArcaHomologationInvoiceUseCase CreateArcaUseCase(
+        GymShop.Infrastructure.Data.GymShopDbContext db,
+        TestArcaGateway gateway) =>
+        new(db, new HomologationBillingProfile(), gateway, new FixedTimeProvider(Now), new StoreTimeZone(null));
 
     private static async Task<Order> AddOrder(
         GymShop.Infrastructure.Data.GymShopDbContext db,
@@ -201,6 +330,55 @@ public sealed class BillingDocumentUseCaseTests
         {
             Calls++;
             return [1, 2, 3];
+        }
+    }
+
+    private sealed class HomologationBillingProfile : IBillingProfile
+    {
+        public BillingMode Mode => BillingMode.ReceiptOnly;
+        public SellerTaxCondition TaxCondition => SellerTaxCondition.None;
+        public string BusinessName => "GymShop Homologacion";
+        public string Cuit => "23-37686497-9";
+        public string FiscalAddress => "Catamarca 2730, Rosario";
+        public string GrossIncomeNumber => string.Empty;
+        public DateOnly? ActivityStartDate => null;
+        public int? PointOfSale => null;
+        public bool ArcaEnabled => false;
+        public bool ElectronicInvoicingReady => false;
+    }
+
+    private sealed class TestArcaGateway : IArcaElectronicInvoiceGateway
+    {
+        public ArcaInvoiceSequence Sequence { get; set; } = new(1, 11, 1);
+        public ArcaInvoiceAuthorization Authorization { get; set; } =
+            new(true, 1, 11, 1, "74123456789012", new DateOnly(2026, 10, 13), null, null);
+        public int SequenceCalls { get; private set; }
+        public int AuthorizationCalls { get; private set; }
+        public ArcaInvoiceAuthorizationRequest? LastRequest { get; private set; }
+        public Exception? AuthorizationException { get; set; }
+
+        public Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ArcaConnectionStatus("Homologation", true, true, true, [], null, null, Now.UtcDateTime));
+
+        public Task<ArcaInvoiceSequence> GetNextHomologationInvoiceSequenceAsync(CancellationToken cancellationToken = default)
+        {
+            SequenceCalls++;
+            return Task.FromResult(Sequence);
+        }
+
+        public Task<ArcaInvoiceAuthorization> AuthorizeHomologationInvoiceAsync(
+            ArcaInvoiceAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            AuthorizationCalls++;
+            LastRequest = request;
+            if (AuthorizationException is not null) throw AuthorizationException;
+            return Task.FromResult(Authorization with
+            {
+                PointOfSale = request.PointOfSale,
+                InvoiceType = request.InvoiceType,
+                DocumentNumber = request.DocumentNumber
+            });
         }
     }
 }

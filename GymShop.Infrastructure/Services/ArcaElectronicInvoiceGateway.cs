@@ -18,6 +18,7 @@ public sealed class ArcaElectronicInvoiceGateway(
     TimeProvider timeProvider) : IArcaElectronicInvoiceGateway
 {
     private const string WsfeNamespace = "http://ar.gov.afip.dif.FEV1/";
+    private const int InvoiceCType = 11;
 
     public async Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default)
     {
@@ -64,8 +65,98 @@ public sealed class ArcaElectronicInvoiceGateway(
         }
     }
 
+    public async Task<ArcaInvoiceSequence> GetNextHomologationInvoiceSequenceAsync(
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var ticket = await ticketCache.GetOrCreateAsync(CreateAccessTicketAsync, timeProvider, cancellationToken);
+        var body = new XElement(XName.Get("FECompUltimoAutorizado", WsfeNamespace),
+            CreateAuth(ticket),
+            new XElement(XName.Get("PtoVta", WsfeNamespace), options.HomologationPointOfSale),
+            new XElement(XName.Get("CbteTipo", WsfeNamespace), InvoiceCType));
+        var response = await SendSoapAsync(options.WsfeAddress, body, "FECompUltimoAutorizado", cancellationToken);
+        var errors = ReadProviderIssues(response, "Err");
+        if (errors.Count > 0 && errors.Any(error => error.Code != "602"))
+            ThrowBusinessError(errors[0], "WSFE rechazo la consulta del ultimo comprobante.");
+
+        var lastNumber = response.Descendants()
+            .FirstOrDefault(x => x.Name.LocalName == "CbteNro")?.Value;
+        var parsedLastNumber = long.TryParse(lastNumber, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : 0;
+        return new ArcaInvoiceSequence(options.HomologationPointOfSale, InvoiceCType, checked(parsedLastNumber + 1));
+    }
+
+    public async Task<ArcaInvoiceAuthorization> AuthorizeHomologationInvoiceAsync(
+        ArcaInvoiceAuthorizationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        if (request.PointOfSale != options.HomologationPointOfSale || request.InvoiceType != InvoiceCType ||
+            request.DocumentNumber < 1 || request.Total <= 0)
+            throw new ArgumentException("The ARCA homologation invoice request is invalid.", nameof(request));
+
+        var ticket = await ticketCache.GetOrCreateAsync(CreateAccessTicketAsync, timeProvider, cancellationToken);
+        var amount = request.Total.ToString("0.00", CultureInfo.InvariantCulture);
+        var body = new XElement(XName.Get("FECAESolicitar", WsfeNamespace),
+            CreateAuth(ticket),
+            new XElement(XName.Get("FeCAEReq", WsfeNamespace),
+                new XElement(XName.Get("FeCabReq", WsfeNamespace),
+                    new XElement(XName.Get("CantReg", WsfeNamespace), 1),
+                    new XElement(XName.Get("PtoVta", WsfeNamespace), request.PointOfSale),
+                    new XElement(XName.Get("CbteTipo", WsfeNamespace), request.InvoiceType)),
+                new XElement(XName.Get("FeDetReq", WsfeNamespace),
+                    new XElement(XName.Get("FECAEDetRequest", WsfeNamespace),
+                        new XElement(XName.Get("Concepto", WsfeNamespace), 1),
+                        new XElement(XName.Get("DocTipo", WsfeNamespace), 99),
+                        new XElement(XName.Get("DocNro", WsfeNamespace), 0),
+                        new XElement(XName.Get("CbteDesde", WsfeNamespace), request.DocumentNumber),
+                        new XElement(XName.Get("CbteHasta", WsfeNamespace), request.DocumentNumber),
+                        new XElement(XName.Get("CbteFch", WsfeNamespace), request.IssuedOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture)),
+                        new XElement(XName.Get("ImpTotal", WsfeNamespace), amount),
+                        new XElement(XName.Get("ImpTotConc", WsfeNamespace), "0.00"),
+                        new XElement(XName.Get("ImpNeto", WsfeNamespace), amount),
+                        new XElement(XName.Get("ImpOpEx", WsfeNamespace), "0.00"),
+                        new XElement(XName.Get("ImpTrib", WsfeNamespace), "0.00"),
+                        new XElement(XName.Get("ImpIVA", WsfeNamespace), "0.00"),
+                        new XElement(XName.Get("MonId", WsfeNamespace), "PES"),
+                        new XElement(XName.Get("MonCotiz", WsfeNamespace), "1.00"),
+                        new XElement(XName.Get("CondicionIVAReceptorId", WsfeNamespace), 5)))));
+        var response = await SendSoapAsync(options.WsfeAddress, body, "FECAESolicitar", cancellationToken);
+        var detail = response.Descendants().FirstOrDefault(x => x.Name.LocalName == "FECAEDetResponse");
+        var errors = ReadProviderIssues(response, "Err");
+        var observations = detail is null ? [] : ReadProviderIssues(detail, "Obs");
+        var result = detail?.Elements().FirstOrDefault(x => x.Name.LocalName == "Resultado")?.Value;
+        var cae = detail?.Elements().FirstOrDefault(x => x.Name.LocalName == "CAE")?.Value;
+        var expirationValue = detail?.Elements().FirstOrDefault(x => x.Name.LocalName == "CAEFchVto")?.Value;
+
+        if (string.Equals(result, "A", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(cae) &&
+            DateOnly.TryParseExact(expirationValue, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiration))
+        {
+            return new ArcaInvoiceAuthorization(
+                true, request.PointOfSale, request.InvoiceType, request.DocumentNumber,
+                cae, expiration, null, null);
+        }
+
+        var rejection = observations.FirstOrDefault() ?? errors.FirstOrDefault();
+        return new ArcaInvoiceAuthorization(
+            false, request.PointOfSale, request.InvoiceType, request.DocumentNumber,
+            null, null,
+            rejection?.Code ?? "arca_rejected",
+            SanitizeProviderMessage(rejection?.Message, "ARCA rechazo el comprobante de homologacion."));
+    }
+
     private ArcaConnectionStatus Failure(bool authenticated, bool reachable, string code, string message, DateTime checkedAt) =>
         new(ArcaOptions.HomologationEnvironment, options.IsConfigured, authenticated, reachable, [], code, message, checkedAt);
+
+    private void EnsureConfigured()
+    {
+        if (!options.IsConfigured)
+            throw new InvalidOperationException("ARCA homologation is not configured.");
+        if (string.IsNullOrWhiteSpace(DigitsOnly(billingProfile.Cuit)))
+            throw new InvalidOperationException("The represented CUIT is not configured.");
+    }
 
     private async Task<bool> CheckWsfeHealthAsync(CancellationToken cancellationToken)
     {
@@ -165,13 +256,11 @@ public sealed class ArcaElectronicInvoiceGateway(
 
     private async Task<IReadOnlyList<int>> GetPointsOfSaleAsync(ArcaAccessTicket ticket, CancellationToken cancellationToken)
     {
-        var auth = new XElement(XName.Get("Auth", WsfeNamespace),
-            new XElement(XName.Get("Token", WsfeNamespace), ticket.Token),
-            new XElement(XName.Get("Sign", WsfeNamespace), ticket.Sign),
-            new XElement(XName.Get("Cuit", WsfeNamespace), DigitsOnly(billingProfile.Cuit)));
-        var body = new XElement(XName.Get("FEParamGetPtosVenta", WsfeNamespace), auth);
+        var body = new XElement(XName.Get("FEParamGetPtosVenta", WsfeNamespace), CreateAuth(ticket));
         var response = await SendSoapAsync(options.WsfeAddress, body, "FEParamGetPtosVenta", cancellationToken);
-        ThrowIfBusinessErrors(response);
+        var errors = ReadProviderIssues(response, "Err");
+        if (errors.Count > 0 && errors.Any(error => error.Code != "602"))
+            ThrowBusinessError(errors[0], "WSFE rechazo la consulta de puntos de venta.");
         return response.Descendants()
             .Where(x => x.Name.LocalName == "Nro")
             .Select(x => int.TryParse(x.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : 0)
@@ -180,6 +269,12 @@ public sealed class ArcaElectronicInvoiceGateway(
             .Order()
             .ToList();
     }
+
+    private XElement CreateAuth(ArcaAccessTicket ticket) =>
+        new(XName.Get("Auth", WsfeNamespace),
+            new XElement(XName.Get("Token", WsfeNamespace), ticket.Token),
+            new XElement(XName.Get("Sign", WsfeNamespace), ticket.Sign),
+            new XElement(XName.Get("Cuit", WsfeNamespace), DigitsOnly(billingProfile.Cuit)));
 
     private async Task<XDocument> SendSoapAsync(Uri address, XElement body, string action, CancellationToken cancellationToken)
     {
@@ -223,22 +318,20 @@ public sealed class ArcaElectronicInvoiceGateway(
             authenticated);
     }
 
-    private static void ThrowIfBusinessErrors(XDocument response)
-    {
-        var errors = response.Descendants()
-            .Where(x => x.Name.LocalName == "Err")
-            .Select(x => new
-            {
-                Code = x.Elements().FirstOrDefault(y => y.Name.LocalName == "Code")?.Value,
-                Message = x.Elements().FirstOrDefault(y => y.Name.LocalName == "Msg")?.Value
-            })
+    private static List<ProviderIssue> ReadProviderIssues(XContainer response, string elementName) =>
+        response.Descendants()
+            .Where(x => x.Name.LocalName == elementName)
+            .Select(x => new ProviderIssue(
+                x.Elements().FirstOrDefault(y => y.Name.LocalName == "Code")?.Value,
+                x.Elements().FirstOrDefault(y => y.Name.LocalName == "Msg")?.Value))
             .ToList();
-        if (errors.Count == 0) return;
-        var first = errors[0];
-        var code = string.IsNullOrWhiteSpace(first.Code) ? "unknown" : first.Code;
+
+    private static void ThrowBusinessError(ProviderIssue issue, string fallback)
+    {
+        var code = string.IsNullOrWhiteSpace(issue.Code) ? "unknown" : issue.Code;
         throw new ArcaGatewayException(
             $"arca_wsfe_{code}",
-            SanitizeProviderMessage(first.Message, "WSFE rechazo la consulta de puntos de venta."),
+            SanitizeProviderMessage(issue.Message, fallback),
             true);
     }
 
@@ -256,4 +349,6 @@ public sealed class ArcaElectronicInvoiceGateway(
         public string Code { get; } = code;
         public bool WsaaAuthenticated { get; } = wsaaAuthenticated;
     }
+
+    private sealed record ProviderIssue(string? Code, string? Message);
 }

@@ -128,6 +128,32 @@ public class OrderHistoryUseCaseTests
         Assert.Null(partial.ActorUserId);
     }
 
+    [Fact]
+    public async Task History_includes_arca_homologation_invoice_events()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await SeedOrderAsync(db);
+        db.AuditEntries.AddRange(
+            new AuditEntry
+            {
+                Action = "ArcaHomologationInvoiceRequested", EntityType = "Order", EntityId = order.Id.ToString(),
+                Reason = "Factura C de homologacion enviada manualmente a ARCA.", CorrelationId = "arca-request"
+            },
+            new AuditEntry
+            {
+                Action = "ArcaHomologationInvoiceAuthorized", EntityType = "Order", EntityId = order.Id.ToString(),
+                Reason = "ARCA autorizo la factura C de homologacion.", CorrelationId = "arca-authorized"
+            });
+        await db.SaveChangesAsync();
+
+        var result = await new GetOrderHistoryUseCase(db).ExecuteAsync(order.Id);
+
+        Assert.Equal(2, result.Value!.Count);
+        Assert.Equal("ArcaHomologationInvoiceRequested", result.Value[0].Action);
+        Assert.Equal("ArcaHomologationInvoiceAuthorized", result.Value[1].Action);
+        Assert.All(result.Value, entry => Assert.Equal("Automatic", entry.Source));
+    }
+
     private static async Task<Order> SeedOrderAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var role = db.Roles.Single(x => x.Name == "User");

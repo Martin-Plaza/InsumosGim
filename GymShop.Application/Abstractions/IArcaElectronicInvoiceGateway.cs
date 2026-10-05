@@ -11,6 +11,11 @@ public interface IArcaElectronicInvoiceGateway
     Task<ArcaInvoiceAuthorization> AuthorizeHomologationCreditNoteAsync(
         ArcaCreditNoteAuthorizationRequest request,
         CancellationToken cancellationToken = default);
+    Task<ArcaAuthorizedDocument?> GetAuthorizedHomologationDocumentAsync(
+        int pointOfSale,
+        int documentType,
+        long documentNumber,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ArcaConnectionStatus(
@@ -52,3 +57,11 @@ public sealed record ArcaInvoiceAuthorization(
     DateOnly? CaeExpiresOn,
     string? RejectionCode,
     string? RejectionReason);
+
+public sealed record ArcaAuthorizedDocument(
+    int PointOfSale,
+    int DocumentType,
+    long DocumentNumber,
+    decimal Total,
+    string Cae,
+    DateOnly CaeExpiresOn);

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -184,6 +185,45 @@ public sealed class ArcaElectronicInvoiceGatewayTests
     }
 
     [Fact]
+    public async Task Document_query_sends_fiscal_identity_and_recovers_authorization()
+    {
+        var options = CreateOptions();
+        options.HomologationPointOfSale = 4;
+        string? wsfeBody = null;
+        var handler = new RecordingHandler((request, _) =>
+        {
+            if (request.RequestUri == options.WsaaAddress) return Xml(WsaaResponse(Now.AddHours(12)));
+            wsfeBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Xml(DocumentQueryResponse(4, 11, 27, 35000m, "74123456789016", "20261015"));
+        });
+
+        var result = await CreateGateway(options, handler).GetAuthorizedHomologationDocumentAsync(4, 11, 27);
+
+        Assert.NotNull(result);
+        Assert.Equal(27, result.DocumentNumber);
+        Assert.Equal(35000m, result.Total);
+        Assert.Equal("74123456789016", result.Cae);
+        Assert.Equal(new DateOnly(2026, 10, 15), result.CaeExpiresOn);
+        Assert.Equal("11", ElementValue(wsfeBody, "CbteTipo"));
+        Assert.Equal("27", ElementValue(wsfeBody, "CbteNro"));
+        Assert.Equal("4", ElementValue(wsfeBody, "PtoVta"));
+    }
+
+    [Fact]
+    public async Task Document_query_returns_null_when_arca_reports_no_results()
+    {
+        var options = CreateOptions();
+        options.HomologationPointOfSale = 4;
+        var handler = new RecordingHandler((request, _) => request.RequestUri == options.WsaaAddress
+            ? Xml(WsaaResponse(Now.AddHours(12)))
+            : Xml(ErrorResponse("602", "Sin Resultados")));
+
+        var result = await CreateGateway(options, handler).GetAuthorizedHomologationDocumentAsync(4, 13, 1);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
     public async Task Credit_note_uses_type_13_and_associates_the_original_invoice_c()
     {
         var options = CreateOptions();
@@ -290,6 +330,23 @@ public sealed class ArcaElectronicInvoiceGatewayTests
             {(expiration is null ? string.Empty : $"<CAEFchVto>{expiration}</CAEFchVto>")}
             {(observationCode is null ? string.Empty : $"<Observaciones><Obs><Code>{observationCode}</Code><Msg>{observationMessage}</Msg></Obs></Observaciones>")}
           </FECAEDetResponse></FeDetResp></FECAESolicitarResult></FECAESolicitarResponse></soap:Body>
+        </soap:Envelope>
+        """;
+
+    private static string DocumentQueryResponse(
+        int pointOfSale,
+        int documentType,
+        long documentNumber,
+        decimal total,
+        string cae,
+        string expiration) => $"""
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body><FECompConsultarResponse><FECompConsultarResult><ResultGet>
+            <CbteDesde>{documentNumber}</CbteDesde><CbteHasta>{documentNumber}</CbteHasta>
+            <ImpTotal>{total.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTotal><Resultado>A</Resultado>
+            <CodAutorizacion>{cae}</CodAutorizacion><FchVto>{expiration}</FchVto>
+            <PtoVta>{pointOfSale}</PtoVta><CbteTipo>{documentType}</CbteTipo>
+          </ResultGet></FECompConsultarResult></FECompConsultarResponse></soap:Body>
         </soap:Envelope>
         """;
 

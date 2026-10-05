@@ -35,6 +35,8 @@ public static class DependencyInjection
         services.AddScoped<ICreateOrderReceiptUseCase, CreateOrderReceiptUseCase>();
         services.AddScoped<IGetOrderBillingDocumentsUseCase, GetOrderBillingDocumentsUseCase>();
         services.AddScoped<IGetBillingDocumentPdfUseCase, GetBillingDocumentPdfUseCase>();
+        services.AddScoped<IGetCustomerOrderBillingDocumentsUseCase, GetCustomerOrderBillingDocumentsUseCase>();
+        services.AddScoped<IGetCustomerBillingDocumentPdfUseCase, GetCustomerBillingDocumentPdfUseCase>();
         services.AddScoped<IGetArcaConnectionStatusUseCase, GetArcaConnectionStatusUseCase>();
         services.AddScoped<ICreateArcaHomologationInvoiceUseCase, CreateArcaHomologationInvoiceUseCase>();
         services.AddScoped<ICreateArcaHomologationCreditNoteUseCase, CreateArcaHomologationCreditNoteUseCase>();

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
-import type { Order, Payment } from '../../api/types'
+import type { BillingDocument, Order, Payment } from '../../api/types'
 
 const product = { id: 4, name: 'Kettlebell 16kg', price: 42000, stock: 12, imageUrl: '/kettlebell.webp' }
 const cart = { id: 1, userId: 7, subtotal: 84000, discount: 0, couponCode: null, total: 84000, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000, stock: product.stock, imageUrl: product.imageUrl }] }
@@ -470,5 +470,37 @@ describe('checkout y pago por orderId', () => {
     expect(await screen.findByText('Sucursal histórica 456')).toBeInTheDocument()
     expect(screen.getByText('Sábados de 10 a 13')).toBeInTheDocument()
     expect(screen.getByText('Presentá el código de compra.')).toBeInTheDocument()
+  })
+
+  it('muestra facturas y notas de crédito autorizadas en Mis órdenes', async () => {
+    window.history.replaceState(null, '', '/ordenes')
+    const baseDocument = {
+      orderId: 81, paymentId: 91, relatedDocumentId: null, status: 'Authorized', currency: 'ARS',
+      issuerBusinessName: 'GymShop', recipientName: 'Usuario', recipientEmail: 'u@gym.com', recipientAddress: null,
+      subtotal: 84000, discountAmount: 0, shippingAmount: 0, total: 84000, pointOfSale: 1,
+      authorizationProvider: 'ARCA-Homologation', caeExpiresOn: '2026-10-15', rejectionCode: null,
+      rejectionReason: null, createdAtUtc: '2026-10-05T10:00:00Z', authorizedAtUtc: '2026-10-05T10:01:00Z', items: []
+    } satisfies Partial<BillingDocument>
+    const documents: BillingDocument[] = [
+      { ...baseDocument, id: '00000000-0000-0000-0000-000000000001', category: 'Invoice', type: 'InvoiceC', documentNumber: 12, cae: '74123456789012' } as BillingDocument,
+      { ...baseDocument, id: '00000000-0000-0000-0000-000000000002', category: 'CreditNote', type: 'CreditNoteC', documentNumber: 3, cae: '74123456789013' } as BillingDocument
+    ]
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart')) return json(emptyCart)
+      if (url.endsWith('/api/orders/my')) return json([{ id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', createdAt: order.createdAt, total: order.total, status: 'Paid', updatedAt: null, lastPaymentStatus: 'Approved', lastPaymentId: 91 }])
+      if (url.endsWith('/api/orders/81/billing-documents')) return json(documents)
+      if (url.endsWith('/api/orders/81')) return json({ ...order, status: 'Paid' })
+      if (url.endsWith('/api/payments/orders/81')) return json([payment('Approved')])
+      return json([])
+    })
+
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /#81/ }))
+
+    expect(await screen.findByText('Factura C')).toBeInTheDocument()
+    expect(screen.getByText('Nota de crédito C')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Ver PDF' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Descargar PDF' })).toHaveLength(2)
   })
 })

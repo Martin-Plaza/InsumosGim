@@ -221,6 +221,30 @@ describe('panel administrativo', () => {
     expect((receiptCall?.[1]?.headers as Headers).get('Idempotency-Key')).toBe('receipt-order-10')
   })
 
+  it('muestra la factura fiscal autorizada con su numeracion y CAE sin ofrecer el PDF interno', async () => {
+    signIn('SuperAdmin'); window.history.replaceState(null, '', '/admin/pedidos')
+    const paidOrder = { ...orderDetail, status: 'Paid', payments: [{ id: 50, provider: 'MercadoPago', amount: 15000, currency: 'ARS', status: 'Approved', createdAt: '2026-09-20T12:00:00Z', paidAt: '2026-09-20T12:05:00Z' }] }
+    const invoice = { id: '81d53082-a463-4bbc-a4c3-7e6b2d4c8f80', orderId: 10, paymentId: 50, category: 'Invoice', type: 'InvoiceC', status: 'Authorized', currency: 'ARS', issuerBusinessName: 'GymShop Homologacion', recipientName: 'Cliente Gym', recipientEmail: 'cliente@gym.com', recipientAddress: 'Av. Siempre Viva 742', subtotal: 15000, discountAmount: 0, shippingAmount: 0, total: 15000, pointOfSale: 1, documentNumber: 1, authorizationProvider: 'ARCA-Homologation', cae: '86400947232722', caeExpiresOn: '2026-10-15', rejectionCode: null, rejectionReason: null, createdAtUtc: '2026-10-05T12:10:00Z', authorizedAtUtc: '2026-10-05T12:10:01Z', items: [] }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes('/api/admin/billing/orders/10/documents')) return response([invoice])
+      if (url.includes('/api/orders/10/history')) return response(orderHistory)
+      if (/\/api\/orders\/10$/.test(url)) return response(paidOrder)
+      return apiMock(input, init)
+    })
+
+    render(<App />)
+    await userEvent.click(await screen.findByText('#10'))
+
+    expect(await screen.findByText('Factura C · Homologación')).toBeInTheDocument()
+    expect(screen.getByText('Autorizado')).toBeInTheDocument()
+    expect(screen.getByText('Punto de venta 00001 · Número 00000001')).toBeInTheDocument()
+    expect(screen.getByText(/CAE 86400947232722/)).toBeInTheDocument()
+    expect(screen.getByText(/factura fiscal se confirma mediante su CAE/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Ver PDF' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descargar PDF' })).not.toBeInTheDocument()
+  })
+
   it('mantiene el detalle visible si falla el historial y permite reintentarlo', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
     let historyLoads = 0

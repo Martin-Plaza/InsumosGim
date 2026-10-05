@@ -29,5 +29,6 @@ public interface IApplicationDbContext
     DbSet<ShippingQuoteReservation> ShippingQuoteReservations { get; }
     DbSet<BillingDocument> BillingDocuments { get; }
     DbSet<BillingDocumentItem> BillingDocumentItems { get; }
+    DbSet<NotificationOutboxMessage> NotificationOutboxMessages { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

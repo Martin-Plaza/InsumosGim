@@ -26,10 +26,19 @@ public sealed class MockPasswordResetEmailSender(ILogger<MockPasswordResetEmailS
     }
 }
 
+public sealed class MockTransactionalEmailSender(ILogger<MockTransactionalEmailSender> logger) : ITransactionalEmailSender
+{
+    public Task<EmailSendResult> SendAsync(TransactionalEmailMessage message, CancellationToken cancellationToken = default)
+    {
+        logger.LogInformation("Mock transactional email accepted. Purpose {Purpose}.", message.Purpose);
+        return Task.FromResult(EmailSendResult.Accepted());
+    }
+}
+
 public sealed class ResendEmailSender(
     HttpClient client,
     IOptions<EmailOptions> options,
-    ILogger<ResendEmailSender> logger) : IVerificationEmailSender, IPasswordResetEmailSender
+    ILogger<ResendEmailSender> logger) : IVerificationEmailSender, IPasswordResetEmailSender, ITransactionalEmailSender
 {
     private readonly EmailOptions _options = options.Value;
 
@@ -39,7 +48,14 @@ public sealed class ResendEmailSender(
     Task<EmailSendResult> IPasswordResetEmailSender.SendAsync(string email, string code, bool deliver, CancellationToken cancellationToken) =>
         deliver ? SendAsync(email, "password-reset", "Recuperá tu contraseña de GymShop", "Código de recuperación", code, cancellationToken) : Task.FromResult(EmailSendResult.NotAttempted());
 
+    Task<EmailSendResult> ITransactionalEmailSender.SendAsync(TransactionalEmailMessage message, CancellationToken cancellationToken) =>
+        SendHtmlAsync(message.Recipient, message.Purpose, message.Subject, message.Html, cancellationToken, message.IdempotencyKey);
+
     private async Task<EmailSendResult> SendAsync(string email, string purpose, string subject, string heading, string code, CancellationToken cancellationToken)
+        => await SendHtmlAsync(email, purpose, subject,
+            $"<h1>{heading}</h1><p>Tu código es:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:6px\">{code}</p><p>Si no solicitaste este mensaje, podés ignorarlo.</p>", cancellationToken, null);
+
+    private async Task<EmailSendResult> SendHtmlAsync(string email, string purpose, string subject, string html, CancellationToken cancellationToken, string? idempotencyKey)
     {
         var from = string.IsNullOrWhiteSpace(_options.FromName)
             ? _options.FromAddress
@@ -49,12 +65,14 @@ public sealed class ResendEmailSender(
             from,
             to = new[] { email },
             subject,
-            html = $"<h1>{heading}</h1><p>Tu código es:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:6px\">{code}</p><p>Si no solicitaste este mensaje, podés ignorarlo.</p>"
+            html
         };
 
         try
         {
-            using var response = await client.PostAsJsonAsync("emails", payload, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "emails") { Content = JsonContent.Create(payload) };
+            if (!string.IsNullOrWhiteSpace(idempotencyKey)) request.Headers.Add("Idempotency-Key", idempotencyKey);
+            using var response = await client.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogError("Transactional email request failed. Provider {Provider}; Purpose {Purpose}; FailureType {FailureType}; StatusCode {StatusCode}.",

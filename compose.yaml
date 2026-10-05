@@ -28,6 +28,8 @@ services:
       Email__ApiKey: ${GYMSHOP_EMAIL_API_KEY:-}
       Email__FromAddress: ${GYMSHOP_EMAIL_FROM_ADDRESS:-}
       Email__FromName: ${GYMSHOP_EMAIL_FROM_NAME:-GymShop}
+      Email__PublicAppUrl: ${GYMSHOP_EMAIL_PUBLIC_APP_URL:-}
+      Email__TransactionalNotificationsEnabled: ${GYMSHOP_EMAIL_TRANSACTIONAL_NOTIFICATIONS_ENABLED:-true}
       SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
       SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
       SeedSuperAdmin__Password: ${GYMSHOP_SEED_ADMIN_PASSWORD}

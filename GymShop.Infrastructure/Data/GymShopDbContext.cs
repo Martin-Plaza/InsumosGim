@@ -1,6 +1,7 @@
 using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Domain.Entities;
+using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymShop.Infrastructure.Data;
@@ -35,6 +36,13 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<ShippingQuoteReservation> ShippingQuoteReservations => Set<ShippingQuoteReservation>();
     public DbSet<BillingDocument> BillingDocuments => Set<BillingDocument>();
     public DbSet<BillingDocumentItem> BillingDocumentItems => Set<BillingDocumentItem>();
+    public DbSet<NotificationOutboxMessage> NotificationOutboxMessages => Set<NotificationOutboxMessage>();
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        QueueTransactionalNotifications();
+        return base.SaveChangesAsync(cancellationToken);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +65,22 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(x => new { x.ActorUserId, x.CreatedAtUtc });
             entity.HasIndex(x => x.CorrelationId);
             entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<NotificationOutboxMessage>(entity =>
+        {
+            entity.ToTable("NotificationOutboxMessages");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(50).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(x => x.DeduplicationKey).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.LastFailureType).HasMaxLength(50);
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(x => x.DeduplicationKey).IsUnique();
+            entity.HasIndex(x => new { x.Status, x.NextAttemptAtUtc });
+            entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Payment).WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.BillingDocument).WithMany().HasForeignKey(x => x.BillingDocumentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockMovement>(entity =>
@@ -546,6 +570,61 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .HasForeignKey(x => x.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ProductVariant).WithMany(x => x.OrderItems).HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.SetNull);
+        });
+    }
+
+    private void QueueTransactionalNotifications()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var entry in ChangeTracker.Entries<Order>().ToList())
+        {
+            if (entry.State == EntityState.Added)
+                Queue(TransactionalNotificationType.OrderCreated, entry.Entity,
+                    $"order-created:{entry.Entity.UserId}:{entry.Entity.CheckoutIdempotencyKey ?? entry.Entity.GetHashCode().ToString()}", now);
+            if (entry.State != EntityState.Modified || !entry.Property(x => x.Status).IsModified) continue;
+            var type = entry.Entity.Status switch
+            {
+                OrderStatus.Preparing => TransactionalNotificationType.OrderPreparing,
+                OrderStatus.Shipped when entry.Entity.DeliveryMethod == DeliveryMethod.StorePickup => TransactionalNotificationType.OrderReadyForPickup,
+                OrderStatus.Shipped => TransactionalNotificationType.OrderShipped,
+                _ => (TransactionalNotificationType?)null
+            };
+            if (type is not null) Queue(type.Value, entry.Entity, $"order:{entry.Entity.Id}:{type}", now);
+        }
+
+        foreach (var entry in ChangeTracker.Entries<Payment>().ToList())
+        {
+            if (entry.State != EntityState.Modified || !entry.Property(x => x.Status).IsModified) continue;
+            var type = entry.Entity.Status switch
+            {
+                PaymentStatus.Approved => TransactionalNotificationType.PaymentApproved,
+                PaymentStatus.Rejected => TransactionalNotificationType.PaymentRejected,
+                PaymentStatus.Refunded => TransactionalNotificationType.PaymentRefunded,
+                _ => (TransactionalNotificationType?)null
+            };
+            if (type is not null) Queue(type.Value, entry.Entity.Order, $"payment:{entry.Entity.Id}:{type}", now,
+                entry.Entity, orderId: entry.Entity.OrderId);
+        }
+
+        foreach (var entry in ChangeTracker.Entries<BillingDocument>().ToList())
+        {
+            var authorized = entry.Entity.Status == BillingDocumentStatus.Authorized &&
+                (entry.State == EntityState.Added || entry.State == EntityState.Modified && entry.Property(x => x.Status).IsModified);
+            if (authorized) Queue(TransactionalNotificationType.BillingDocumentAvailable, entry.Entity.Order,
+                $"billing:{entry.Entity.Id}:authorized", now, billingDocument: entry.Entity, orderId: entry.Entity.OrderId);
+        }
+    }
+
+    private void Queue(TransactionalNotificationType type, Order? order, string key, DateTime now,
+        Payment? payment = null, BillingDocument? billingDocument = null, int? orderId = null)
+    {
+        if (ChangeTracker.Entries<NotificationOutboxMessage>().Any(x => x.Entity.DeduplicationKey == key)) return;
+        NotificationOutboxMessages.Add(new NotificationOutboxMessage
+        {
+            Type = type, DeduplicationKey = key, Order = order, OrderId = order?.Id > 0 ? order.Id : orderId,
+            Payment = payment, PaymentId = payment?.Id > 0 ? payment.Id : null,
+            BillingDocument = billingDocument, BillingDocumentId = billingDocument?.Id,
+            CreatedAtUtc = now, NextAttemptAtUtc = now
         });
     }
 }

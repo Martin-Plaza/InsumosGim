@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Xml.Linq;
 using GymShop.Application.Abstractions;
 using GymShop.Domain.Enums;
 using GymShop.Infrastructure.Configuration;
@@ -88,6 +89,100 @@ public sealed class ArcaElectronicInvoiceGatewayTests
         Assert.Contains("certificado no autorizado", result.Message);
     }
 
+    [Fact]
+    public async Task Check_connection_treats_no_points_error_as_authenticated_without_points()
+    {
+        var options = CreateOptions();
+        var handler = new RecordingHandler((request, _) =>
+        {
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (request.RequestUri == options.WsaaAddress) return Xml(WsaaResponse(Now.AddHours(12)));
+            return Xml(body.Contains("FEDummy", StringComparison.Ordinal)
+                ? DummyResponse()
+                : ErrorResponse("602", "Sin Resultados: - Metodo FEParamGetPtosVenta"));
+        });
+
+        var result = await CreateGateway(options, handler).CheckConnectionAsync();
+
+        Assert.True(result.WsaaAuthenticated);
+        Assert.True(result.WsfeReachable);
+        Assert.Empty(result.PointsOfSale);
+        Assert.Null(result.ErrorCode);
+        Assert.Contains("no devolvio puntos", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Sequence_uses_configured_point_and_invoice_c_then_returns_next_number()
+    {
+        var options = CreateOptions();
+        options.HomologationPointOfSale = 7;
+        string? wsfeBody = null;
+        var handler = new RecordingHandler((request, _) =>
+        {
+            if (request.RequestUri == options.WsaaAddress) return Xml(WsaaResponse(Now.AddHours(12)));
+            wsfeBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Xml(LastAuthorizedResponse(41));
+        });
+
+        var result = await CreateGateway(options, handler).GetNextHomologationInvoiceSequenceAsync();
+
+        Assert.Equal(new ArcaInvoiceSequence(7, 11, 42), result);
+        Assert.Equal("7", ElementValue(wsfeBody, "PtoVta"));
+        Assert.Equal("11", ElementValue(wsfeBody, "CbteTipo"));
+    }
+
+    [Fact]
+    public async Task Sequence_starts_at_one_when_arca_reports_no_previous_results()
+    {
+        var options = CreateOptions();
+        var handler = new RecordingHandler((request, _) => request.RequestUri == options.WsaaAddress
+            ? Xml(WsaaResponse(Now.AddHours(12)))
+            : Xml(ErrorResponse("602", "Sin Resultados")));
+
+        var result = await CreateGateway(options, handler).GetNextHomologationInvoiceSequenceAsync();
+
+        Assert.Equal(1, result.DocumentNumber);
+    }
+
+    [Fact]
+    public async Task Authorization_sends_consumer_final_invoice_c_and_parses_cae()
+    {
+        var options = CreateOptions();
+        string? wsfeBody = null;
+        var handler = new RecordingHandler((request, _) =>
+        {
+            if (request.RequestUri == options.WsaaAddress) return Xml(WsaaResponse(Now.AddHours(12)));
+            wsfeBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Xml(AuthorizationResponse("A", "74123456789012", "20261013"));
+        });
+        var request = new ArcaInvoiceAuthorizationRequest(1, 11, 3, new DateOnly(2026, 10, 3), 35000m);
+
+        var result = await CreateGateway(options, handler).AuthorizeHomologationInvoiceAsync(request);
+
+        Assert.True(result.Authorized);
+        Assert.Equal("74123456789012", result.Cae);
+        Assert.Equal(new DateOnly(2026, 10, 13), result.CaeExpiresOn);
+        Assert.Equal("99", ElementValue(wsfeBody, "DocTipo"));
+        Assert.Equal("35000.00", ElementValue(wsfeBody, "ImpTotal"));
+        Assert.Equal("5", ElementValue(wsfeBody, "CondicionIVAReceptorId"));
+    }
+
+    [Fact]
+    public async Task Authorization_returns_a_bounded_rejection_from_observations()
+    {
+        var options = CreateOptions();
+        var handler = new RecordingHandler((request, _) => request.RequestUri == options.WsaaAddress
+            ? Xml(WsaaResponse(Now.AddHours(12)))
+            : Xml(AuthorizationResponse("R", null, null, "10016", "La fecha informada no es valida")));
+
+        var result = await CreateGateway(options, handler).AuthorizeHomologationInvoiceAsync(
+            new ArcaInvoiceAuthorizationRequest(1, 11, 1, new DateOnly(2026, 10, 3), 100m));
+
+        Assert.False(result.Authorized);
+        Assert.Equal("10016", result.RejectionCode);
+        Assert.Equal("La fecha informada no es valida", result.RejectionReason);
+    }
+
     private static ArcaElectronicInvoiceGateway CreateGateway(ArcaOptions options, HttpMessageHandler handler) =>
         new(
             new HttpClient(handler),
@@ -130,6 +225,38 @@ public sealed class ArcaElectronicInvoiceGatewayTests
           <soap:Body><FEParamGetPtosVentaResponse><FEParamGetPtosVentaResult><ResultGet>{string.Join(string.Empty, points.Select(x => $"<PtoVenta><Nro>{x}</Nro><EmisionTipo>CAE</EmisionTipo></PtoVenta>"))}</ResultGet></FEParamGetPtosVentaResult></FEParamGetPtosVentaResponse></soap:Body>
         </soap:Envelope>
         """;
+
+    private static string ErrorResponse(string code, string message) => $"""
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body><Response><Result><Errors><Err><Code>{code}</Code><Msg>{message}</Msg></Err></Errors></Result></Response></soap:Body>
+        </soap:Envelope>
+        """;
+
+    private static string LastAuthorizedResponse(long number) => $"""
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body><FECompUltimoAutorizadoResponse><FECompUltimoAutorizadoResult><CbteNro>{number}</CbteNro></FECompUltimoAutorizadoResult></FECompUltimoAutorizadoResponse></soap:Body>
+        </soap:Envelope>
+        """;
+
+    private static string AuthorizationResponse(
+        string result,
+        string? cae,
+        string? expiration,
+        string? observationCode = null,
+        string? observationMessage = null) => $"""
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body><FECAESolicitarResponse><FECAESolicitarResult><FeDetResp><FECAEDetResponse>
+            <Resultado>{result}</Resultado>
+            {(cae is null ? string.Empty : $"<CAE>{cae}</CAE>")}
+            {(expiration is null ? string.Empty : $"<CAEFchVto>{expiration}</CAEFchVto>")}
+            {(observationCode is null ? string.Empty : $"<Observaciones><Obs><Code>{observationCode}</Code><Msg>{observationMessage}</Msg></Obs></Observaciones>")}
+          </FECAEDetResponse></FeDetResp></FECAESolicitarResult></FECAESolicitarResponse></soap:Body>
+        </soap:Envelope>
+        """;
+
+    private static string? ElementValue(string? xml, string localName) =>
+        XDocument.Parse(Assert.IsType<string>(xml)).Descendants()
+            .FirstOrDefault(element => element.Name.LocalName == localName)?.Value;
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, int, HttpResponseMessage> response) : HttpMessageHandler
     {

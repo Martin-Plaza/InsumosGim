@@ -36,6 +36,22 @@ public sealed class ArcaOptionsTests
         Assert.Contains(options.Validate(enabled: true), value => value.Contains("Production is intentionally blocked", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100000)]
+    public void Enabled_connector_rejects_invalid_homologation_point_of_sale(int pointOfSale)
+    {
+        var options = new ArcaOptions
+        {
+            HomologationPointOfSale = pointOfSale,
+            CertificatePemBase64 = "configured",
+            PrivateKeyPemBase64 = "configured"
+        };
+
+        Assert.Contains(options.Validate(enabled: true), value =>
+            value.Contains("HomologationPointOfSale", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Load_signing_material_returns_a_matching_key_that_can_sign_cms()
     {

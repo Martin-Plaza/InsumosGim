@@ -122,6 +122,44 @@ public sealed class BillingDocumentUseCaseTests
     }
 
     [Fact]
+    public async Task Customer_documents_returns_only_authorized_documents_for_owned_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var receipt = await CreateUseCase(db).ExecuteAsync(order.Id, "customer-receipt");
+        db.BillingDocuments.Add(new BillingDocument
+        {
+            OrderId = order.Id, IdempotencyKey = "pending-customer-invoice", Category = BillingDocumentCategory.Invoice,
+            Type = BillingDocumentType.InvoiceC, Status = BillingDocumentStatus.PendingAuthorization, Currency = "ARS",
+            IssuerBusinessName = "GymShop", RecipientName = "Cliente Prueba", Total = 35000, CreatedAtUtc = Now.UtcDateTime
+        });
+        await db.SaveChangesAsync();
+
+        var result = await new GetCustomerOrderBillingDocumentsUseCase(db).ExecuteAsync(order.Id, order.UserId);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(receipt.Value!.Id, Assert.Single(result.Value!).Id);
+    }
+
+    [Fact]
+    public async Task Customer_documents_and_pdf_hide_another_users_order()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var receipt = await CreateUseCase(db).ExecuteAsync(order.Id, "private-customer-receipt");
+        var otherUserId = order.UserId + 999;
+        var list = await new GetCustomerOrderBillingDocumentsUseCase(db).ExecuteAsync(order.Id, otherUserId);
+        var adminPdf = new GetBillingDocumentPdfUseCase(db, new TestReceiptPdfRenderer(), new TestFiscalInvoicePdfRenderer());
+        var pdf = await new GetCustomerBillingDocumentPdfUseCase(db, adminPdf)
+            .ExecuteAsync(order.Id, receipt.Value!.Id, otherUserId);
+
+        Assert.False(list.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, list.Error!.Type);
+        Assert.False(pdf.IsSuccess);
+        Assert.Equal(AppErrorType.NotFound, pdf.Error!.Type);
+    }
+
+    [Fact]
     public async Task GetPdf_returns_only_an_authorized_receipt_belonging_to_the_order()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -308,7 +346,7 @@ public sealed class BillingDocumentUseCaseTests
         var pendingStatus = pending.Status;
         var pendingNumber = pending.DocumentNumber;
         gateway.AuthorizationException = null;
-        gateway.Authorization = new ArcaInvoiceAuthorization(true, 2, 11, 6, "74123456789014", new DateOnly(2026, 10, 13), null, null);
+        gateway.QueriedDocument = new ArcaAuthorizedDocument(2, 11, 6, 35000, "74123456789014", new DateOnly(2026, 10, 13));
         var retried = await useCase.ExecuteAsync(order.Id, "arca-order-4");
 
         Assert.False(unavailable.IsSuccess);
@@ -318,7 +356,33 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal("Authorized", retried.Value!.Status);
         Assert.Equal(6, retried.Value.DocumentNumber);
         Assert.Equal(1, gateway.SequenceCalls);
-        Assert.Equal(2, gateway.AuthorizationCalls);
+        Assert.Equal(1, gateway.AuthorizationCalls);
+        Assert.Equal(1, gateway.QueryCalls);
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationInvoiceRecovered");
+    }
+
+    [Fact]
+    public async Task CreateHomologationInvoice_does_not_resend_when_reconciliation_is_unavailable()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(2, 11, 7),
+            AuthorizationException = new HttpRequestException("authorization response lost")
+        };
+        var useCase = CreateArcaUseCase(db, gateway);
+        await useCase.ExecuteAsync(order.Id, "arca-order-reconciliation-failure");
+        gateway.AuthorizationException = null;
+        gateway.QueryException = new HttpRequestException("query unavailable");
+
+        var retry = await useCase.ExecuteAsync(order.Id, "arca-order-reconciliation-failure");
+
+        Assert.False(retry.IsSuccess);
+        Assert.Equal("arca_reconciliation_unavailable", retry.Error!.Code);
+        Assert.Equal(1, gateway.AuthorizationCalls);
+        Assert.Equal(1, gateway.QueryCalls);
+        Assert.Equal(BillingDocumentStatus.PendingAuthorization, (await db.BillingDocuments.SingleAsync()).Status);
     }
 
     [Theory]
@@ -373,6 +437,37 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal(35000, gateway.LastCreditNoteRequest.Total);
         Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationCreditNoteRequested");
         Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationCreditNoteAuthorized");
+    }
+
+    [Fact]
+    public async Task CreateHomologationCreditNote_recovers_authorization_without_resending()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(1, 11, 4),
+            Authorization = new ArcaInvoiceAuthorization(true, 1, 11, 4, "74123456789012", new DateOnly(2026, 10, 13), null, null),
+            CreditNoteSequence = new ArcaInvoiceSequence(1, 13, 2),
+            CreditNoteAuthorizationException = new HttpRequestException("authorization response lost")
+        };
+        await CreateArcaUseCase(db, gateway).ExecuteAsync(order.Id, "arca-invoice-before-recovery");
+        order.Status = OrderStatus.Refunded;
+        order.Payments.Single().Status = PaymentStatus.Refunded;
+        await db.SaveChangesAsync();
+        var useCase = CreateArcaCreditNoteUseCase(db, gateway);
+
+        var unavailable = await useCase.ExecuteAsync(order.Id, "arca-credit-note-recovery");
+        gateway.CreditNoteAuthorizationException = null;
+        gateway.QueriedDocument = new ArcaAuthorizedDocument(1, 13, 2, 35000, "74123456789015", new DateOnly(2026, 10, 13));
+        var recovered = await useCase.ExecuteAsync(order.Id, "arca-credit-note-recovery");
+
+        Assert.False(unavailable.IsSuccess);
+        Assert.Equal("Authorized", recovered.Value!.Status);
+        Assert.Equal("74123456789015", recovered.Value.Cae);
+        Assert.Equal(1, gateway.CreditNoteAuthorizationCalls);
+        Assert.Equal(1, gateway.QueryCalls);
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationCreditNoteRecovered");
     }
 
     [Theory]
@@ -501,9 +596,13 @@ public sealed class BillingDocumentUseCaseTests
         public int AuthorizationCalls { get; private set; }
         public int CreditNoteSequenceCalls { get; private set; }
         public int CreditNoteAuthorizationCalls { get; private set; }
+        public int QueryCalls { get; private set; }
         public ArcaInvoiceAuthorizationRequest? LastRequest { get; private set; }
         public ArcaCreditNoteAuthorizationRequest? LastCreditNoteRequest { get; private set; }
         public Exception? AuthorizationException { get; set; }
+        public Exception? CreditNoteAuthorizationException { get; set; }
+        public Exception? QueryException { get; set; }
+        public ArcaAuthorizedDocument? QueriedDocument { get; set; }
 
         public Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new ArcaConnectionStatus("Homologation", true, true, true, [], null, null, Now.UtcDateTime));
@@ -529,6 +628,17 @@ public sealed class BillingDocumentUseCaseTests
             });
         }
 
+        public Task<ArcaAuthorizedDocument?> GetAuthorizedHomologationDocumentAsync(
+            int pointOfSale,
+            int documentType,
+            long documentNumber,
+            CancellationToken cancellationToken = default)
+        {
+            QueryCalls++;
+            if (QueryException is not null) throw QueryException;
+            return Task.FromResult(QueriedDocument);
+        }
+
         public Task<ArcaInvoiceSequence> GetNextHomologationCreditNoteSequenceAsync(CancellationToken cancellationToken = default)
         {
             CreditNoteSequenceCalls++;
@@ -541,6 +651,7 @@ public sealed class BillingDocumentUseCaseTests
         {
             CreditNoteAuthorizationCalls++;
             LastCreditNoteRequest = request;
+            if (CreditNoteAuthorizationException is not null) throw CreditNoteAuthorizationException;
             return Task.FromResult(CreditNoteAuthorization with
             {
                 PointOfSale = request.PointOfSale,

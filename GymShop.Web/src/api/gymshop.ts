@@ -56,6 +56,8 @@ export const api = {
   shippingQuotes: (destination: ShippingAddressInput) => request<ShippingQuote[]>('/api/cart/shipping-quotes', json('POST', { destination })),
   checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string; shippingQuoteId?: string | null; shippingDestination?: ShippingAddressInput | null }) => request<Order>('/api/cart/checkout', json('POST', data)),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
+  myOrderBillingDocuments: (id: number) => request<BillingDocument[]>(`/api/orders/${id}/billing-documents`),
+  myBillingDocumentPdf: (orderId: number, documentId: string) => requestBlob(`/api/orders/${orderId}/billing-documents/${documentId}/pdf`),
   orders: (filters: OrderFilters = {}) => {
     const query = new URLSearchParams()
     Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)) })

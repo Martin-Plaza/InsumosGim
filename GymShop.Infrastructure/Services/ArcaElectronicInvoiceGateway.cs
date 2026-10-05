@@ -74,6 +74,50 @@ public sealed class ArcaElectronicInvoiceGateway(
         CancellationToken cancellationToken = default)
         => await GetNextHomologationSequenceAsync(CreditNoteCType, cancellationToken);
 
+    public async Task<ArcaAuthorizedDocument?> GetAuthorizedHomologationDocumentAsync(
+        int pointOfSale,
+        int documentType,
+        long documentNumber,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        if (pointOfSale != options.HomologationPointOfSale || documentType is not (InvoiceCType or CreditNoteCType) || documentNumber < 1)
+            throw new ArgumentException("The ARCA homologation document query is invalid.");
+
+        var ticket = await ticketCache.GetOrCreateAsync(CreateAccessTicketAsync, timeProvider, cancellationToken);
+        var body = new XElement(XName.Get("FECompConsultar", WsfeNamespace),
+            CreateAuth(ticket),
+            new XElement(XName.Get("FeCompConsReq", WsfeNamespace),
+                new XElement(XName.Get("CbteTipo", WsfeNamespace), documentType),
+                new XElement(XName.Get("CbteNro", WsfeNamespace), documentNumber),
+                new XElement(XName.Get("PtoVta", WsfeNamespace), pointOfSale)));
+        var response = await SendSoapAsync(options.WsfeAddress, body, "FECompConsultar", cancellationToken);
+        var errors = ReadProviderIssues(response, "Err");
+        if (errors.Any(error => error.Code == "602")) return null;
+        if (errors.Count > 0)
+            throw new HttpRequestException("ARCA rechazo la consulta de reconciliacion del comprobante.");
+
+        var result = response.Descendants().FirstOrDefault(x => x.Name.LocalName == "ResultGet");
+        if (result is null)
+            throw new HttpRequestException("ARCA no devolvio un resultado para la consulta de reconciliacion.");
+        var resultCode = ChildValue(result, "Resultado");
+        var cae = ChildValue(result, "CodAutorizacion");
+        var expirationValue = ChildValue(result, "FchVto");
+        var returnedPointOfSale = ParseInt(ChildValue(result, "PtoVta"));
+        var returnedType = ParseInt(ChildValue(result, "CbteTipo"));
+        var returnedNumber = ParseLong(ChildValue(result, "CbteDesde"));
+        var returnedLastNumber = ParseLong(ChildValue(result, "CbteHasta"));
+        var total = ParseDecimal(ChildValue(result, "ImpTotal"));
+        if (!string.Equals(resultCode, "A", StringComparison.OrdinalIgnoreCase) ||
+            cae?.Length != 14 ||
+            !DateOnly.TryParseExact(expirationValue, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiration) ||
+            returnedPointOfSale != pointOfSale || returnedType != documentType ||
+            returnedNumber != documentNumber || returnedLastNumber != documentNumber || total is null)
+            throw new HttpRequestException("ARCA devolvio datos incompletos o inconsistentes para la consulta de reconciliacion.");
+
+        return new ArcaAuthorizedDocument(pointOfSale, documentType, documentNumber, total.Value, cae, expiration);
+    }
+
     private async Task<ArcaInvoiceSequence> GetNextHomologationSequenceAsync(
         int documentType,
         CancellationToken cancellationToken)
@@ -201,6 +245,18 @@ public sealed class ArcaElectronicInvoiceGateway(
     }
 
     private sealed record ArcaAssociatedDocument(int Type, int PointOfSale, long DocumentNumber, DateOnly IssuedOn);
+
+    private static string? ChildValue(XContainer parent, string name) =>
+        parent.Elements().FirstOrDefault(x => x.Name.LocalName == name)?.Value;
+
+    private static int? ParseInt(string? value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+    private static long? ParseLong(string? value) =>
+        long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+    private static decimal? ParseDecimal(string? value) =>
+        decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
 
     private ArcaConnectionStatus Failure(bool authenticated, bool reachable, string code, string message, DateTime checkedAt) =>
         new(ArcaOptions.HomologationEnvironment, options.IsConfigured, authenticated, reachable, [], code, message, checkedAt);

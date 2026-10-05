@@ -128,7 +128,7 @@ public sealed class BillingDocumentUseCaseTests
         var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
         var created = await CreateUseCase(db).ExecuteAsync(order.Id, "receipt-pdf-order");
         var renderer = new TestReceiptPdfRenderer();
-        var useCase = new GetBillingDocumentPdfUseCase(db, renderer);
+        var useCase = new GetBillingDocumentPdfUseCase(db, renderer, new TestFiscalInvoicePdfRenderer());
 
         var result = await useCase.ExecuteAsync(order.Id, created.Value!.Id);
         var wrongOrder = await useCase.ExecuteAsync(order.Id + 1, created.Value.Id);
@@ -140,6 +140,44 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal(1, renderer.Calls);
         Assert.False(wrongOrder.IsSuccess);
         Assert.Equal(AppErrorType.NotFound, wrongOrder.Error!.Type);
+    }
+
+    [Fact]
+    public async Task GetPdf_renders_an_authorized_fiscal_invoice()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var invoice = new BillingDocument
+        {
+            OrderId = order.Id,
+            IdempotencyKey = "invoice-pdf-order",
+            Category = BillingDocumentCategory.Invoice,
+            Type = BillingDocumentType.InvoiceC,
+            Status = BillingDocumentStatus.Authorized,
+            Currency = "ARS",
+            IssuerBusinessName = "GymShop Homologacion",
+            IssuerCuit = "23-37686497-9",
+            RecipientName = "Cliente Prueba",
+            Subtotal = 35000,
+            NetTaxedAmount = 35000,
+            Total = 35000,
+            PointOfSale = 1,
+            DocumentNumber = 2,
+            Cae = "86400947232722",
+            CaeExpiresOn = new DateOnly(2026, 10, 15),
+            AuthorizedAtUtc = Now.UtcDateTime
+        };
+        db.BillingDocuments.Add(invoice);
+        await db.SaveChangesAsync();
+        var fiscalRenderer = new TestFiscalInvoicePdfRenderer();
+        var useCase = new GetBillingDocumentPdfUseCase(db, new TestReceiptPdfRenderer(), fiscalRenderer);
+
+        var result = await useCase.ExecuteAsync(order.Id, invoice.Id);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal([4, 5, 6], result.Value!.Content);
+        Assert.Equal($"pedido-{order.Id}-factura-00001-00000002.pdf", result.Value.FileName);
+        Assert.Equal(1, fiscalRenderer.Calls);
     }
 
     [Fact]
@@ -330,6 +368,16 @@ public sealed class BillingDocumentUseCaseTests
         {
             Calls++;
             return [1, 2, 3];
+        }
+    }
+
+    private sealed class TestFiscalInvoicePdfRenderer : IFiscalInvoicePdfRenderer
+    {
+        public int Calls { get; private set; }
+        public byte[] Render(BillingDocument document)
+        {
+            Calls++;
+            return [4, 5, 6];
         }
     }
 

@@ -186,7 +186,8 @@ public sealed class GetOrderBillingDocumentsUseCase(IApplicationDbContext db) : 
 
 public sealed class GetBillingDocumentPdfUseCase(
     IApplicationDbContext db,
-    IReceiptPdfRenderer renderer) : IGetBillingDocumentPdfUseCase
+    IReceiptPdfRenderer receiptRenderer,
+    IFiscalInvoicePdfRenderer fiscalInvoiceRenderer) : IGetBillingDocumentPdfUseCase
 {
     public async Task<AppResult<BillingDocumentPdfResponse>> ExecuteAsync(
         int orderId,
@@ -200,15 +201,26 @@ public sealed class GetBillingDocumentPdfUseCase(
 
         if (document is null)
             return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.NotFound, "Comprobante no encontrado.");
-        if (document.Category != BillingDocumentCategory.Receipt || document.Type != BillingDocumentType.PurchaseReceipt)
-            return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El documento solicitado no es un comprobante interno descargable.");
         if (document.Status != BillingDocumentStatus.Authorized)
             return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El comprobante todavia no esta autorizado.");
 
-        var content = renderer.Render(document);
-        return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
-            content,
-            $"pedido-{orderId}-comprobante-{document.Id:N}.pdf"));
+        if (document.Category == BillingDocumentCategory.Receipt && document.Type == BillingDocumentType.PurchaseReceipt)
+            return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
+                receiptRenderer.Render(document),
+                $"pedido-{orderId}-comprobante-{document.Id:N}.pdf"));
+
+        if (document.Category == BillingDocumentCategory.Invoice &&
+            document.Type is BillingDocumentType.InvoiceA or BillingDocumentType.InvoiceB or BillingDocumentType.InvoiceC)
+        {
+            if (document.PointOfSale is null || document.DocumentNumber is null ||
+                string.IsNullOrWhiteSpace(document.Cae) || document.CaeExpiresOn is null)
+                return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "La factura autorizada no tiene datos fiscales completos.");
+            return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
+                fiscalInvoiceRenderer.Render(document),
+                $"pedido-{orderId}-factura-{document.PointOfSale:00000}-{document.DocumentNumber:00000000}.pdf"));
+        }
+
+        return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El tipo de documento no tiene una representacion PDF disponible.");
     }
 }
 

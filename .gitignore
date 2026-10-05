@@ -61,3 +61,7 @@ desktop.ini
 .neon
 .tools/
 .railway/
+
+# Local artifact previews
+tmp/
+output/

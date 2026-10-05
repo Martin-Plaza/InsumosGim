@@ -13,6 +13,7 @@ public sealed record BillingDocumentResponse(
     Guid Id,
     int OrderId,
     int? PaymentId,
+    Guid? RelatedDocumentId,
     string Category,
     string Type,
     string Status,

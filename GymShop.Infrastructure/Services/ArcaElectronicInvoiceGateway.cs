@@ -19,6 +19,7 @@ public sealed class ArcaElectronicInvoiceGateway(
 {
     private const string WsfeNamespace = "http://ar.gov.afip.dif.FEV1/";
     private const int InvoiceCType = 11;
+    private const int CreditNoteCType = 13;
 
     public async Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default)
     {
@@ -67,13 +68,22 @@ public sealed class ArcaElectronicInvoiceGateway(
 
     public async Task<ArcaInvoiceSequence> GetNextHomologationInvoiceSequenceAsync(
         CancellationToken cancellationToken = default)
+        => await GetNextHomologationSequenceAsync(InvoiceCType, cancellationToken);
+
+    public async Task<ArcaInvoiceSequence> GetNextHomologationCreditNoteSequenceAsync(
+        CancellationToken cancellationToken = default)
+        => await GetNextHomologationSequenceAsync(CreditNoteCType, cancellationToken);
+
+    private async Task<ArcaInvoiceSequence> GetNextHomologationSequenceAsync(
+        int documentType,
+        CancellationToken cancellationToken)
     {
         EnsureConfigured();
         var ticket = await ticketCache.GetOrCreateAsync(CreateAccessTicketAsync, timeProvider, cancellationToken);
         var body = new XElement(XName.Get("FECompUltimoAutorizado", WsfeNamespace),
             CreateAuth(ticket),
             new XElement(XName.Get("PtoVta", WsfeNamespace), options.HomologationPointOfSale),
-            new XElement(XName.Get("CbteTipo", WsfeNamespace), InvoiceCType));
+            new XElement(XName.Get("CbteTipo", WsfeNamespace), documentType));
         var response = await SendSoapAsync(options.WsfeAddress, body, "FECompUltimoAutorizado", cancellationToken);
         var errors = ReadProviderIssues(response, "Err");
         if (errors.Count > 0 && errors.Any(error => error.Code != "602"))
@@ -84,7 +94,7 @@ public sealed class ArcaElectronicInvoiceGateway(
         var parsedLastNumber = long.TryParse(lastNumber, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
             ? value
             : 0;
-        return new ArcaInvoiceSequence(options.HomologationPointOfSale, InvoiceCType, checked(parsedLastNumber + 1));
+        return new ArcaInvoiceSequence(options.HomologationPointOfSale, documentType, checked(parsedLastNumber + 1));
     }
 
     public async Task<ArcaInvoiceAuthorization> AuthorizeHomologationInvoiceAsync(
@@ -96,32 +106,75 @@ public sealed class ArcaElectronicInvoiceGateway(
             request.DocumentNumber < 1 || request.Total <= 0)
             throw new ArgumentException("The ARCA homologation invoice request is invalid.", nameof(request));
 
+        return await AuthorizeAsync(request.PointOfSale, request.InvoiceType, request.DocumentNumber,
+            request.IssuedOn, request.Total, null, cancellationToken);
+    }
+
+    public async Task<ArcaInvoiceAuthorization> AuthorizeHomologationCreditNoteAsync(
+        ArcaCreditNoteAuthorizationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        if (request.PointOfSale != options.HomologationPointOfSale || request.CreditNoteType != CreditNoteCType ||
+            request.DocumentNumber < 1 || request.Total <= 0 || request.AssociatedInvoiceType != InvoiceCType ||
+            request.AssociatedPointOfSale < 1 || request.AssociatedDocumentNumber < 1)
+            throw new ArgumentException("The ARCA homologation credit note request is invalid.", nameof(request));
+
+        var associated = new ArcaAssociatedDocument(
+            request.AssociatedInvoiceType,
+            request.AssociatedPointOfSale,
+            request.AssociatedDocumentNumber,
+            request.AssociatedIssuedOn);
+        return await AuthorizeAsync(request.PointOfSale, request.CreditNoteType, request.DocumentNumber,
+            request.IssuedOn, request.Total, associated, cancellationToken);
+    }
+
+    private async Task<ArcaInvoiceAuthorization> AuthorizeAsync(
+        int pointOfSale,
+        int documentType,
+        long documentNumber,
+        DateOnly issuedOn,
+        decimal total,
+        ArcaAssociatedDocument? associated,
+        CancellationToken cancellationToken)
+    {
         var ticket = await ticketCache.GetOrCreateAsync(CreateAccessTicketAsync, timeProvider, cancellationToken);
-        var amount = request.Total.ToString("0.00", CultureInfo.InvariantCulture);
+        var amount = total.ToString("0.00", CultureInfo.InvariantCulture);
+        var requestDetail = new XElement(XName.Get("FECAEDetRequest", WsfeNamespace),
+            new XElement(XName.Get("Concepto", WsfeNamespace), 1),
+            new XElement(XName.Get("DocTipo", WsfeNamespace), 99),
+            new XElement(XName.Get("DocNro", WsfeNamespace), 0),
+            new XElement(XName.Get("CbteDesde", WsfeNamespace), documentNumber),
+            new XElement(XName.Get("CbteHasta", WsfeNamespace), documentNumber),
+            new XElement(XName.Get("CbteFch", WsfeNamespace), issuedOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture)),
+            new XElement(XName.Get("ImpTotal", WsfeNamespace), amount),
+            new XElement(XName.Get("ImpTotConc", WsfeNamespace), "0.00"),
+            new XElement(XName.Get("ImpNeto", WsfeNamespace), amount),
+            new XElement(XName.Get("ImpOpEx", WsfeNamespace), "0.00"),
+            new XElement(XName.Get("ImpTrib", WsfeNamespace), "0.00"),
+            new XElement(XName.Get("ImpIVA", WsfeNamespace), "0.00"),
+            new XElement(XName.Get("MonId", WsfeNamespace), "PES"),
+            new XElement(XName.Get("MonCotiz", WsfeNamespace), "1.00"),
+            new XElement(XName.Get("CondicionIVAReceptorId", WsfeNamespace), 5));
+        if (associated is not null)
+        {
+            requestDetail.Add(new XElement(XName.Get("CbtesAsoc", WsfeNamespace),
+                new XElement(XName.Get("CbteAsoc", WsfeNamespace),
+                    new XElement(XName.Get("Tipo", WsfeNamespace), associated.Type),
+                    new XElement(XName.Get("PtoVta", WsfeNamespace), associated.PointOfSale),
+                    new XElement(XName.Get("Nro", WsfeNamespace), associated.DocumentNumber),
+                    new XElement(XName.Get("Cuit", WsfeNamespace), DigitsOnly(billingProfile.Cuit)),
+                    new XElement(XName.Get("CbteFch", WsfeNamespace), associated.IssuedOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture)))));
+        }
         var body = new XElement(XName.Get("FECAESolicitar", WsfeNamespace),
             CreateAuth(ticket),
             new XElement(XName.Get("FeCAEReq", WsfeNamespace),
                 new XElement(XName.Get("FeCabReq", WsfeNamespace),
                     new XElement(XName.Get("CantReg", WsfeNamespace), 1),
-                    new XElement(XName.Get("PtoVta", WsfeNamespace), request.PointOfSale),
-                    new XElement(XName.Get("CbteTipo", WsfeNamespace), request.InvoiceType)),
+                    new XElement(XName.Get("PtoVta", WsfeNamespace), pointOfSale),
+                    new XElement(XName.Get("CbteTipo", WsfeNamespace), documentType)),
                 new XElement(XName.Get("FeDetReq", WsfeNamespace),
-                    new XElement(XName.Get("FECAEDetRequest", WsfeNamespace),
-                        new XElement(XName.Get("Concepto", WsfeNamespace), 1),
-                        new XElement(XName.Get("DocTipo", WsfeNamespace), 99),
-                        new XElement(XName.Get("DocNro", WsfeNamespace), 0),
-                        new XElement(XName.Get("CbteDesde", WsfeNamespace), request.DocumentNumber),
-                        new XElement(XName.Get("CbteHasta", WsfeNamespace), request.DocumentNumber),
-                        new XElement(XName.Get("CbteFch", WsfeNamespace), request.IssuedOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture)),
-                        new XElement(XName.Get("ImpTotal", WsfeNamespace), amount),
-                        new XElement(XName.Get("ImpTotConc", WsfeNamespace), "0.00"),
-                        new XElement(XName.Get("ImpNeto", WsfeNamespace), amount),
-                        new XElement(XName.Get("ImpOpEx", WsfeNamespace), "0.00"),
-                        new XElement(XName.Get("ImpTrib", WsfeNamespace), "0.00"),
-                        new XElement(XName.Get("ImpIVA", WsfeNamespace), "0.00"),
-                        new XElement(XName.Get("MonId", WsfeNamespace), "PES"),
-                        new XElement(XName.Get("MonCotiz", WsfeNamespace), "1.00"),
-                        new XElement(XName.Get("CondicionIVAReceptorId", WsfeNamespace), 5)))));
+                    requestDetail)));
         var response = await SendSoapAsync(options.WsfeAddress, body, "FECAESolicitar", cancellationToken);
         var detail = response.Descendants().FirstOrDefault(x => x.Name.LocalName == "FECAEDetResponse");
         var errors = ReadProviderIssues(response, "Err");
@@ -135,17 +188,19 @@ public sealed class ArcaElectronicInvoiceGateway(
             DateOnly.TryParseExact(expirationValue, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var expiration))
         {
             return new ArcaInvoiceAuthorization(
-                true, request.PointOfSale, request.InvoiceType, request.DocumentNumber,
+                true, pointOfSale, documentType, documentNumber,
                 cae, expiration, null, null);
         }
 
         var rejection = observations.FirstOrDefault() ?? errors.FirstOrDefault();
         return new ArcaInvoiceAuthorization(
-            false, request.PointOfSale, request.InvoiceType, request.DocumentNumber,
+            false, pointOfSale, documentType, documentNumber,
             null, null,
             rejection?.Code ?? "arca_rejected",
             SanitizeProviderMessage(rejection?.Message, "ARCA rechazo el comprobante de homologacion."));
     }
+
+    private sealed record ArcaAssociatedDocument(int Type, int PointOfSale, long DocumentNumber, DateOnly IssuedOn);
 
     private ArcaConnectionStatus Failure(bool authenticated, bool reachable, string code, string message, DateTime checkedAt) =>
         new(ArcaOptions.HomologationEnvironment, options.IsConfigured, authenticated, reachable, [], code, message, checkedAt);

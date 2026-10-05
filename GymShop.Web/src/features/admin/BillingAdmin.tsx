@@ -10,8 +10,11 @@ export function BillingAdmin() {
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
   const [issuing, setIssuing] = useState(false)
+  const [issuingCreditNote, setIssuingCreditNote] = useState(false)
   const [orderId, setOrderId] = useState('')
+  const [creditNoteOrderId, setCreditNoteOrderId] = useState('')
   const [invoice, setInvoice] = useState<BillingDocument | null>(null)
+  const [creditNote, setCreditNote] = useState<BillingDocument | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -24,6 +27,19 @@ export function BillingAdmin() {
     try { setStatus(await api.arcaStatus()) }
     catch (value) { setError(describeAdminError(value)) }
     finally { setChecking(false) }
+  }
+
+  const issueTestCreditNote = async () => {
+    const parsedOrderId = Number(creditNoteOrderId)
+    if (issuingCreditNote || !Number.isSafeInteger(parsedOrderId) || parsedOrderId <= 0) {
+      setError('Ingresá un número de pedido válido.')
+      return
+    }
+    if (!window.confirm(`¿Solicitar a ARCA una Nota de Crédito C de homologación para anular la factura del pedido #${parsedOrderId}? El pedido debe estar totalmente reembolsado.`)) return
+    setIssuingCreditNote(true); setError(''); setCreditNote(null)
+    try { setCreditNote(await api.createArcaHomologationCreditNote(parsedOrderId)) }
+    catch (value) { setError(describeAdminError(value)) }
+    finally { setIssuingCreditNote(false) }
   }
 
   const issueTestInvoice = async () => {
@@ -53,6 +69,7 @@ export function BillingAdmin() {
       <div><dt>Ambiente</dt><dd>{status.environment}</dd></div><div><dt>Configuración</dt><dd>{status.configurationReady ? 'Completa' : 'Incompleta'}</dd></div><div><dt>WSFE</dt><dd>{status.wsfeReachable ? 'Disponible' : 'No disponible'}</dd></div><div><dt>WSAA</dt><dd>{status.wsaaAuthenticated ? 'Autenticado' : 'Sin autenticar'}</dd></div><div><dt>Puntos de venta</dt><dd>{status.pointsOfSale.length ? status.pointsOfSale.join(', ') : 'Ninguno informado'}</dd></div>
     </dl><p className={status.errorCode ? 'error' : 'notice'}>{status.message}</p>{status.errorCode && <small>Código técnico: {status.errorCode}</small>}</section>}
     {status?.wsaaAuthenticated && <section className="dashboard-panel"><h2>Factura C de prueba</h2><p>Solicita manualmente un CAE en homologación para un pedido pagado. Este comprobante no pertenece al ambiente productivo.</p><form className="admin-filters" onSubmit={event => { event.preventDefault(); void issueTestInvoice() }}><label>Número de pedido<input type="number" min="1" step="1" value={orderId} onChange={event => setOrderId(event.target.value)} /></label><button className="primary" type="submit" disabled={issuing}>{issuing ? 'Solicitando CAE…' : 'Emitir factura de prueba'}</button></form>{invoice && <div className={invoice.status === 'Authorized' ? 'notice' : 'error'} role="status"><strong>{invoice.status === 'Authorized' ? 'Factura autorizada en homologación' : 'Factura rechazada por ARCA'}</strong><p>Pedido #{invoice.orderId} · Punto de venta {invoice.pointOfSale ?? '—'} · Número {invoice.documentNumber ?? '—'}</p>{invoice.cae && <p>CAE: {invoice.cae} · Vencimiento: {invoice.caeExpiresOn}</p>}{invoice.rejectionReason && <p>{invoice.rejectionCode ? `${invoice.rejectionCode}: ` : ''}{invoice.rejectionReason}</p>}</div>}</section>}
+    {status?.wsaaAuthenticated && <section className="dashboard-panel"><h2>Nota de Crédito C de prueba</h2><p>Anula fiscalmente una Factura C de homologación después de que el proveedor haya confirmado el reembolso total del pedido.</p><form className="admin-filters" onSubmit={event => { event.preventDefault(); void issueTestCreditNote() }}><label>Número de pedido reembolsado<input type="number" min="1" step="1" value={creditNoteOrderId} onChange={event => setCreditNoteOrderId(event.target.value)} /></label><button className="primary" type="submit" disabled={issuingCreditNote}>{issuingCreditNote ? 'Solicitando CAE…' : 'Emitir nota de crédito de prueba'}</button></form>{creditNote && <div className={creditNote.status === 'Authorized' ? 'notice' : 'error'} role="status"><strong>{creditNote.status === 'Authorized' ? 'Nota de crédito autorizada en homologación' : 'Nota de crédito rechazada por ARCA'}</strong><p>Pedido #{creditNote.orderId} · Punto de venta {creditNote.pointOfSale ?? '—'} · Número {creditNote.documentNumber ?? '—'}</p>{creditNote.cae && <p>CAE: {creditNote.cae} · Vencimiento: {creditNote.caeExpiresOn}</p>}{creditNote.rejectionReason && <p>{creditNote.rejectionCode ? `${creditNote.rejectionCode}: ` : ''}{creditNote.rejectionReason}</p>}</div>}</section>}
     <p className="admin-footnote">Esta pantalla no permite cargar secretos ni cambiar proveedores. La configuración se administra únicamente mediante Railway.</p>
   </section>
 }

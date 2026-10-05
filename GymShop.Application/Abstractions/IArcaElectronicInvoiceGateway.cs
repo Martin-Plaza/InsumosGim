@@ -7,6 +7,10 @@ public interface IArcaElectronicInvoiceGateway
     Task<ArcaInvoiceAuthorization> AuthorizeHomologationInvoiceAsync(
         ArcaInvoiceAuthorizationRequest request,
         CancellationToken cancellationToken = default);
+    Task<ArcaInvoiceSequence> GetNextHomologationCreditNoteSequenceAsync(CancellationToken cancellationToken = default);
+    Task<ArcaInvoiceAuthorization> AuthorizeHomologationCreditNoteAsync(
+        ArcaCreditNoteAuthorizationRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ArcaConnectionStatus(
@@ -27,6 +31,17 @@ public sealed record ArcaInvoiceAuthorizationRequest(
     long DocumentNumber,
     DateOnly IssuedOn,
     decimal Total);
+
+public sealed record ArcaCreditNoteAuthorizationRequest(
+    int PointOfSale,
+    int CreditNoteType,
+    long DocumentNumber,
+    DateOnly IssuedOn,
+    decimal Total,
+    int AssociatedInvoiceType,
+    int AssociatedPointOfSale,
+    long AssociatedDocumentNumber,
+    DateOnly AssociatedIssuedOn);
 
 public sealed record ArcaInvoiceAuthorization(
     bool Authorized,

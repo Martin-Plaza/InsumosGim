@@ -13,6 +13,7 @@ public sealed class BillingController(
     IBillingProfile profile,
     ICreateOrderReceiptUseCase createOrderReceipt,
     ICreateArcaHomologationInvoiceUseCase createArcaHomologationInvoice,
+    ICreateArcaHomologationCreditNoteUseCase createArcaHomologationCreditNote,
     IGetOrderBillingDocumentsUseCase getOrderBillingDocuments,
     IGetBillingDocumentPdfUseCase getBillingDocumentPdf,
     IGetArcaConnectionStatusUseCase getArcaConnectionStatus) : ApiControllerBase
@@ -79,6 +80,19 @@ public sealed class BillingController(
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken) =>
         FromResult(await createArcaHomologationInvoice.ExecuteAsync(orderId, idempotencyKey, cancellationToken));
+
+    [HttpPost("arca/homologation/orders/{orderId:int}/credit-note")]
+    [Authorize(Roles = "SuperAdmin")]
+    [ProducesResponseType(typeof(BillingDocumentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<BillingDocumentResponse>> CreateArcaHomologationCreditNote(
+        int orderId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken) =>
+        FromResult(await createArcaHomologationCreditNote.ExecuteAsync(orderId, idempotencyKey, cancellationToken));
 }
 
 public sealed record BillingProfileResponse(

@@ -181,6 +181,40 @@ public sealed class BillingDocumentUseCaseTests
     }
 
     [Fact]
+    public async Task GetPdf_renders_an_authorized_credit_note_with_its_fiscal_filename()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Refunded, 35000, PaymentStatus.Refunded);
+        var invoice = new BillingDocument
+        {
+            OrderId = order.Id, IdempotencyKey = "invoice-for-credit-note-pdf", Category = BillingDocumentCategory.Invoice,
+            Type = BillingDocumentType.InvoiceC, Status = BillingDocumentStatus.Authorized, Currency = "ARS",
+            IssuerBusinessName = "GymShop Homologacion", IssuerCuit = "23-37686497-9", RecipientName = "Cliente Prueba",
+            Subtotal = 35000, NetTaxedAmount = 35000, Total = 35000, PointOfSale = 1, DocumentNumber = 4,
+            Cae = "86400947232722", CaeExpiresOn = new DateOnly(2026, 10, 15), AuthorizedAtUtc = Now.UtcDateTime
+        };
+        var creditNote = new BillingDocument
+        {
+            OrderId = order.Id, RelatedDocument = invoice, IdempotencyKey = "credit-note-pdf", Category = BillingDocumentCategory.CreditNote,
+            Type = BillingDocumentType.CreditNoteC, Status = BillingDocumentStatus.Authorized, Currency = "ARS",
+            IssuerBusinessName = "GymShop Homologacion", IssuerCuit = "23-37686497-9", RecipientName = "Cliente Prueba",
+            Subtotal = 35000, NetTaxedAmount = 35000, Total = 35000, PointOfSale = 1, DocumentNumber = 2,
+            Cae = "86400947232723", CaeExpiresOn = new DateOnly(2026, 10, 15), AuthorizedAtUtc = Now.UtcDateTime
+        };
+        db.BillingDocuments.AddRange(invoice, creditNote);
+        await db.SaveChangesAsync();
+        var fiscalRenderer = new TestFiscalInvoicePdfRenderer();
+
+        var result = await new GetBillingDocumentPdfUseCase(db, new TestReceiptPdfRenderer(), fiscalRenderer)
+            .ExecuteAsync(order.Id, creditNote.Id);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal([4, 5, 6], result.Value!.Content);
+        Assert.Equal($"pedido-{order.Id}-nota-credito-00001-00000002.pdf", result.Value.FileName);
+        Assert.Equal(1, fiscalRenderer.Calls);
+    }
+
+    [Fact]
     public async Task CreateHomologationInvoice_persists_authorized_invoice_c_with_cae()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
@@ -304,6 +338,61 @@ public sealed class BillingDocumentUseCaseTests
         Assert.Equal(0, gateway.AuthorizationCalls);
     }
 
+    [Fact]
+    public async Task CreateHomologationCreditNote_authorizes_full_refund_and_links_original_invoice()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
+        var gateway = new TestArcaGateway
+        {
+            Sequence = new ArcaInvoiceSequence(1, 11, 4),
+            Authorization = new ArcaInvoiceAuthorization(true, 1, 11, 4, "74123456789012", new DateOnly(2026, 10, 13), null, null),
+            CreditNoteSequence = new ArcaInvoiceSequence(1, 13, 2),
+            CreditNoteAuthorization = new ArcaInvoiceAuthorization(true, 1, 13, 2, "74123456789015", new DateOnly(2026, 10, 13), null, null)
+        };
+        var invoiceResult = await CreateArcaUseCase(db, gateway).ExecuteAsync(order.Id, "arca-invoice-for-refund");
+        order.Status = OrderStatus.Refunded;
+        order.Payments.Single().Status = PaymentStatus.Refunded;
+        await db.SaveChangesAsync();
+
+        var useCase = CreateArcaCreditNoteUseCase(db, gateway);
+        var result = await useCase.ExecuteAsync(order.Id, "arca-credit-note-1");
+        var retry = await useCase.ExecuteAsync(order.Id, "arca-credit-note-1-retry");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("CreditNoteC", result.Value!.Type);
+        Assert.Equal("Authorized", result.Value.Status);
+        Assert.Equal(invoiceResult.Value!.Id, result.Value.RelatedDocumentId);
+        Assert.Equal("74123456789015", result.Value.Cae);
+        Assert.Equal(result.Value.Id, retry.Value!.Id);
+        Assert.Equal(2, await db.BillingDocuments.CountAsync());
+        Assert.Equal(1, gateway.CreditNoteSequenceCalls);
+        Assert.Equal(1, gateway.CreditNoteAuthorizationCalls);
+        Assert.Equal(11, gateway.LastCreditNoteRequest!.AssociatedInvoiceType);
+        Assert.Equal(4, gateway.LastCreditNoteRequest.AssociatedDocumentNumber);
+        Assert.Equal(35000, gateway.LastCreditNoteRequest.Total);
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationCreditNoteRequested");
+        Assert.Contains(db.AuditEntries, x => x.Action == "ArcaHomologationCreditNoteAuthorized");
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Paid, PaymentStatus.Approved)]
+    [InlineData(OrderStatus.Refunded, PaymentStatus.Approved)]
+    public async Task CreateHomologationCreditNote_requires_provider_confirmed_full_refund(
+        OrderStatus orderStatus,
+        PaymentStatus paymentStatus)
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = await AddOrder(db, orderStatus, 35000, paymentStatus);
+        var gateway = new TestArcaGateway();
+
+        var result = await CreateArcaCreditNoteUseCase(db, gateway).ExecuteAsync(order.Id, $"credit-note-{orderStatus}-{paymentStatus}");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.Equal(0, gateway.CreditNoteSequenceCalls);
+    }
+
     private static CreateOrderReceiptUseCase CreateUseCase(
         GymShop.Infrastructure.Data.GymShopDbContext db,
         IBillingProfile? profile = null) =>
@@ -313,6 +402,11 @@ public sealed class BillingDocumentUseCaseTests
         GymShop.Infrastructure.Data.GymShopDbContext db,
         TestArcaGateway gateway) =>
         new(db, new HomologationBillingProfile(), gateway, new FixedTimeProvider(Now), new StoreTimeZone(null));
+
+    private static CreateArcaHomologationCreditNoteUseCase CreateArcaCreditNoteUseCase(
+        GymShop.Infrastructure.Data.GymShopDbContext db,
+        TestArcaGateway gateway) =>
+        new(db, gateway, new FixedTimeProvider(Now), new StoreTimeZone(null));
 
     private static async Task<Order> AddOrder(
         GymShop.Infrastructure.Data.GymShopDbContext db,
@@ -400,9 +494,15 @@ public sealed class BillingDocumentUseCaseTests
         public ArcaInvoiceSequence Sequence { get; set; } = new(1, 11, 1);
         public ArcaInvoiceAuthorization Authorization { get; set; } =
             new(true, 1, 11, 1, "74123456789012", new DateOnly(2026, 10, 13), null, null);
+        public ArcaInvoiceSequence CreditNoteSequence { get; set; } = new(1, 13, 1);
+        public ArcaInvoiceAuthorization CreditNoteAuthorization { get; set; } =
+            new(true, 1, 13, 1, "74123456789013", new DateOnly(2026, 10, 13), null, null);
         public int SequenceCalls { get; private set; }
         public int AuthorizationCalls { get; private set; }
+        public int CreditNoteSequenceCalls { get; private set; }
+        public int CreditNoteAuthorizationCalls { get; private set; }
         public ArcaInvoiceAuthorizationRequest? LastRequest { get; private set; }
+        public ArcaCreditNoteAuthorizationRequest? LastCreditNoteRequest { get; private set; }
         public Exception? AuthorizationException { get; set; }
 
         public Task<ArcaConnectionStatus> CheckConnectionAsync(CancellationToken cancellationToken = default) =>
@@ -425,6 +525,26 @@ public sealed class BillingDocumentUseCaseTests
             {
                 PointOfSale = request.PointOfSale,
                 InvoiceType = request.InvoiceType,
+                DocumentNumber = request.DocumentNumber
+            });
+        }
+
+        public Task<ArcaInvoiceSequence> GetNextHomologationCreditNoteSequenceAsync(CancellationToken cancellationToken = default)
+        {
+            CreditNoteSequenceCalls++;
+            return Task.FromResult(CreditNoteSequence);
+        }
+
+        public Task<ArcaInvoiceAuthorization> AuthorizeHomologationCreditNoteAsync(
+            ArcaCreditNoteAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CreditNoteAuthorizationCalls++;
+            LastCreditNoteRequest = request;
+            return Task.FromResult(CreditNoteAuthorization with
+            {
+                PointOfSale = request.PointOfSale,
+                InvoiceType = request.CreditNoteType,
                 DocumentNumber = request.DocumentNumber
             });
         }

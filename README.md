@@ -1622,9 +1622,11 @@ La emisión guarda primero el documento como `PendingAuthorization`. Si ARCA no 
 
 Las facturas autorizadas pueden visualizarse y descargarse desde el detalle administrativo del pedido. La representación PDF incluye emisor, receptor, productos, totales, punto de venta, número, CAE, vencimiento y el código QR versión 1 definido por ARCA. Mientras el proveedor sea `ARCA-Homologation`, el documento lleva una advertencia visible de homologación y no tiene validez fiscal productiva.
 
+Para validar la postventa fiscal, la pantalla de facturación también permite emitir manualmente una Nota de Crédito C de homologación. El pedido debe tener un reembolso total confirmado por el proveedor y una Factura C de homologación autorizada. La nota copia los datos históricos de esa factura, se vincula como comprobante asociado ante WSFE, obtiene su propia numeración y CAE, y queda disponible en PDF con QR. Los reembolsos parciales permanecen fuera de este flujo automático porque requieren definir importes e ítems a ajustar.
+
 Los comprobantes se persisten en `BillingDocuments` y sus renglones en `BillingDocumentItems`. Cada registro conserva snapshots del emisor, receptor, importes y productos: cambiar después el perfil fiscal, el usuario o la orden no modifica el documento histórico. El modelo admite comprobante interno, facturas A/B/C y notas de crédito A/B/C con los estados `Draft`, `PendingAuthorization`, `Authorized` y `Rejected`.
 
-La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. Las notas de crédito pueden relacionarse con el documento original. La etapa actual usa esos campos para la Factura C de homologación; la habilitación productiva y las notas de crédito siguen fuera de alcance.
+La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. La Nota de Crédito C de homologación se relaciona con la factura original y el caso de uso evita emitir más de una por pedido. La habilitación productiva y la selección de clases fiscales según la condición tributaria siguen fuera de alcance.
 
 La configuración incluye el origen y la vigencia de las cotizaciones:
 

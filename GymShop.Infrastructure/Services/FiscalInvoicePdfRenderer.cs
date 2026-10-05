@@ -22,8 +22,9 @@ public sealed class FiscalInvoicePdfRenderer(IStoreTimeZone storeTimeZone) : IFi
 
     private static void Validate(BillingDocument document)
     {
-        if (document.Category != BillingDocumentCategory.Invoice ||
-            document.Type is not (BillingDocumentType.InvoiceA or BillingDocumentType.InvoiceB or BillingDocumentType.InvoiceC) ||
+        if (document.Category is not (BillingDocumentCategory.Invoice or BillingDocumentCategory.CreditNote) ||
+            document.Type is not (BillingDocumentType.InvoiceA or BillingDocumentType.InvoiceB or BillingDocumentType.InvoiceC or
+                BillingDocumentType.CreditNoteA or BillingDocumentType.CreditNoteB or BillingDocumentType.CreditNoteC) ||
             document.Status != BillingDocumentStatus.Authorized || document.PointOfSale is null ||
             document.DocumentNumber is null || string.IsNullOrWhiteSpace(document.Cae) || document.CaeExpiresOn is null)
             throw new ArgumentException("The document is not a complete authorized fiscal invoice.", nameof(document));
@@ -174,8 +175,12 @@ public sealed class FiscalInvoicePdfRenderer(IStoreTimeZone storeTimeZone) : IFi
             Text(detailsX, _y - 29, 10, true, $"CAE: {document.Cae}");
             Text(detailsX, _y - 49, 9, false, $"Vencimiento CAE: {document.CaeExpiresOn:dd/MM/yyyy}");
             Text(detailsX, _y - 70, 8, false, $"Comprobante: {document.PointOfSale:00000}-{document.DocumentNumber:00000000}", 0.33m, 0.36m, 0.33m);
-            DrawWrapped(detailsX, _y - 91, ContentWidth - qrSize - 20,
-                "Escanea el codigo para consultar los datos codificados del comprobante.", 8, false, 0.33m);
+            if (document.RelatedDocument?.PointOfSale is not null && document.RelatedDocument.DocumentNumber is not null)
+                Text(detailsX, _y - 88, 8, false, $"Factura asociada: {document.RelatedDocument.PointOfSale:00000}-{document.RelatedDocument.DocumentNumber:00000000}", 0.33m, 0.36m, 0.33m);
+            DrawWrapped(detailsX, document.RelatedDocument is null ? _y - 91 : _y - 109, ContentWidth - qrSize - 20,
+                document.RelatedDocument is null
+                    ? "Escanea el codigo para consultar los datos codificados del comprobante."
+                    : "Esta nota de credito anula la factura asociada indicada arriba.", 8, false, 0.33m);
             _y -= qrSize + 14;
         }
 
@@ -250,8 +255,21 @@ public sealed class FiscalInvoicePdfRenderer(IStoreTimeZone storeTimeZone) : IFi
 
         private static string Safe(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
         private static string Money(decimal amount) => amount.ToString("N2", AmountCulture);
-        private static string InvoiceName(BillingDocumentType type) => type switch { BillingDocumentType.InvoiceA => "Factura A", BillingDocumentType.InvoiceB => "Factura B", _ => "Factura C" };
-        private static string InvoiceLetter(BillingDocumentType type) => type switch { BillingDocumentType.InvoiceA => "A", BillingDocumentType.InvoiceB => "B", _ => "C" };
+        private static string InvoiceName(BillingDocumentType type) => type switch
+        {
+            BillingDocumentType.InvoiceA => "Factura A",
+            BillingDocumentType.InvoiceB => "Factura B",
+            BillingDocumentType.InvoiceC => "Factura C",
+            BillingDocumentType.CreditNoteA => "Nota de credito A",
+            BillingDocumentType.CreditNoteB => "Nota de credito B",
+            _ => "Nota de credito C"
+        };
+        private static string InvoiceLetter(BillingDocumentType type) => type switch
+        {
+            BillingDocumentType.InvoiceA or BillingDocumentType.CreditNoteA => "A",
+            BillingDocumentType.InvoiceB or BillingDocumentType.CreditNoteB => "B",
+            _ => "C"
+        };
         private static string SellerCondition(SellerTaxCondition value) => value switch { SellerTaxCondition.Monotributo => "Responsable Monotributo", SellerTaxCondition.RegisteredTaxpayer => "IVA Responsable Inscripto", SellerTaxCondition.Exempt => "IVA Exento", _ => "Condicion fiscal no informada" };
         private static string RecipientCondition(RecipientTaxCondition value) => value switch { RecipientTaxCondition.RegisteredTaxpayer => "IVA Responsable Inscripto", RecipientTaxCondition.Monotributo => "Responsable Monotributo", RecipientTaxCondition.Exempt => "IVA Exento", RecipientTaxCondition.NonTaxable => "IVA No Alcanzado", RecipientTaxCondition.ForeignClient => "Cliente del Exterior", _ => "Consumidor Final" };
 
@@ -307,7 +325,10 @@ public static class ArcaInvoiceQr
         BillingDocumentType.InvoiceA => 1,
         BillingDocumentType.InvoiceB => 6,
         BillingDocumentType.InvoiceC => 11,
-        _ => throw new ArgumentOutOfRangeException(nameof(type), "Only invoices can be encoded in the ARCA QR.")
+        BillingDocumentType.CreditNoteA => 3,
+        BillingDocumentType.CreditNoteB => 8,
+        BillingDocumentType.CreditNoteC => 13,
+        _ => throw new ArgumentOutOfRangeException(nameof(type), "Only fiscal documents can be encoded in the ARCA QR.")
     };
 
     private static int? RecipientDocumentCode(FiscalIdentityDocumentType type) => type switch

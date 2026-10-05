@@ -69,6 +69,7 @@ export const api = {
   billingProfile: () => request<BillingProfile>('/api/admin/billing/profile'),
   arcaStatus: () => request<ArcaConnectionStatus>('/api/admin/billing/arca/status'),
   createArcaHomologationInvoice: (orderId: number) => request<BillingDocument>(`/api/admin/billing/arca/homologation/orders/${orderId}/invoice`, { method: 'POST', headers: { 'Idempotency-Key': `arca-homologation-order-${orderId}` } }),
+  createArcaHomologationCreditNote: (orderId: number) => request<BillingDocument>(`/api/admin/billing/arca/homologation/orders/${orderId}/credit-note`, { method: 'POST', headers: { 'Idempotency-Key': `arca-homologation-credit-note-order-${orderId}` } }),
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
   setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null, tracking?: { carrier: string; trackingNumber: string; trackingUrl: string }) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt, ...tracking })),
   createPayment: (orderId: number, provider: PaymentProvider, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider, idempotencyKey })),

@@ -35,6 +35,14 @@ public interface ICreateArcaHomologationInvoiceUseCase
         CancellationToken cancellationToken = default);
 }
 
+public interface ICreateArcaHomologationCreditNoteUseCase
+{
+    Task<AppResult<BillingDocumentResponse>> ExecuteAsync(
+        int orderId,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed class CreateOrderReceiptUseCase(
     IApplicationDbContext db,
     IBillingProfile billingProfile,
@@ -197,6 +205,7 @@ public sealed class GetBillingDocumentPdfUseCase(
         var document = await db.BillingDocuments
             .AsNoTracking()
             .Include(x => x.Items)
+            .Include(x => x.RelatedDocument)
             .SingleOrDefaultAsync(x => x.Id == documentId && x.OrderId == orderId, cancellationToken);
 
         if (document is null)
@@ -218,6 +227,17 @@ public sealed class GetBillingDocumentPdfUseCase(
             return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
                 fiscalInvoiceRenderer.Render(document),
                 $"pedido-{orderId}-factura-{document.PointOfSale:00000}-{document.DocumentNumber:00000000}.pdf"));
+        }
+
+        if (document.Category == BillingDocumentCategory.CreditNote &&
+            document.Type is BillingDocumentType.CreditNoteA or BillingDocumentType.CreditNoteB or BillingDocumentType.CreditNoteC)
+        {
+            if (document.PointOfSale is null || document.DocumentNumber is null ||
+                string.IsNullOrWhiteSpace(document.Cae) || document.CaeExpiresOn is null || document.RelatedDocument is null)
+                return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "La nota de credito autorizada no tiene datos fiscales completos.");
+            return AppResult<BillingDocumentPdfResponse>.Success(new BillingDocumentPdfResponse(
+                fiscalInvoiceRenderer.Render(document),
+                $"pedido-{orderId}-nota-credito-{document.PointOfSale:00000}-{document.DocumentNumber:00000000}.pdf"));
         }
 
         return AppResult<BillingDocumentPdfResponse>.Failure(AppErrorType.Conflict, "El tipo de documento no tiene una representacion PDF disponible.");
@@ -440,6 +460,224 @@ public sealed class CreateArcaHomologationInvoiceUseCase(
     }
 }
 
+public sealed class CreateArcaHomologationCreditNoteUseCase(
+    IApplicationDbContext db,
+    IArcaElectronicInvoiceGateway gateway,
+    TimeProvider timeProvider,
+    IStoreTimeZone storeTimeZone,
+    IAuditContext? auditContext = null) : ICreateArcaHomologationCreditNoteUseCase
+{
+    private static readonly SemaphoreSlim IssuanceLock = new(1, 1);
+
+    public async Task<AppResult<BillingDocumentResponse>> ExecuteAsync(
+        int orderId,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        var key = idempotencyKey?.Trim();
+        if (string.IsNullOrWhiteSpace(key) || key.Length > ValidationLimits.IdempotencyKey)
+            return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia de la nota de credito no es valida.");
+
+        await IssuanceLock.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = await db.BillingDocuments
+                .Include(x => x.Items)
+                .Include(x => x.RelatedDocument)
+                .Where(x => x.IdempotencyKey == key ||
+                            (x.OrderId == orderId && x.Category == BillingDocumentCategory.CreditNote))
+                .OrderByDescending(x => x.IdempotencyKey == key)
+                .ThenByDescending(x => x.CreatedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (existing is not null)
+            {
+                if (existing.OrderId != orderId || existing.Category != BillingDocumentCategory.CreditNote)
+                    return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada para otro comprobante.");
+                if (existing.Status == BillingDocumentStatus.Authorized)
+                    return AppResult<BillingDocumentResponse>.Success(BillingDocumentMapper.ToResponse(existing));
+                if (existing.Status == BillingDocumentStatus.Rejected)
+                {
+                    existing.Status = BillingDocumentStatus.PendingAuthorization;
+                    existing.RejectionCode = null;
+                    existing.RejectionReason = null;
+                    existing.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                return await AuthorizeAsync(existing, cancellationToken);
+            }
+
+            var order = await db.Orders
+                .Include(x => x.Payments)
+                .SingleOrDefaultAsync(x => x.Id == orderId, cancellationToken);
+            if (order is null)
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.NotFound, "Pedido no encontrado.");
+            if (order.Status != OrderStatus.Refunded || !order.Payments.Any(x => x.Status == PaymentStatus.Refunded))
+                return AppResult<BillingDocumentResponse>.Failure(
+                    AppErrorType.Conflict,
+                    "La nota de credito solo puede emitirse despues de que el proveedor confirme el reembolso total.");
+
+            var invoice = await db.BillingDocuments
+                .Include(x => x.Items)
+                .SingleOrDefaultAsync(x => x.OrderId == orderId &&
+                    x.Category == BillingDocumentCategory.Invoice, cancellationToken);
+            if (invoice is null)
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Conflict, "El pedido no tiene una factura para anular.");
+            if (invoice.Type != BillingDocumentType.InvoiceC || invoice.Status != BillingDocumentStatus.Authorized ||
+                invoice.PointOfSale is null || invoice.DocumentNumber is null || string.IsNullOrWhiteSpace(invoice.Cae))
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Conflict, "La factura C asociada no esta autorizada o tiene datos fiscales incompletos.");
+            if (!string.Equals(invoice.AuthorizationProvider, "ARCA-Homologation", StringComparison.Ordinal))
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Conflict, "Solo se pueden anular facturas emitidas en homologacion desde este flujo.");
+
+            ArcaInvoiceSequence sequence;
+            try
+            {
+                sequence = await gateway.GetNextHomologationCreditNoteSequenceAsync(cancellationToken);
+            }
+            catch (HttpRequestException)
+            {
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Unavailable, "No se pudo consultar la numeracion de ARCA.", "arca_unavailable");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Unavailable, "ARCA no respondio a tiempo al consultar la numeracion.", "arca_timeout");
+            }
+
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            var document = new BillingDocument
+            {
+                OrderId = order.Id,
+                PaymentId = invoice.PaymentId,
+                RelatedDocumentId = invoice.Id,
+                RelatedDocument = invoice,
+                IdempotencyKey = key,
+                Category = BillingDocumentCategory.CreditNote,
+                Type = BillingDocumentType.CreditNoteC,
+                Status = BillingDocumentStatus.PendingAuthorization,
+                Currency = invoice.Currency,
+                IssuerBusinessName = invoice.IssuerBusinessName,
+                IssuerCuit = invoice.IssuerCuit,
+                IssuerTaxCondition = invoice.IssuerTaxCondition,
+                IssuerFiscalAddress = invoice.IssuerFiscalAddress,
+                IssuerGrossIncomeNumber = invoice.IssuerGrossIncomeNumber,
+                IssuerActivityStartDate = invoice.IssuerActivityStartDate,
+                RecipientName = invoice.RecipientName,
+                RecipientDocumentType = invoice.RecipientDocumentType,
+                RecipientDocumentNumber = invoice.RecipientDocumentNumber,
+                RecipientTaxCondition = invoice.RecipientTaxCondition,
+                RecipientEmail = invoice.RecipientEmail,
+                RecipientAddress = invoice.RecipientAddress,
+                Subtotal = invoice.Subtotal,
+                DiscountAmount = invoice.DiscountAmount,
+                ShippingAmount = invoice.ShippingAmount,
+                NetTaxedAmount = invoice.NetTaxedAmount,
+                NetUntaxedAmount = invoice.NetUntaxedAmount,
+                ExemptAmount = invoice.ExemptAmount,
+                VatAmount = invoice.VatAmount,
+                OtherTaxesAmount = invoice.OtherTaxesAmount,
+                Total = invoice.Total,
+                PointOfSale = sequence.PointOfSale,
+                DocumentNumber = sequence.DocumentNumber,
+                AuthorizationProvider = "ARCA-Homologation",
+                ProviderRequestId = $"{sequence.PointOfSale}-{sequence.InvoiceType}-{sequence.DocumentNumber}",
+                CreatedAtUtc = now
+            };
+            foreach (var item in invoice.Items.OrderBy(x => x.Id))
+            {
+                document.Items.Add(new BillingDocumentItem
+                {
+                    OrderItemId = item.OrderItemId,
+                    Description = item.Description,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    DiscountAmount = item.DiscountAmount,
+                    NetAmount = item.NetAmount,
+                    VatRate = item.VatRate,
+                    VatAmount = item.VatAmount,
+                    TotalAmount = item.TotalAmount
+                });
+            }
+
+            db.BillingDocuments.Add(document);
+            AuditTrail.Add(db, auditContext, "ArcaHomologationCreditNoteRequested", "Order", order.Id, null,
+                new { documentId = document.Id, relatedDocumentId = invoice.Id, pointOfSale = document.PointOfSale, documentNumber = document.DocumentNumber, total = document.Total },
+                "Nota de credito C de homologacion enviada manualmente a ARCA.");
+            await db.SaveChangesAsync(cancellationToken);
+            return await AuthorizeAsync(document, cancellationToken);
+        }
+        finally
+        {
+            IssuanceLock.Release();
+        }
+    }
+
+    private async Task<AppResult<BillingDocumentResponse>> AuthorizeAsync(
+        BillingDocument document,
+        CancellationToken cancellationToken)
+    {
+        var invoice = document.RelatedDocument;
+        if (document.PointOfSale is null || document.DocumentNumber is null || invoice is null ||
+            invoice.PointOfSale is null || invoice.DocumentNumber is null)
+            return AppResult<BillingDocumentResponse>.Failure(AppErrorType.Conflict, "La nota de credito pendiente no tiene numeracion o factura asociada.");
+
+        var issuedAt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(document.CreatedAtUtc, DateTimeKind.Utc), storeTimeZone.TimeZone);
+        var invoiceIssuedAt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(invoice.CreatedAtUtc, DateTimeKind.Utc), storeTimeZone.TimeZone);
+        ArcaInvoiceAuthorization authorization;
+        try
+        {
+            authorization = await gateway.AuthorizeHomologationCreditNoteAsync(new ArcaCreditNoteAuthorizationRequest(
+                document.PointOfSale.Value,
+                13,
+                document.DocumentNumber.Value,
+                DateOnly.FromDateTime(issuedAt),
+                document.Total,
+                11,
+                invoice.PointOfSale.Value,
+                invoice.DocumentNumber.Value,
+                DateOnly.FromDateTime(invoiceIssuedAt)), cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return AppResult<BillingDocumentResponse>.Failure(
+                AppErrorType.Unavailable,
+                "No se obtuvo respuesta de ARCA. La nota de credito quedo pendiente y puede reintentarse con la misma clave.",
+                "arca_unavailable");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return AppResult<BillingDocumentResponse>.Failure(
+                AppErrorType.Unavailable,
+                "ARCA no respondio a tiempo. La nota de credito quedo pendiente y puede reintentarse con la misma clave.",
+                "arca_timeout");
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        document.UpdatedAtUtc = now;
+        if (authorization.Authorized)
+        {
+            document.Status = BillingDocumentStatus.Authorized;
+            document.Cae = authorization.Cae;
+            document.CaeExpiresOn = authorization.CaeExpiresOn;
+            document.AuthorizedAtUtc = now;
+            document.RejectionCode = null;
+            document.RejectionReason = null;
+            AuditTrail.Add(db, auditContext, "ArcaHomologationCreditNoteAuthorized", "Order", document.OrderId, null,
+                new { documentId = document.Id, relatedDocumentId = document.RelatedDocumentId, pointOfSale = document.PointOfSale, documentNumber = document.DocumentNumber },
+                "ARCA autorizo la nota de credito C de homologacion.");
+        }
+        else
+        {
+            document.Status = BillingDocumentStatus.Rejected;
+            document.RejectionCode = authorization.RejectionCode;
+            document.RejectionReason = authorization.RejectionReason;
+            AuditTrail.Add(db, auditContext, "ArcaHomologationCreditNoteRejected", "Order", document.OrderId, null,
+                new { documentId = document.Id, relatedDocumentId = document.RelatedDocumentId, code = document.RejectionCode },
+                "ARCA rechazo la nota de credito C de homologacion.");
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return AppResult<BillingDocumentResponse>.Success(BillingDocumentMapper.ToResponse(document));
+    }
+}
+
 public sealed class GetArcaConnectionStatusUseCase(IArcaElectronicInvoiceGateway gateway) : IGetArcaConnectionStatusUseCase
 {
     public async Task<AppResult<ArcaConnectionStatus>> ExecuteAsync(CancellationToken cancellationToken = default) =>
@@ -452,6 +690,7 @@ internal static class BillingDocumentMapper
         document.Id,
         document.OrderId,
         document.PaymentId,
+        document.RelatedDocumentId,
         document.Category.ToString(),
         document.Type.ToString(),
         document.Status.ToString(),

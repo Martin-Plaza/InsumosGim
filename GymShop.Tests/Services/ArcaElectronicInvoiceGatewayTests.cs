@@ -183,6 +183,45 @@ public sealed class ArcaElectronicInvoiceGatewayTests
         Assert.Equal("La fecha informada no es valida", result.RejectionReason);
     }
 
+    [Fact]
+    public async Task Credit_note_uses_type_13_and_associates_the_original_invoice_c()
+    {
+        var options = CreateOptions();
+        string? sequenceBody = null;
+        string? authorizationBody = null;
+        var handler = new RecordingHandler((request, call) =>
+        {
+            if (request.RequestUri == options.WsaaAddress) return Xml(WsaaResponse(Now.AddHours(12)));
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (body.Contains("FECompUltimoAutorizado", StringComparison.Ordinal))
+            {
+                sequenceBody = body;
+                return Xml(LastAuthorizedResponse(8));
+            }
+            authorizationBody = body;
+            return Xml(AuthorizationResponse("A", "74123456789015", "20261013"));
+        });
+        var gateway = CreateGateway(options, handler);
+
+        var sequence = await gateway.GetNextHomologationCreditNoteSequenceAsync();
+        var result = await gateway.AuthorizeHomologationCreditNoteAsync(new ArcaCreditNoteAuthorizationRequest(
+            sequence.PointOfSale, sequence.InvoiceType, sequence.DocumentNumber, new DateOnly(2026, 10, 5), 35000m,
+            11, 1, 4, new DateOnly(2026, 10, 3)));
+
+        Assert.Equal(13, sequence.InvoiceType);
+        Assert.Equal(9, sequence.DocumentNumber);
+        Assert.Equal("13", ElementValue(sequenceBody, "CbteTipo"));
+        Assert.True(result.Authorized);
+        Assert.Equal("13", ElementValue(authorizationBody, "CbteTipo"));
+        var associated = XDocument.Parse(Assert.IsType<string>(authorizationBody)).Descendants()
+            .Single(x => x.Name.LocalName == "CbteAsoc");
+        Assert.Equal("11", associated.Elements().Single(x => x.Name.LocalName == "Tipo").Value);
+        Assert.Equal("1", associated.Elements().Single(x => x.Name.LocalName == "PtoVta").Value);
+        Assert.Equal("4", associated.Elements().Single(x => x.Name.LocalName == "Nro").Value);
+        Assert.Equal("30536259194", associated.Elements().Single(x => x.Name.LocalName == "Cuit").Value);
+        Assert.Equal("20261003", associated.Elements().Single(x => x.Name.LocalName == "CbteFch").Value);
+    }
+
     private static ArcaElectronicInvoiceGateway CreateGateway(ArcaOptions options, HttpMessageHandler handler) =>
         new(
             new HttpClient(handler),

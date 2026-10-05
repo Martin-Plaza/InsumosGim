@@ -62,6 +62,28 @@ public sealed class FiscalInvoicePdfRendererTests
         Assert.Contains($"Pagina {pageCount} de {pageCount}", text);
     }
 
+    [Fact]
+    public void Render_credit_note_includes_associated_invoice_and_qr_type_13()
+    {
+        var invoice = CreateDocument(1);
+        var creditNote = CreateDocument(1);
+        creditNote.Category = BillingDocumentCategory.CreditNote;
+        creditNote.Type = BillingDocumentType.CreditNoteC;
+        creditNote.DocumentNumber = 2;
+        creditNote.RelatedDocumentId = invoice.Id;
+        creditNote.RelatedDocument = invoice;
+
+        var pdf = new FiscalInvoicePdfRenderer(new StoreTimeZone(null)).Render(creditNote);
+        var text = Encoding.ASCII.GetString(pdf);
+        var url = ArcaInvoiceQr.BuildUrl(creditNote, new StoreTimeZone(null).TimeZone);
+        using var json = JsonDocument.Parse(Convert.FromBase64String(url[(url.IndexOf("?p=", StringComparison.Ordinal) + 3)..]));
+
+        Assert.Contains("NOTA DE CREDITO C", text);
+        Assert.Contains("Factura asociada: 00001-00000001", text);
+        Assert.Equal(13, json.RootElement.GetProperty("tipoCmp").GetInt32());
+        WritePreviewWhenRequested(pdf, "GYMSHOP_CREDIT_NOTE_PDF_PREVIEW_PATH");
+    }
+
     private static BillingDocument CreateDocument(int itemCount)
     {
         var document = new BillingDocument
@@ -98,9 +120,9 @@ public sealed class FiscalInvoicePdfRendererTests
         return document;
     }
 
-    private static void WritePreviewWhenRequested(byte[] pdf)
+    private static void WritePreviewWhenRequested(byte[] pdf, string variable = "GYMSHOP_FISCAL_PDF_PREVIEW_PATH")
     {
-        var path = Environment.GetEnvironmentVariable("GYMSHOP_FISCAL_PDF_PREVIEW_PATH");
+        var path = Environment.GetEnvironmentVariable(variable);
         if (string.IsNullOrWhiteSpace(path)) return;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, pdf);

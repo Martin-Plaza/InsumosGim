@@ -19,14 +19,14 @@ const transitionGuidance: Record<OrderStatus, string> = {
   Canceled: 'El pedido fue cancelado y no admite más cambios administrativos.',
   Refunded: 'El reembolso se resolvió desde el flujo de pagos; no admite cambios administrativos.'
 }
-const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', FreeOrderConfirmed: 'Pedido gratuito confirmado', PurchaseReceiptCreated: 'Comprobante interno generado', ArcaHomologationInvoiceRequested: 'Factura de homologación solicitada', ArcaHomologationInvoiceAuthorized: 'Factura de homologación autorizada', ArcaHomologationInvoiceRejected: 'Factura de homologación rechazada', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
+const actionLabels: Record<string, string> = { OrderStatusChanged: 'Estado del pedido actualizado', OrderTrackingUpdated: 'Seguimiento corregido', OrderCanceled: 'Pedido cancelado', OrderExpiredAdministratively: 'Pedido vencido automáticamente', FreeOrderConfirmed: 'Pedido gratuito confirmado', PurchaseReceiptCreated: 'Comprobante interno generado', ArcaHomologationInvoiceRequested: 'Factura de homologación solicitada', ArcaHomologationInvoiceAuthorized: 'Factura de homologación autorizada', ArcaHomologationInvoiceRejected: 'Factura de homologación rechazada', ArcaHomologationCreditNoteRequested: 'Nota de crédito de homologación solicitada', ArcaHomologationCreditNoteAuthorized: 'Nota de crédito de homologación autorizada', ArcaHomologationCreditNoteRejected: 'Nota de crédito de homologación rechazada', PaymentResolvedByProvider: 'Pago resuelto por el proveedor', PaymentResolvedManually: 'Pago resuelto manualmente', PaymentRefundedByProvider: 'Reembolso confirmado por el proveedor', PaymentPartialRefundFlagged: 'Reembolso parcial informado por el proveedor', PaymentApprovedAfterOrderCancellation: 'Incidencia: pago aprobado después de cancelar', PaymentWebhookUnmatched: 'Incidencia: webhook sin intento inequívoco' }
 const sourceLabels = { Manual: 'Manual', Automatic: 'Automático', Provider: 'Proveedor' }
 const formatDate = (value: string) => new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const formatDateOnly = (value: string) => {
   const [year, month, day] = value.split('-').map(Number)
   return new Intl.DateTimeFormat(storefront.market.locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(Date.UTC(year, month - 1, day)))
 }
-const fiscalDocumentLabels: Record<string, string> = { InvoiceA: 'Factura A', InvoiceB: 'Factura B', InvoiceC: 'Factura C' }
+const fiscalDocumentLabels: Record<string, string> = { InvoiceA: 'Factura A', InvoiceB: 'Factura B', InvoiceC: 'Factura C', CreditNoteA: 'Nota de crédito A', CreditNoteB: 'Nota de crédito B', CreditNoteC: 'Nota de crédito C' }
 const fiscalNumber = (value: number | null, length: number) => value === null ? '—' : String(value).padStart(length, '0')
 const utcStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : undefined
 const utcEnd = (value: string) => value ? new Date(`${value}T23:59:59.999`).toISOString() : undefined
@@ -180,8 +180,8 @@ export function AdminOrders() {
       if (download) {
         const link = window.document.createElement('a')
         link.href = url
-        link.download = document.category === 'Invoice'
-          ? `pedido-${detail.id}-factura-${fiscalNumber(document.pointOfSale, 5)}-${fiscalNumber(document.documentNumber, 8)}.pdf`
+        link.download = document.category !== 'Receipt'
+          ? `pedido-${detail.id}-${document.category === 'CreditNote' ? 'nota-credito' : 'factura'}-${fiscalNumber(document.pointOfSale, 5)}-${fiscalNumber(document.documentNumber, 8)}.pdf`
           : `pedido-${detail.id}-comprobante.pdf`
         window.document.body.appendChild(link); link.click(); link.remove()
       } else if (popup) {
@@ -224,7 +224,7 @@ export function AdminOrders() {
       <section><h3>Comprobantes</h3>{billingDocuments.length === 0 ? <p>Todavía no se generó ningún comprobante.</p> : billingDocuments.map(document => {
         const isReceipt = document.category === 'Receipt'
         const isHomologation = document.authorizationProvider === 'ARCA-Homologation'
-        const pdfAvailable = isReceipt || (document.category === 'Invoice' && document.status === 'Authorized' && Boolean(document.cae))
+        const pdfAvailable = isReceipt || (document.category !== 'Receipt' && document.status === 'Authorized' && Boolean(document.cae))
         return <article className="payment" key={document.id}><span><strong>{isReceipt ? 'Comprobante interno' : `${fiscalDocumentLabels[document.type] || document.type}${isHomologation ? ' · Homologación' : ''}`}</strong><small>{formatDate(document.authorizedAtUtc || document.createdAtUtc)}</small></span><Status value={document.status} /><p>A nombre de {document.recipientName} · {money(document.total)} {document.currency}</p>{!isReceipt && <><p>Punto de venta {fiscalNumber(document.pointOfSale, 5)} · Número {fiscalNumber(document.documentNumber, 8)}</p>{document.cae && <p><strong>CAE {document.cae}</strong>{document.caeExpiresOn ? ` · Vence ${formatDateOnly(document.caeExpiresOn)}` : ''}</p>}{document.rejectionReason && <p className="error">{document.rejectionCode ? `${document.rejectionCode}: ` : ''}{document.rejectionReason}</p>}</>}<small>Identificador: {document.id}</small>{pdfAvailable && <div className="actions receipt-actions"><button type="button" disabled={Boolean(pdfAction)} onClick={() => void getDocumentPdf(document, false)}>{pdfAction === `${document.id}:view` ? 'Abriendo…' : 'Ver PDF'}</button><button type="button" disabled={Boolean(pdfAction)} onClick={() => void getDocumentPdf(document, true)}>{pdfAction === `${document.id}:download` ? 'Descargando…' : 'Descargar PDF'}</button></div>}</article>
       })}{canGenerateReceipt && <button className="primary" type="button" disabled={pending} onClick={() => void createReceipt()}>{pending ? 'Generando…' : 'Generar comprobante'}</button>}{(canGenerateReceipt || billingDocuments.some(document => document.category === 'Receipt')) && <p className="admin-footnote">El comprobante interno es una constancia de compra y no reemplaza una factura fiscal de ARCA.</p>}{billingDocuments.some(document => document.category === 'Invoice') && <p className="admin-footnote">La representación fiscal incluye CAE, vencimiento y código QR de ARCA.</p>}</section>
       <section><h3>Fechas</h3><p>Creado: {formatDate(detail.createdAt)}<br />Última actualización: {detail.updatedAt ? formatDate(detail.updatedAt) : 'Sin cambios posteriores'}</p>{detail.cancellationReason && <p>Motivo: {detail.cancellationReason}</p>}</section>

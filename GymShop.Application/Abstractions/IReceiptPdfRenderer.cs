@@ -6,3 +6,8 @@ public interface IReceiptPdfRenderer
 {
     byte[] Render(BillingDocument document);
 }
+
+public interface IFiscalInvoicePdfRenderer
+{
+    byte[] Render(BillingDocument document);
+}

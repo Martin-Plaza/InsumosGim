@@ -1620,6 +1620,8 @@ La pantalla administrativa permite emitir manualmente una Factura C de prueba pa
 
 La emisión guarda primero el documento como `PendingAuthorization`. Si ARCA no responde, un reintento conserva la misma numeración; si autoriza, persiste CAE y vencimiento, y si rechaza, conserva el código y mensaje acotado. Solo se permite una factura por orden y el botón solicita confirmación explícita porque, aunque sea homologación, genera un comprobante dentro del entorno de pruebas de ARCA.
 
+Las facturas autorizadas pueden visualizarse y descargarse desde el detalle administrativo del pedido. La representación PDF incluye emisor, receptor, productos, totales, punto de venta, número, CAE, vencimiento y el código QR versión 1 definido por ARCA. Mientras el proveedor sea `ARCA-Homologation`, el documento lleva una advertencia visible de homologación y no tiene validez fiscal productiva.
+
 Los comprobantes se persisten en `BillingDocuments` y sus renglones en `BillingDocumentItems`. Cada registro conserva snapshots del emisor, receptor, importes y productos: cambiar después el perfil fiscal, el usuario o la orden no modifica el documento histórico. El modelo admite comprobante interno, facturas A/B/C y notas de crédito A/B/C con los estados `Draft`, `PendingAuthorization`, `Authorized` y `Rejected`.
 
 La base aplica idempotencia global, permite como máximo un comprobante interno y una factura por orden, y evita repetir una numeración dentro de la misma combinación de punto de venta y tipo fiscal. Las notas de crédito pueden relacionarse con el documento original. La etapa actual usa esos campos para la Factura C de homologación; la habilitación productiva y las notas de crédito siguen fuera de alcance.

@@ -29,6 +29,7 @@ public static class DependencyInjection
             throw new InvalidOperationException(string.Join(' ', billingFailures));
         services.AddSingleton<IBillingProfile>(billingOptions);
         services.AddSingleton<IReceiptPdfRenderer, InternalReceiptPdfRenderer>();
+        services.AddSingleton<IFiscalInvoicePdfRenderer, FiscalInvoicePdfRenderer>();
         var arcaOptions = configuration.GetSection(ArcaOptions.SectionName).Get<ArcaOptions>() ?? new ArcaOptions();
         var arcaFailures = arcaOptions.Validate(billingOptions.ArcaEnabled);
         if (arcaFailures.Count > 0)

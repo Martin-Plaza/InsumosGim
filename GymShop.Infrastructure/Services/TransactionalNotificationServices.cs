@@ -16,6 +16,8 @@ namespace GymShop.Infrastructure.Services;
 public sealed class TransactionalNotificationProcessor(
     GymShopDbContext db,
     ITransactionalEmailSender sender,
+    IReceiptPdfRenderer receiptRenderer,
+    IBillingProfile billingProfile,
     IOptions<EmailOptions> options,
     TimeProvider timeProvider,
     ILogger<TransactionalNotificationProcessor> logger)
@@ -108,7 +110,10 @@ public sealed class TransactionalNotificationProcessor(
     private async Task<TransactionalEmailMessage?> ComposeAsync(NotificationOutboxMessage message, CancellationToken cancellationToken)
     {
         if (message.OrderId is null) return null;
-        var order = await db.Orders.AsNoTracking().Include(x => x.User)
+        var order = await db.Orders.AsNoTracking()
+            .Include(x => x.User)
+            .Include(x => x.Items)
+            .Include(x => x.Payments)
             .SingleOrDefaultAsync(x => x.Id == message.OrderId, cancellationToken);
         if (order?.User is null || string.IsNullOrWhiteSpace(order.User.Email)) return null;
         var name = HtmlEncoder.Default.Encode(order.User.Name);
@@ -117,7 +122,7 @@ public sealed class TransactionalNotificationProcessor(
         var (subject, heading, text) = message.Type switch
         {
             TransactionalNotificationType.OrderCreated => ($"Recibimos tu pedido #{order.Id}", "Pedido recibido", $"Registramos tu pedido por {amount}. Podés consultar su estado y continuar con el pago desde Mis órdenes."),
-            TransactionalNotificationType.PaymentApproved => ($"Pago aprobado para el pedido #{order.Id}", "Pago aprobado", $"Confirmamos el pago de {amount}. Ya podemos comenzar a preparar tu pedido."),
+            TransactionalNotificationType.PaymentApproved => ($"Pago aprobado para el pedido #{order.Id}", "Pago aprobado", $"Confirmamos el pago de {amount}. Adjuntamos la constancia interna de tu compra y ya podemos comenzar a preparar tu pedido."),
             TransactionalNotificationType.PaymentRejected => ($"No se aprobó el pago del pedido #{order.Id}", "Pago no aprobado", "El proveedor no aprobó el intento de pago. Podés revisar el pedido e intentar nuevamente mientras continúe pendiente."),
             TransactionalNotificationType.OrderPreparing => ($"Estamos preparando tu pedido #{order.Id}", "Pedido en preparación", "Tu compra ya está siendo preparada."),
             TransactionalNotificationType.OrderShipped => ($"Tu pedido #{order.Id} fue enviado", "Pedido enviado", TrackingText(order)),
@@ -129,7 +134,56 @@ public sealed class TransactionalNotificationProcessor(
         var safeText = HtmlEncoder.Default.Encode(text);
         var button = orderUrl is null ? string.Empty : $"<p><a href=\"{HtmlEncoder.Default.Encode(orderUrl)}\" style=\"display:inline-block;padding:12px 18px;background:#c7ff2f;color:#111;text-decoration:none;font-weight:700\">Ver mis órdenes</a></p>";
         var html = $"<main style=\"font-family:Arial,sans-serif;max-width:620px;margin:auto;color:#171b18\"><h1>{HtmlEncoder.Default.Encode(heading)}</h1><p>Hola {name},</p><p>{safeText}</p>{button}<p style=\"color:#667085\">Este es un mensaje automático de {_options.FromName}.</p></main>";
-        return new TransactionalEmailMessage(message.Type.ToString(), order.User.Email, subject, html, $"notification/{message.Id:N}");
+        IReadOnlyList<EmailAttachment>? attachments = message.Type == TransactionalNotificationType.PaymentApproved
+            ? [BuildPurchaseReceipt(order, message.PaymentId)]
+            : null;
+        return new TransactionalEmailMessage(message.Type.ToString(), order.User.Email, subject, html, $"notification/{message.Id:N}", attachments);
+    }
+
+    private EmailAttachment BuildPurchaseReceipt(Order order, int? paymentId)
+    {
+        var payment = order.Payments.FirstOrDefault(x => x.Id == paymentId)
+            ?? order.Payments.Where(x => x.Status == PaymentStatus.Approved)
+                .OrderByDescending(x => x.PaidAt ?? x.UpdatedAt ?? x.CreatedAt).FirstOrDefault();
+        var issuedAt = payment?.PaidAt ?? timeProvider.GetUtcNow().UtcDateTime;
+        var document = new BillingDocument
+        {
+            OrderId = order.Id,
+            PaymentId = payment?.Id,
+            Category = BillingDocumentCategory.Receipt,
+            Type = BillingDocumentType.PurchaseReceipt,
+            Status = BillingDocumentStatus.Authorized,
+            Currency = payment?.Currency ?? "ARS",
+            IssuerBusinessName = billingProfile.BusinessName.Trim(),
+            IssuerCuit = billingProfile.Cuit.Trim(),
+            IssuerTaxCondition = billingProfile.TaxCondition,
+            IssuerFiscalAddress = billingProfile.FiscalAddress.Trim(),
+            IssuerGrossIncomeNumber = billingProfile.GrossIncomeNumber.Trim(),
+            IssuerActivityStartDate = billingProfile.ActivityStartDate,
+            RecipientName = $"{order.User.Name} {order.User.LastName}".Trim(),
+            RecipientDocumentType = FiscalIdentityDocumentType.None,
+            RecipientTaxCondition = RecipientTaxCondition.ConsumerFinal,
+            RecipientEmail = order.User.Email,
+            RecipientAddress = order.ShippingAddress,
+            Subtotal = order.Subtotal,
+            DiscountAmount = order.DiscountAmount,
+            ShippingAmount = order.ShippingCost,
+            Total = order.Total,
+            AuthorizationProvider = "Internal",
+            AuthorizedAtUtc = issuedAt,
+            CreatedAtUtc = issuedAt
+        };
+        foreach (var item in order.Items.OrderBy(x => x.Id))
+            document.Items.Add(new BillingDocumentItem
+            {
+                OrderItemId = item.Id,
+                Description = string.IsNullOrWhiteSpace(item.VariantSku) ? item.ProductName : $"{item.ProductName} ({item.VariantSku})",
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                NetAmount = item.Subtotal,
+                TotalAmount = item.Subtotal
+            });
+        return new EmailAttachment($"pedido-{order.Id}-comprobante.pdf", "application/pdf", receiptRenderer.Render(document));
     }
 
     private async Task<(string Subject, string Heading, string Text)> BillingTextAsync(NotificationOutboxMessage message, int orderId, CancellationToken cancellationToken)

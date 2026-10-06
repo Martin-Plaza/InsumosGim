@@ -103,10 +103,40 @@ public sealed class TransactionalNotificationTests
         Assert.Equal(OrderStatus.Pending, (await db.Orders.SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task Payment_approved_email_includes_purchase_receipt_pdf()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var order = CreateOrder();
+        order.Items.Add(new OrderItem { ProductId = 1, ProductName = "Mancuerna", Quantity = 2, UnitPrice = 15000, Subtotal = 30000 });
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+        db.NotificationOutboxMessages.RemoveRange(db.NotificationOutboxMessages);
+        await db.SaveChangesAsync();
+        var payment = new Payment { Order = order, Provider = "MercadoPago", ExternalReference = "order-receipt", Amount = order.Total, Currency = "ARS", Status = PaymentStatus.Pending };
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
+        payment.Status = PaymentStatus.Approved;
+        payment.PaidAt = Now.UtcDateTime;
+        await db.SaveChangesAsync();
+        var sender = new FakeSender(EmailSendResult.Accepted());
+
+        await CreateProcessor(db, sender).ProcessBatchAsync();
+
+        var attachment = Assert.Single(sender.LastMessage!.Attachments!);
+        Assert.Equal($"pedido-{order.Id}-comprobante.pdf", attachment.FileName);
+        Assert.Equal("application/pdf", attachment.ContentType);
+        Assert.StartsWith("%PDF-1.4", System.Text.Encoding.ASCII.GetString(attachment.Content));
+        Assert.Contains("Adjuntamos la constancia interna", sender.LastMessage.Html);
+    }
+
     private static TransactionalNotificationProcessor CreateProcessor(
         GymShop.Infrastructure.Data.GymShopDbContext db,
         ITransactionalEmailSender sender) =>
-        new(db, sender, Options.Create(new EmailOptions
+        new(db, sender,
+            new InternalReceiptPdfRenderer(new StoreTimeZone(null)),
+            new BillingOptions { BusinessName = "GymShop", Cuit = "", FiscalAddress = "" },
+            Options.Create(new EmailOptions
         {
             FromName = "GymShop",
             PublicAppUrl = "https://demo.example"

@@ -34,7 +34,13 @@ public sealed record TransactionalEmailMessage(
     string Recipient,
     string Subject,
     string Html,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    IReadOnlyList<EmailAttachment>? Attachments = null);
+
+public sealed record EmailAttachment(
+    string FileName,
+    string ContentType,
+    byte[] Content);
 
 public interface ITransactionalEmailSender
 {

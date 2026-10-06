@@ -72,6 +72,29 @@ public sealed class EmailDeliveryTests
     }
 
     [Fact]
+    public async Task Resend_sends_pdf_attachment_as_base64_without_logging_its_content()
+    {
+        string? body = null;
+        var (sender, logger) = CreateSender(request =>
+        {
+            body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        var pdf = Encoding.ASCII.GetBytes("%PDF-1.4 test-private-content");
+
+        var result = await ((ITransactionalEmailSender)sender).SendAsync(new TransactionalEmailMessage(
+            "payment-approved", Recipient, "Pago aprobado", "<h1>Compra</h1>", "notification/payment",
+            [new EmailAttachment("pedido-15-comprobante.pdf", "application/pdf", pdf)]));
+
+        Assert.True(result.AcceptedByProvider);
+        Assert.Contains("pedido-15-comprobante.pdf", body);
+        Assert.Contains(Convert.ToBase64String(pdf), body);
+        Assert.Contains("application/pdf", body);
+        AssertLogsContainNoSecrets(logger);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("test-private-content", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Resend_reports_http_rejection_with_status_only()
     {
         var (sender, logger) = CreateSender(_ => new HttpResponseMessage(HttpStatusCode.UnprocessableEntity));

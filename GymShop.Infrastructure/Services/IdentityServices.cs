@@ -49,24 +49,31 @@ public sealed class ResendEmailSender(
         deliver ? SendAsync(email, "password-reset", "Recuperá tu contraseña de GymShop", "Código de recuperación", code, cancellationToken) : Task.FromResult(EmailSendResult.NotAttempted());
 
     Task<EmailSendResult> ITransactionalEmailSender.SendAsync(TransactionalEmailMessage message, CancellationToken cancellationToken) =>
-        SendHtmlAsync(message.Recipient, message.Purpose, message.Subject, message.Html, cancellationToken, message.IdempotencyKey);
+        SendHtmlAsync(message.Recipient, message.Purpose, message.Subject, message.Html, cancellationToken, message.IdempotencyKey, message.Attachments);
 
     private async Task<EmailSendResult> SendAsync(string email, string purpose, string subject, string heading, string code, CancellationToken cancellationToken)
         => await SendHtmlAsync(email, purpose, subject,
             $"<h1>{heading}</h1><p>Tu código es:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:6px\">{code}</p><p>Si no solicitaste este mensaje, podés ignorarlo.</p>", cancellationToken, null);
 
-    private async Task<EmailSendResult> SendHtmlAsync(string email, string purpose, string subject, string html, CancellationToken cancellationToken, string? idempotencyKey)
+    private async Task<EmailSendResult> SendHtmlAsync(string email, string purpose, string subject, string html, CancellationToken cancellationToken, string? idempotencyKey, IReadOnlyList<EmailAttachment>? attachments = null)
     {
         var from = string.IsNullOrWhiteSpace(_options.FromName)
             ? _options.FromAddress
             : $"{_options.FromName} <{_options.FromAddress}>";
-        var payload = new
+        var payload = new Dictionary<string, object>
         {
-            from,
-            to = new[] { email },
-            subject,
-            html
+            ["from"] = from,
+            ["to"] = new[] { email },
+            ["subject"] = subject,
+            ["html"] = html
         };
+        if (attachments is { Count: > 0 })
+            payload["attachments"] = attachments.Select(attachment => new
+            {
+                filename = attachment.FileName,
+                content = Convert.ToBase64String(attachment.Content),
+                content_type = attachment.ContentType
+            }).ToArray();
 
         try
         {

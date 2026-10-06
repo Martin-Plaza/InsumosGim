@@ -28,9 +28,11 @@ import { CheckoutPage } from './features/checkout/CheckoutPage'
 import { CheckoutResultPage } from './features/checkout/CheckoutResultPage'
 import { Home } from './features/home/Home'
 import { OrdersView } from './features/orders/OrdersView'
+import { AppErrorBoundary, NotFoundPage } from './features/errors/ErrorPages'
+import { ContactPage, PrivacyPage, ShippingReturnsPage, TermsPage, WithdrawalPage } from './features/legal/LegalPages'
 
 export default function App() {
-  return <BrowserRouter><CartProvider><AppShell /><CartDrawer /></CartProvider></BrowserRouter>
+  return <AppErrorBoundary><BrowserRouter><CartProvider><AppShell /><CartDrawer /></CartProvider></BrowserRouter></AppErrorBoundary>
 }
 
 function AppShell() {
@@ -55,8 +57,12 @@ function AppShell() {
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
     {!adminArea && <main>{notice && <div className="notice" role="status">{notice}</div>}<StorefrontRoutes user={user} onAuth={auth => { session.save(auth.token, auth.user); setNotice(`Hola, ${auth.user.name}.`) }} /></main>}
     {adminArea && <AdminRoutes user={user} onLogout={logout} />}
-    {!adminArea && <footer>{storefront.copy.footer}</footer>}
+    {!adminArea && <StorefrontFooter />}
   </div>
+}
+
+function StorefrontFooter() {
+  return <footer className="storefront-footer"><div><strong>{storefront.copy.footer}</strong><span>Información clara antes y después de comprar.</span></div><nav aria-label="Información legal"><Link to="/terminos">Términos</Link><Link to="/privacidad">Privacidad</Link><Link to="/envios-cambios-y-devoluciones">Envíos y devoluciones</Link><Link to="/contacto">Contacto</Link><Link className="withdrawal-link" to="/arrepentimiento">Botón de arrepentimiento</Link></nav></footer>
 }
 
 function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | null; onLogout(): void; onCart(): void; cartCount: number }) {
@@ -70,7 +76,8 @@ function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: Au
     <Route path="/catalogo" element={<Catalog />} /><Route path="/catalogo/:productId" element={<ProductDetailPage />} /><Route path="/carrito" element={<CartPage />} />
     <Route path="/checkout" element={user ? <CheckoutPage /> : <RequireLogin />} /><Route path="/checkout/orden/:orderId" element={user ? <CheckoutResultPage canRefreshPayment={isAdmin(user)} /> : <RequireLogin />} />
     <Route path="/login" element={<AuthRoute user={user} onDone={onAuth} />} /><Route path="/ordenes" element={user ? <OrdersView /> : <RequireLogin />} />
-    <Route path="*" element={<Navigate to="/" replace />} />
+    <Route path="/terminos" element={<TermsPage />} /><Route path="/privacidad" element={<PrivacyPage />} /><Route path="/envios-cambios-y-devoluciones" element={<ShippingReturnsPage />} /><Route path="/arrepentimiento" element={<WithdrawalPage />} /><Route path="/contacto" element={<ContactPage />} />
+    <Route path="*" element={<NotFoundPage />} />
   </Routes>
 }
 

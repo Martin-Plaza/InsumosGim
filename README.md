@@ -1106,9 +1106,15 @@ Variables frontend:
 ```text
 VITE_API_URL=http://localhost:5093
 VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
+VITE_LEGAL_BUSINESS_NAME=<RAZON_SOCIAL>
+VITE_LEGAL_CUIT=<CUIT>
+VITE_LEGAL_ADDRESS=<DOMICILIO_LEGAL>
+VITE_LEGAL_EMAIL=<EMAIL_DE_CONTACTO>
 ```
 
 No se deben colocar JWT, credenciales de usuarios ni secretos de Mercado Pago en variables `VITE_*`: Vite las incorpora al bundle publico.
+
+Los datos `VITE_LEGAL_*` son públicos y alimentan las páginas de términos, privacidad, envíos, contacto y arrepentimiento. En una demo pueden omitirse y la interfaz mostrará una advertencia; antes de operar una tienda real deben completarse con los datos verificables del vendedor. El botón de arrepentimiento queda disponible sin autenticación en el pie de toda la tienda.
 
 ### Registro, verificacion y Google
 

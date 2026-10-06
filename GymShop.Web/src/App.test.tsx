@@ -25,6 +25,24 @@ describe('flujos y permisos de la aplicación', () => {
     expect(await screen.findByText('Producto 7')).toBeInTheDocument()
   })
 
+  it('muestra navegación legal y una página 404 real sin redirigir al inicio', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))
+    window.history.replaceState(null, '', '/ruta-que-no-existe')
+    render(<App />)
+    expect(screen.getByRole('heading', { name: 'Acá no hay nada para entrenar' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Botón de arrepentimiento' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/ruta-que-no-existe')
+  })
+
+  it('expone el arrepentimiento sin requerir una sesión', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))
+    window.history.replaceState(null, '', '/arrepentimiento')
+    render(<App />)
+    expect(screen.getByRole('heading', { name: 'Arrepentimiento de compra' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Iniciar solicitud por email' })).toHaveAttribute('href', expect.stringContaining('mailto:'))
+    expect(screen.queryByText('Iniciá sesión para continuar.')).not.toBeInTheDocument()
+  })
+
   it('prioriza productos con imágenes válidas en los destacados', async () => {
     const invalid = { ...product, id: 99, name: 'Producto sin imagen', imageUrl: 'string' }
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/categories') ? json([]) : json([invalid, ...products]))

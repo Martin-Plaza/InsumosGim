@@ -21,11 +21,13 @@ export class ApiError extends Error implements ApiErrorShape {
 }
 
 function errorMessage(status: number) {
+  if (status === 0) return 'No pudimos conectarnos con el servicio. Revisá tu conexión e intentá nuevamente.'
   if (status === 401) return 'Tu sesión no es válida. Iniciá sesión nuevamente.'
   if (status === 403) return 'No tenés permisos para realizar esta acción.'
   if (status === 409) return 'La operación entra en conflicto con el estado actual.'
   if (status === 429) return 'Demasiadas solicitudes. Intentá nuevamente más tarde.'
-  if (status >= 500) return 'Ocurrió un error inesperado.'
+  if (status === 404) return 'El recurso solicitado no existe o ya no está disponible.'
+  if (status >= 500) return 'El servicio no está disponible en este momento. Intentá nuevamente más tarde.'
   return 'No se pudo completar la solicitud.'
 }
 
@@ -52,7 +54,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const token = session.token()
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${API_URL}${path}`, { ...init, headers })
+  let response: Response
+  try { response = await fetch(`${API_URL}${path}`, { ...init, headers }) }
+  catch (error) {
+    if (error instanceof TypeError) throw new ApiError({ status: 0, code: 'network_unavailable', message: errorMessage(0) })
+    throw error
+  }
   if (!response.ok) {
     const error = await normalizeError(response)
     if (response.status === 401) session.clear()
@@ -67,7 +74,12 @@ export async function requestBlob(path: string, init: RequestInit = {}): Promise
   headers.set('Accept', 'application/pdf')
   const token = session.token()
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${API_URL}${path}`, { ...init, headers })
+  let response: Response
+  try { response = await fetch(`${API_URL}${path}`, { ...init, headers }) }
+  catch (error) {
+    if (error instanceof TypeError) throw new ApiError({ status: 0, code: 'network_unavailable', message: errorMessage(0) })
+    throw error
+  }
   if (!response.ok) {
     const error = await normalizeError(response)
     if (response.status === 401) session.clear()

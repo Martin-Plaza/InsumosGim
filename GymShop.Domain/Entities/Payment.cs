@@ -5,7 +5,8 @@ namespace GymShop.Domain.Entities;
 public class Payment
 {
     public int Id { get; set; }
-    public int OrderId { get; set; }
+    public int? OrderId { get; set; }
+    public int? CheckoutSessionId { get; set; }
     public string Provider { get; set; } = string.Empty;
     public string ExternalReference { get; set; } = string.Empty;
     public string? ProviderPreferenceId { get; set; }
@@ -20,7 +21,8 @@ public class Payment
     public DateTime? UpdatedAt { get; set; }
     public DateTime? PaidAt { get; set; }
 
-    public Order Order { get; set; } = null!;
+    public Order? Order { get; set; }
+    public CheckoutSession? CheckoutSession { get; set; }
     public ICollection<BillingDocument> BillingDocuments { get; set; } = new List<BillingDocument>();
 }
 

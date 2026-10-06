@@ -69,6 +69,7 @@ public static class DependencyInjection
         services.AddScoped<IGetOrderPaymentsUseCase, GetOrderPaymentsUseCase>();
         services.AddScoped<IUpdatePaymentStatusUseCase, UpdatePaymentStatusUseCase>();
         services.AddScoped<IHandlePaymentWebhookUseCase, HandlePaymentWebhookUseCase>();
+        services.AddScoped<ICreateCheckoutPaymentUseCase, CreateCheckoutPaymentUseCase>();
 
         services.AddScoped<IGetCartUseCase, GetCartUseCase>();
         services.AddScoped<IAddCartItemUseCase, AddCartItemUseCase>();
@@ -76,6 +77,7 @@ public static class DependencyInjection
         services.AddScoped<IRemoveCartItemUseCase, RemoveCartItemUseCase>();
         services.AddScoped<IClearCartUseCase, ClearCartUseCase>();
         services.AddScoped<ICheckoutCartUseCase, CheckoutCartUseCase>();
+        services.AddScoped<IGetCheckoutSessionUseCase, GetCheckoutSessionUseCase>();
         services.AddScoped<IQuoteCartShippingUseCase, QuoteCartShippingUseCase>();
         services.AddScoped<IApplyCartCouponUseCase, ApplyCartCouponUseCase>();
         services.AddScoped<IRemoveCartCouponUseCase, RemoveCartCouponUseCase>();

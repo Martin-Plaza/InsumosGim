@@ -23,6 +23,20 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         _options.Enabled && string.Equals(provider, "MercadoPago", StringComparison.OrdinalIgnoreCase);
 
     public async Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
+        => await CreatePreferenceCoreAsync(order, idempotencyKey, externalReference,
+            _options.SuccessUrl, _options.FailureUrl, _options.PendingUrl, "{orderId}", cancellationToken);
+
+    public async Task<PaymentPreferenceResult> CreatePreferenceAsync(CheckoutSession checkout, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default)
+    {
+        var projection = new Order { Id = checkout.Id, Total = checkout.Total, ShippingCost = checkout.ShippingCost };
+        foreach (var item in checkout.Items)
+            projection.Items.Add(new OrderItem { ProductId = item.ProductId, ProductName = item.ProductName, UnitPrice = item.UnitPrice, Quantity = item.Quantity, Subtotal = item.Subtotal });
+        return await CreatePreferenceCoreAsync(projection, idempotencyKey, externalReference,
+            _options.CheckoutSuccessUrl, _options.CheckoutFailureUrl, _options.CheckoutPendingUrl, "{checkoutId}", cancellationToken);
+    }
+
+    private async Task<PaymentPreferenceResult> CreatePreferenceCoreAsync(Order order, string? idempotencyKey, string? externalReference,
+        string? successTemplate, string? failureTemplate, string? pendingTemplate, string placeholder, CancellationToken cancellationToken)
     {
         if (decimal.Round(order.Total, 2, MidpointRounding.AwayFromZero) <= 0)
         {
@@ -32,9 +46,9 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         ConfigureAuthorization();
 
         var notificationUrl = _options.NotificationUrl;
-        var successUrl = FormatUrl(_options.SuccessUrl, order.Id);
-        var failureUrl = FormatUrl(_options.FailureUrl, order.Id);
-        var pendingUrl = FormatUrl(_options.PendingUrl, order.Id);
+        var successUrl = FormatUrl(successTemplate, placeholder, order.Id);
+        var failureUrl = FormatUrl(failureTemplate, placeholder, order.Id);
+        var pendingUrl = FormatUrl(pendingTemplate, placeholder, order.Id);
 
         var payload = new Dictionary<string, object?>
         {
@@ -217,6 +231,21 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         }
     }
 
+    public async Task<bool> RefundPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(providerPaymentId))
+            throw new PaymentGatewayException("El id del pago de Mercado Pago es obligatorio para devolverlo.");
+
+        ConfigureAuthorization();
+        using var response = await _httpClient.PostAsync(
+            $"v1/payments/{Uri.EscapeDataString(providerPaymentId.Trim())}/refunds",
+            content: null,
+            cancellationToken);
+        if (response.IsSuccessStatusCode) return true;
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new PaymentGatewayException($"Mercado Pago no pudo devolver el pago: {(int)response.StatusCode} {body}");
+    }
+
     private void ConfigureAuthorization()
     {
         var accessToken = _options.AccessToken;
@@ -229,9 +258,9 @@ public class MercadoPagoPaymentGateway : IPaymentGateway
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
     }
 
-    private static string? FormatUrl(string? template, int orderId)
+    private static string? FormatUrl(string? template, string placeholder, int id)
     {
-        return string.IsNullOrWhiteSpace(template) ? null : template.Replace("{orderId}", orderId.ToString(), StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(template) ? null : template.Replace(placeholder, id.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsPublicCallbackUrl(string? url)

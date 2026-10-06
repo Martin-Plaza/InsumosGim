@@ -26,6 +26,7 @@ import { Catalog } from './features/catalog/Catalog'
 import { ProductDetailPage } from './features/catalog/ProductDetailPage'
 import { CheckoutPage } from './features/checkout/CheckoutPage'
 import { CheckoutResultPage } from './features/checkout/CheckoutResultPage'
+import { CheckoutSessionPage } from './features/checkout/CheckoutSessionPage'
 import { Home } from './features/home/Home'
 import { OrdersView } from './features/orders/OrdersView'
 import { AppErrorBoundary, NotFoundPage } from './features/errors/ErrorPages'
@@ -74,7 +75,7 @@ function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: Au
   return <Routes>
     <Route path="/" element={<Home onCatalog={category => navigate(category ? `/catalogo?categoria=${encodeURIComponent(category)}` : '/catalogo')} onProduct={id => navigate(`/catalogo/${id}`)} />} />
     <Route path="/catalogo" element={<Catalog />} /><Route path="/catalogo/:productId" element={<ProductDetailPage />} /><Route path="/carrito" element={<CartPage />} />
-    <Route path="/checkout" element={user ? <CheckoutPage /> : <RequireLogin />} /><Route path="/checkout/orden/:orderId" element={user ? <CheckoutResultPage canRefreshPayment={isAdmin(user)} /> : <RequireLogin />} />
+    <Route path="/checkout" element={user ? <CheckoutPage /> : <RequireLogin />} /><Route path="/checkout/pago/:checkoutId" element={user ? <CheckoutSessionPage /> : <RequireLogin />} /><Route path="/checkout/orden/:orderId" element={user ? <CheckoutResultPage canRefreshPayment={isAdmin(user)} /> : <RequireLogin />} />
     <Route path="/login" element={<AuthRoute user={user} onDone={onAuth} />} /><Route path="/ordenes" element={user ? <OrdersView /> : <RequireLogin />} />
     <Route path="/terminos" element={<TermsPage />} /><Route path="/privacidad" element={<PrivacyPage />} /><Route path="/envios-cambios-y-devoluciones" element={<ShippingReturnsPage />} /><Route path="/arrepentimiento" element={<WithdrawalPage />} /><Route path="/contacto" element={<ContactPage />} />
     <Route path="*" element={<NotFoundPage />} />

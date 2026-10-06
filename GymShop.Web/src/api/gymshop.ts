@@ -1,5 +1,5 @@
 import { json, request, requestBlob } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, CheckoutSession, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
@@ -54,7 +54,8 @@ export const api = {
   removeCoupon: () => request<Cart>('/api/cart/coupon', json('DELETE')),
   shippingOptions: () => request<ShippingOptions>('/api/cart/shipping-options'),
   shippingQuotes: (destination: ShippingAddressInput) => request<ShippingQuote[]>('/api/cart/shipping-quotes', json('POST', { destination })),
-  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string; shippingQuoteId?: string | null; shippingDestination?: ShippingAddressInput | null }) => request<Order>('/api/cart/checkout', json('POST', data)),
+  checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string; shippingQuoteId?: string | null; shippingDestination?: ShippingAddressInput | null; paymentProvider?: PaymentProvider; paymentIdempotencyKey?: string }) => request<CheckoutSession>('/api/cart/checkout', json('POST', data)),
+  checkoutSession: (id: number) => request<CheckoutSession>(`/api/cart/checkout/${id}`),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   myOrderBillingDocuments: (id: number) => request<BillingDocument[]>(`/api/orders/${id}/billing-documents`),
   myBillingDocumentPdf: (orderId: number, documentId: string) => requestBlob(`/api/orders/${orderId}/billing-documents/${documentId}/pdf`),
@@ -75,6 +76,7 @@ export const api = {
   cancelOrder: (id: number, reason?: string) => request<Order>(`/api/orders/${id}/cancel`, json('POST', { reason: reason || null })),
   setOrderStatus: (id: number, status: string, expectedUpdatedAt: string | null, tracking?: { carrier: string; trackingNumber: string; trackingUrl: string }) => request<void>(`/api/orders/${id}/status`, json('PATCH', { status, expectedUpdatedAt, ...tracking })),
   createPayment: (orderId: number, provider: PaymentProvider, idempotencyKey: string) => request<Payment>(`/api/orders/${orderId}/payments`, json('POST', { provider, idempotencyKey })),
+  createCheckoutPayment: (checkoutId: number, provider: PaymentProvider, idempotencyKey: string) => request<Payment>(`/api/checkout-sessions/${checkoutId}/payments`, json('POST', { provider, idempotencyKey })),
   bankTransferDetails: () => request<BankTransferDetails>('/api/payments/bank-transfer-details'),
   paymentMethods: () => request<PaymentMethods>('/api/payments/methods'),
   payment: (id: number) => request<Payment>(`/api/payments/${id}`),

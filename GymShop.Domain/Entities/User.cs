@@ -18,6 +18,7 @@ public class User
 
     public Role Role { get; set; } = null!;
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public ICollection<CheckoutSession> CheckoutSessions { get; set; } = new List<CheckoutSession>();
     public Cart? Cart { get; set; }
     public ICollection<UserExternalLogin> ExternalLogins { get; set; } = new List<UserExternalLogin>();
     public ICollection<EmailVerificationCode> EmailVerificationCodes { get; set; } = new List<EmailVerificationCode>();

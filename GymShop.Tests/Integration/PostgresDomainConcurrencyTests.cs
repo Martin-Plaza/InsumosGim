@@ -19,7 +19,7 @@ namespace GymShop.Tests.Integration;
 public sealed class PostgresDomainConcurrencyTests
 {
     [Fact]
-    public async Task Concurrent_checkouts_cannot_reserve_the_same_last_coupon_use()
+    public async Task Concurrent_checkouts_do_not_reserve_the_same_last_coupon_use()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         var (firstUser, secondUser, _) = await SeedTwoCartsWithCouponAsync(database);
@@ -28,14 +28,14 @@ public sealed class PostgresDomainConcurrencyTests
         var outcomes = await Task.WhenAll(
             new CheckoutCartUseCase(firstDb, new EfTransactionManager(firstDb)).ExecuteAsync(firstUser, new CheckoutCartRequest("HomeDelivery", "First Address", 0)),
             new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb)).ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
-        Assert.Single(outcomes, x => x.IsSuccess);
-        Assert.Single(outcomes, x => !x.IsSuccess && x.Error?.Message.Contains("agotó", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.All(outcomes, outcome => Assert.True(outcome.IsSuccess));
         await using var verification = database.CreateContext();
-        Assert.Single(await verification.CouponRedemptions.Where(x => x.Status == CouponRedemptionStatus.Reserved).ToListAsync());
+        Assert.Empty(await verification.CouponRedemptions.ToListAsync());
+        Assert.Equal(2, await verification.CheckoutSessions.CountAsync());
     }
 
     [Fact]
-    public async Task Concurrent_checkouts_cannot_sell_the_same_last_stock_twice()
+    public async Task Concurrent_checkouts_do_not_reserve_or_decrement_the_same_last_stock()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         var (firstUser, secondUser, productId) = await SeedTwoCartsAsync(database, stock: 1);
@@ -48,17 +48,16 @@ public sealed class PostgresDomainConcurrencyTests
             new CheckoutCartUseCase(secondDb, new EfTransactionManager(secondDb))
                 .ExecuteAsync(secondUser, new CheckoutCartRequest("HomeDelivery", "Second Address", 0)));
 
-        Assert.Single(outcomes, x => x.IsSuccess);
-        Assert.Single(outcomes, x => !x.IsSuccess &&
-            x.Error?.Message.Contains("stock", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.All(outcomes, outcome => Assert.True(outcome.IsSuccess));
         await using var verification = database.CreateContext();
-        Assert.Equal(0, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
-        Assert.Single(await verification.Orders.ToListAsync());
-        Assert.Single(await verification.CartItems.ToListAsync());
+        Assert.Equal(1, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
+        Assert.Empty(await verification.Orders.ToListAsync());
+        Assert.Equal(2, await verification.CheckoutSessions.CountAsync());
+        Assert.Equal(2, await verification.CartItems.CountAsync());
     }
 
     [Fact]
-    public async Task Concurrent_checkout_retries_with_same_key_return_the_same_order_once()
+    public async Task Concurrent_checkout_retries_with_same_key_return_the_same_session_once()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         int userId;
@@ -88,9 +87,10 @@ public sealed class PostgresDomainConcurrencyTests
         Assert.All(outcomes, outcome => Assert.True(outcome.IsSuccess));
         Assert.Single(outcomes.Select(outcome => outcome.Value!.Id).Distinct());
         await using var verification = database.CreateContext();
-        Assert.Single(await verification.Orders.Where(x => x.UserId == userId).ToListAsync());
-        Assert.Equal(1, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
-        Assert.Empty(await verification.CartItems.Where(x => x.Cart.UserId == userId).ToListAsync());
+        Assert.Single(await verification.CheckoutSessions.Where(x => x.UserId == userId).ToListAsync());
+        Assert.Empty(await verification.Orders.Where(x => x.UserId == userId).ToListAsync());
+        Assert.Equal(2, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
+        Assert.Single(await verification.CartItems.Where(x => x.Cart.UserId == userId).ToListAsync());
     }
 
     [Fact]

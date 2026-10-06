@@ -25,6 +25,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
+    public DbSet<CheckoutSession> CheckoutSessions => Set<CheckoutSession>();
+    public DbSet<CheckoutItem> CheckoutItems => Set<CheckoutItem>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
@@ -321,11 +323,6 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .IsUnique()
                 .HasDatabaseName("UX_Orders_UserId_CheckoutIdempotencyKey")
                 .HasFilter("\"CheckoutIdempotencyKey\" IS NOT NULL");
-            entity.HasIndex(x => x.UserId)
-                .IsUnique()
-                .HasDatabaseName("UX_Orders_UserId_Pending")
-                .HasFilter("\"Status\" = 'Pending'");
-
             entity
                 .HasOne(x => x.User)
                 .WithMany(x => x.Orders)
@@ -509,6 +506,67 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
         });
 
 
+        modelBuilder.Entity<CheckoutSession>(entity =>
+        {
+            entity.ToTable("CheckoutSessions", table =>
+            {
+                table.HasCheckConstraint("CK_CheckoutSessions_Amounts_NonNegative", "\"Subtotal\" >= 0 AND \"DiscountAmount\" >= 0 AND \"ShippingCost\" >= 0 AND \"Total\" >= 0");
+                table.HasCheckConstraint("CK_CheckoutSessions_Expiration", "\"ExpiresAtUtc\" > \"CreatedAtUtc\"");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(ValidationLimits.IdempotencyKey).IsRequired();
+            entity.Property(x => x.RequestFingerprint).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.Subtotal).HasPrecision(18, 2);
+            entity.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(x => x.ShippingCost).HasPrecision(18, 2);
+            entity.Property(x => x.Total).HasPrecision(18, 2);
+            entity.Property(x => x.CouponCode).HasMaxLength(50);
+            entity.Property(x => x.DeliveryMethod).HasConversion<string>().HasMaxLength(30).IsRequired();
+            entity.Property(x => x.ShippingAddress).HasMaxLength(ValidationLimits.ShippingAddress).IsRequired();
+            entity.Property(x => x.ShippingPostalCode).HasMaxLength(ValidationLimits.ShippingPostalCode);
+            entity.Property(x => x.ShippingProvince).HasMaxLength(ValidationLimits.ShippingProvince);
+            entity.Property(x => x.ShippingCity).HasMaxLength(ValidationLimits.ShippingCity);
+            entity.Property(x => x.ShippingStreet).HasMaxLength(ValidationLimits.ShippingStreet);
+            entity.Property(x => x.ShippingStreetNumber).HasMaxLength(ValidationLimits.ShippingStreetNumber);
+            entity.Property(x => x.ShippingFloor).HasMaxLength(ValidationLimits.ShippingFloor);
+            entity.Property(x => x.ShippingApartment).HasMaxLength(ValidationLimits.ShippingApartment);
+            entity.Property(x => x.ShippingNotes).HasMaxLength(ValidationLimits.ShippingNotes);
+            entity.Property(x => x.ShippingProviderCode).HasMaxLength(ValidationLimits.ShippingProviderCode);
+            entity.Property(x => x.ShippingServiceCode).HasMaxLength(ValidationLimits.ShippingServiceCode);
+            entity.Property(x => x.ShippingServiceName).HasMaxLength(ValidationLimits.ShippingServiceName);
+            entity.Property(x => x.PickupAddress).HasMaxLength(ValidationLimits.ShippingAddress).IsRequired();
+            entity.Property(x => x.PickupHours).HasMaxLength(ValidationLimits.PickupHours).IsRequired();
+            entity.Property(x => x.PickupInstructions).HasMaxLength(ValidationLimits.PickupInstructions).IsRequired();
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(x => new { x.UserId, x.IdempotencyKey }).IsUnique().HasDatabaseName("UX_CheckoutSessions_UserId_IdempotencyKey");
+            entity.HasIndex(x => x.OrderId).IsUnique().HasFilter("\"OrderId\" IS NOT NULL");
+            entity.HasIndex(x => new { x.UserId, x.Status });
+            entity.HasOne(x => x.User).WithMany(x => x.CheckoutSessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Cart).WithMany().HasForeignKey(x => x.CartId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Coupon).WithMany().HasForeignKey(x => x.CouponId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.Order).WithOne().HasForeignKey<CheckoutSession>(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CheckoutItem>(entity =>
+        {
+            entity.ToTable("CheckoutItems", table =>
+            {
+                table.HasCheckConstraint("CK_CheckoutItems_Quantity_Positive", "\"Quantity\" > 0");
+                table.HasCheckConstraint("CK_CheckoutItems_Amounts_NonNegative", "\"UnitPrice\" >= 0 AND \"Subtotal\" >= 0");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProductName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.VariantSku).HasMaxLength(100);
+            entity.Property(x => x.VariantAttributesJson).HasMaxLength(2000);
+            entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            entity.Property(x => x.Subtotal).HasPrecision(18, 2);
+            entity.HasIndex(x => new { x.CheckoutSessionId, x.ProductId, x.ProductVariantId }).IsUnique();
+            entity.HasOne(x => x.CheckoutSession).WithMany(x => x.Items).HasForeignKey(x => x.CheckoutSessionId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ProductVariant).WithMany().HasForeignKey(x => x.ProductVariantId).OnDelete(DeleteBehavior.SetNull);
+        });
+
         modelBuilder.Entity<Payment>(entity =>
         {
             entity.ToTable("Payments");
@@ -537,12 +595,20 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(x => x.OrderId)
                 .IsUnique()
                 .HasDatabaseName("UX_Payments_OrderId_Active")
-                .HasFilter("\"Status\" IN ('Creating', 'Pending')");
+                .HasFilter("\"OrderId\" IS NOT NULL AND \"Status\" IN ('Creating', 'Pending')");
+            entity.HasIndex(x => x.CheckoutSessionId)
+                .IsUnique()
+                .HasDatabaseName("UX_Payments_CheckoutSessionId_Active")
+                .HasFilter("\"CheckoutSessionId\" IS NOT NULL AND \"Status\" IN ('Creating', 'Pending')");
 
             entity
                 .HasOne(x => x.Order)
                 .WithMany(x => x.Payments)
                 .HasForeignKey(x => x.OrderId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.CheckoutSession)
+                .WithMany(x => x.Payments)
+                .HasForeignKey(x => x.CheckoutSessionId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<OrderItem>(entity =>
@@ -594,7 +660,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
 
         foreach (var entry in ChangeTracker.Entries<Payment>().ToList())
         {
-            if (entry.State != EntityState.Modified || !entry.Property(x => x.Status).IsModified) continue;
+            if (entry.State != EntityState.Modified || !entry.Property(x => x.Status).IsModified || entry.Entity.Order is null) continue;
             var type = entry.Entity.Status switch
             {
                 PaymentStatus.Approved => TransactionalNotificationType.PaymentApproved,

@@ -19,6 +19,7 @@ namespace GymShop.Api.Controllers;
 public class PaymentsController : ApiControllerBase
 {
     private readonly ICreatePaymentUseCase _createPayment;
+    private readonly ICreateCheckoutPaymentUseCase _createCheckoutPayment;
     private readonly IGetPaymentByIdUseCase _getPaymentById;
     private readonly IGetOrderPaymentsUseCase _getOrderPayments;
     private readonly IUpdatePaymentStatusUseCase _updatePaymentStatus;
@@ -31,6 +32,7 @@ public class PaymentsController : ApiControllerBase
 
     public PaymentsController(
         ICreatePaymentUseCase createPayment,
+        ICreateCheckoutPaymentUseCase createCheckoutPayment,
         IGetPaymentByIdUseCase getPaymentById,
         IGetOrderPaymentsUseCase getOrderPayments,
         IUpdatePaymentStatusUseCase updatePaymentStatus,
@@ -42,6 +44,7 @@ public class PaymentsController : ApiControllerBase
         ILogger<PaymentsController> logger)
     {
         _createPayment = createPayment;
+        _createCheckoutPayment = createCheckoutPayment;
         _getPaymentById = getPaymentById;
         _getOrderPayments = getOrderPayments;
         _updatePaymentStatus = updatePaymentStatus;
@@ -162,6 +165,22 @@ public class PaymentsController : ApiControllerBase
 
         var result = await _handlePaymentWebhook.ExecuteAsync("MercadoPago", notification.PaymentId, cancellationToken);
         return result.IsSuccess ? Ok(new { received = true }) : ToErrorResponse(result.Error!);
+    }
+
+    [HttpPost("/api/checkout-sessions/{checkoutId:int}/payments")]
+    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PaymentResponse), StatusCodes.Status202Accepted)]
+    public async Task<ActionResult<PaymentResponse>> CreateForCheckout(int checkoutId, CreatePaymentRequest request, CancellationToken cancellationToken)
+    {
+        var userId = _currentUser.UserId;
+        var userDecision = _requestLimiter.Acquire(RateLimitPolicies.PaymentUser, userId.ToString());
+        if (!userDecision.IsAllowed) return RateLimitResponse.Create(HttpContext, userDecision);
+        var decision = _requestLimiter.Acquire(RateLimitPolicies.PaymentOrder, $"checkout-{checkoutId}");
+        if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
+        var result = await _createCheckoutPayment.ExecuteAsync(checkoutId, userId, request, cancellationToken);
+        return result.IsSuccess && string.Equals(result.Value!.Status, "Creating", StringComparison.Ordinal)
+            ? AcceptedAtAction(nameof(GetById), new { id = result.Value.Id }, result.Value)
+            : FromResult(result);
     }
 
     private static async Task<MercadoPagoNotification?> GetMercadoPagoNotificationAsync(

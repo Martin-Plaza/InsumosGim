@@ -37,13 +37,13 @@ export function AdminDashboard() {
         <Kpi label="Ticket promedio" value={money(data.averageTicket)} />
       </div>
       <div className="dashboard-grid">
-        <section className="dashboard-panel"><h2>Ventas por día</h2><SalesChart data={data.salesByDay} timeZone={data.timeZoneId} /></section>
+        <section className="dashboard-panel"><div className="dashboard-panel-heading"><h2>Ventas por día</h2><span>Sólo días con ventas</span></div><SalesChart data={data.salesByDay} timeZone={data.timeZoneId} /></section>
         <section className="dashboard-panel"><h2>Pedidos por estado</h2><StatusSummary data={data.ordersByStatus} /></section>
       </div>
-      <section className="dashboard-panel"><h2>Productos más vendidos</h2><TopProducts data={data.topProducts} /></section>
+      <section className="dashboard-panel"><div className="dashboard-panel-heading"><h2>Productos más vendidos</h2><span>Hasta 10 en el período · <a href="/admin/pedidos">Ver pedidos</a></span></div><TopProducts data={data.topProducts} /></section>
       <div className="dashboard-grid">
-        <StockPanel title="Sin stock" kind="danger" products={data.outOfStockProducts} empty="No hay productos activos sin stock." />
-        <StockPanel title={`Stock bajo (1–${data.lowStockThreshold})`} kind="warning" products={data.lowStockProducts} empty="No hay productos activos con stock bajo." />
+        <StockPanel title="Sin stock" kind="danger" products={data.outOfStockProducts} empty="No hay productos activos sin stock." filter="none" />
+        <StockPanel title={`Stock bajo (1–${data.lowStockThreshold})`} kind="warning" products={data.lowStockProducts} empty="No hay productos activos con stock bajo." filter="low" />
       </div>
       <p className="admin-footnote">Período y días de venta según {data.timeZoneId}. Los reembolsos totales y los pagos marcados con reembolso parcial se excluyen por completo.</p>
     </div>}
@@ -72,7 +72,7 @@ function SalesChart({ data, timeZone }: { data: DashboardStatistics['salesByDay'
   if (!data.length) return <AdminEmpty>No hay ventas confirmadas en este período.</AdminEmpty>
   const max = Math.max(...data.map(item => item.amount), 1)
   return <div className="sales-chart" role="img" aria-label="Gráfico de ventas confirmadas por día">
-    {data.map(item => <div className="sales-bar-column" key={item.date} title={`${formatDay(item.date, timeZone)}: ${money(item.amount)}`}>
+    {data.map(item => <div className={`sales-bar-column ${item.amount === max ? 'is-peak' : ''}`} key={item.date} title={`${formatDay(item.date, timeZone)}: ${money(item.amount)}`}>
       <span>{money(item.amount)}</span><div className="sales-bar-track"><i style={{ height: `${Math.max(4, item.amount / max * 100)}%` }} /></div><small>{formatDay(item.date, timeZone)}</small>
     </div>)}
   </div>
@@ -89,8 +89,8 @@ function TopProducts({ data }: { data: DashboardStatistics['topProducts'] }) {
   return <div className="dashboard-table-wrap"><table className="dashboard-table"><thead><tr><th>Producto</th><th>Cantidad</th><th>Importe</th></tr></thead><tbody>{data.map(item => <tr key={item.productId}><td>{item.productName}</td><td>{item.quantity}</td><td>{money(item.amount)}</td></tr>)}</tbody></table></div>
 }
 
-function StockPanel({ title, products, empty, kind }: { title: string; products: DashboardStatistics['lowStockProducts']; empty: string; kind: string }) {
-  return <section className={`dashboard-panel stock-panel ${kind}`}><h2>{title}<span>{products.length}</span></h2>{products.length ? <ul>{products.map(product => <li key={product.productId}><span>{product.productName}</span><strong>{product.stock} u.</strong></li>)}</ul> : <AdminEmpty>{empty}</AdminEmpty>}</section>
+function StockPanel({ title, products, empty, kind, filter }: { title: string; products: DashboardStatistics['lowStockProducts']; empty: string; kind: string; filter: 'low' | 'none' }) {
+  return <section className={`dashboard-panel stock-panel ${kind}`}><h2>{title}<span>{products.length}</span></h2>{products.length ? <ul>{products.map(product => <li key={product.productId}><span>{product.productName}</span><strong>{product.stock} u.</strong></li>)}</ul> : <AdminEmpty>{empty}</AdminEmpty>}<a className="stock-panel-link" href={`/admin/stock?estado=${filter}`}>Ver y gestionar todos →</a></section>
 }
 
 function formatDay(value: string, timeZone: string) {

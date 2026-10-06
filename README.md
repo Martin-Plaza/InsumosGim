@@ -1167,8 +1167,12 @@ Configuración requerida para staging y producción (mediante variables de entor
 - `Email__ApiKey=<RESEND_API_KEY>`;
 - `Email__FromAddress=<REMITENTE_VERIFICADO>`;
 - `Email__FromName=GymShop` (opcional);
+- `Email__PublicAppUrl=https://tu-frontend.example` (opcional, agrega enlaces a `Mis órdenes`);
+- `Email__TransactionalNotificationsEnabled=true` (opcional; el valor predeterminado es `true`);
 - verificar el dominio/remitente en Resend y validar entregabilidad, spam y tiempos reales;
 - confirmar límites definitivos según tráfico observado.
+
+Además de los correos de identidad, el sistema encola notificaciones transaccionales para pedido creado, pago aprobado o rechazado, preparación, envío o retiro, reembolso y comprobante disponible. La tabla `NotificationOutboxMessages` se escribe dentro del mismo `SaveChanges` que la operación comercial: un fallo de Resend nunca revierte ni altera el pedido. Un worker reclama lotes con `FOR UPDATE SKIP LOCKED`, evita duplicados mediante una clave única y reintenta con espera exponencial. Cada envío usa además `Idempotency-Key` en Resend para que una respuesta perdida no produzca dos correos. Después de ocho intentos conserva el mensaje como `DeadLetter` para diagnóstico. Los logs incluyen tipo e identificador técnico, pero no destinatario ni contenido.
 
 Google Identity Services requiere el mismo Client ID publico en backend y frontend:
 

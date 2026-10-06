@@ -49,6 +49,29 @@ public sealed class EmailDeliveryTests
     }
 
     [Fact]
+    public async Task Resend_accepts_transactional_html_without_logging_recipient_or_content()
+    {
+        string? body = null;
+        string? idempotencyKey = null;
+        var (sender, logger) = CreateSender(request =>
+        {
+            body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            idempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var result = await ((ITransactionalEmailSender)sender).SendAsync(
+            new TransactionalEmailMessage("order-created", Recipient, "Pedido recibido", "<h1>Pedido #15</h1>", "notification/15"));
+
+        Assert.True(result.AcceptedByProvider);
+        Assert.Contains("Pedido recibido", body);
+        Assert.Contains("Pedido #15", body);
+        Assert.Equal("notification/15", idempotencyKey);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(Recipient, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("Pedido #15", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Resend_reports_http_rejection_with_status_only()
     {
         var (sender, logger) = CreateSender(_ => new HttpResponseMessage(HttpStatusCode.UnprocessableEntity));

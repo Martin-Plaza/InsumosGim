@@ -29,6 +29,18 @@ public interface IPasswordResetEmailSender
     Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default);
 }
 
+public sealed record TransactionalEmailMessage(
+    string Purpose,
+    string Recipient,
+    string Subject,
+    string Html,
+    string? IdempotencyKey = null);
+
+public interface ITransactionalEmailSender
+{
+    Task<EmailSendResult> SendAsync(TransactionalEmailMessage message, CancellationToken cancellationToken = default);
+}
+
 public sealed record ExternalIdentity(
     string Provider,
     string Subject,

@@ -67,6 +67,7 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
                 ["MercadoPago:Enabled"] = "false",
                 ["ReverseProxy:Enabled"] = "false",
                 ["Email:Provider"] = "Resend",
+                ["Email:TransactionalNotificationsEnabled"] = "false",
                 ["Email:ApiKey"] = "test-api-key",
                 ["Email:FromAddress"] = "test@gymshop.invalid"
             };

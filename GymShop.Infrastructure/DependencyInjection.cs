@@ -93,6 +93,7 @@ public static class DependencyInjection
         {
             services.AddScoped<IVerificationEmailSender, MockVerificationEmailSender>();
             services.AddScoped<IPasswordResetEmailSender, MockPasswordResetEmailSender>();
+            services.AddScoped<ITransactionalEmailSender, MockTransactionalEmailSender>();
         }
         else
         {
@@ -105,7 +106,10 @@ public static class DependencyInjection
             });
             services.AddScoped<IVerificationEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
             services.AddScoped<IPasswordResetEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
+            services.AddScoped<ITransactionalEmailSender>(provider => provider.GetRequiredService<ResendEmailSender>());
         }
+        services.AddScoped<TransactionalNotificationProcessor>();
+        services.AddHostedService<TransactionalNotificationWorker>();
         services.AddScoped<IExternalIdentityVerifier>(_ => new GoogleIdentityVerifier(configuration));
         services.Configure<BankTransferOptions>(configuration.GetSection(BankTransferOptions.SectionName));
         services.AddScoped<IPaymentGateway, BankTransferPaymentGateway>();

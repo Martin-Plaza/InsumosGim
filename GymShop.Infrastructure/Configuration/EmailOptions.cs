@@ -10,6 +10,8 @@ public sealed class EmailOptions
     public string ApiKey { get; set; } = string.Empty;
     public string FromAddress { get; set; } = string.Empty;
     public string FromName { get; set; } = "GymShop";
+    public string PublicAppUrl { get; set; } = string.Empty;
+    public bool TransactionalNotificationsEnabled { get; set; } = true;
 }
 
 public sealed class EmailOptionsValidator(string environmentName) : IValidateOptions<EmailOptions>
@@ -29,6 +31,9 @@ public sealed class EmailOptionsValidator(string environmentName) : IValidateOpt
         var failures = new List<string>();
         if (string.IsNullOrWhiteSpace(options.ApiKey)) failures.Add("Email:ApiKey is required for Resend.");
         if (string.IsNullOrWhiteSpace(options.FromAddress)) failures.Add("Email:FromAddress is required for Resend.");
+        if (!string.IsNullOrWhiteSpace(options.PublicAppUrl) &&
+            (!Uri.TryCreate(options.PublicAppUrl, UriKind.Absolute, out var publicUrl) || publicUrl.Scheme != Uri.UriSchemeHttps))
+            failures.Add("Email:PublicAppUrl must be an absolute HTTPS URL.");
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 }

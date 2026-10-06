@@ -138,7 +138,8 @@ export function CheckoutPage() {
     }
   }
 
-  if (cart.loading) return <div className="empty">Validando tu carrito…</div>
+  if (busy && cart.items.length === 0) return <section className="checkout-transition" role="status"><div className="checkout-transition-spinner" /><p className="eyebrow">PROCESANDO COMPRA</p><h1>Estamos preparando tu orden</h1><p>No cierres esta ventana. Enseguida vas a ver la confirmación.</p></section>
+  if (cart.loading) return <section className="checkout-transition" role="status"><div className="checkout-transition-spinner" /><p className="eyebrow">CHECKOUT</p><h1>Validando tu carrito</h1><p>Estamos comprobando precios, stock y descuentos.</p></section>
   if (cart.items.length === 0) return <section className="checkout-empty"><p className="eyebrow">CHECKOUT</p><h1>Tu carrito está vacío</h1><p>Agregá productos antes de iniciar una compra.</p><Link className="primary link-button" to="/catalogo">Ir al catálogo</Link></section>
   const displayedTotal = cart.total + (deliveryMethod === 'HomeDelivery' ? homeDeliveryCost ?? 0 : 0)
   const isFreeCheckout = displayedTotal === 0

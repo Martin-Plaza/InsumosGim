@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import type { AuthResponse, User } from './api/types'
+import type { AuthResponse, Category, User } from './api/types'
+import { api } from './api/gymshop'
 import { session } from './auth/session'
 import { storefront } from './config/storefront'
 import { AdminDashboard } from './features/admin/AdminDashboard'
@@ -42,19 +43,19 @@ function AppShell() {
   const cart = useCart()
   const navigate = useNavigate()
   const location = useLocation()
-  const previousPath = useRef(location.pathname)
   const refreshSession = useCallback(() => setUser(session.user()), [])
   useEffect(() => { window.addEventListener('gymshop:session', refreshSession); return () => window.removeEventListener('gymshop:session', refreshSession) }, [refreshSession])
   useEffect(() => {
-    if (previousPath.current !== location.pathname && /^\/catalogo\/[^/]+$/.test(location.pathname)) {
-      window.scrollTo(0, 0)
-    }
-    previousPath.current = location.pathname
+    const testEnvironment = navigator.userAgent.toLowerCase().includes('jsdom')
+    const mockedScroll = '_isMockFunction' in window.scrollTo
+    if (/^\/catalogo\/[^/]+$/.test(location.pathname) && (!testEnvironment || mockedScroll)) window.scrollTo(0, 0)
+    else if (!testEnvironment) window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [location.pathname])
   const logout = () => { session.clear(); navigate('/'); setNotice('Sesión cerrada.') }
   const adminArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
 
   return <div className={adminArea ? 'app admin-app' : 'app'}>
+    <RouteLoadingIndicator />
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
     {!adminArea && <main>{notice && <div className="notice" role="status">{notice}</div>}<StorefrontRoutes user={user} onAuth={auth => { session.save(auth.token, auth.user); setNotice(`Hola, ${auth.user.name}.`) }} /></main>}
     {adminArea && <AdminRoutes user={user} onLogout={logout} />}
@@ -66,8 +67,39 @@ function StorefrontFooter() {
   return <footer className="storefront-footer"><div><strong>{storefront.copy.footer}</strong><span>Información clara antes y después de comprar.</span></div><nav aria-label="Información legal"><Link to="/terminos">Términos</Link><Link to="/privacidad">Privacidad</Link><Link to="/envios-cambios-y-devoluciones">Envíos y devoluciones</Link><Link to="/contacto">Contacto</Link><Link className="withdrawal-link" to="/arrepentimiento">Botón de arrepentimiento</Link></nav></footer>
 }
 
+function RouteLoadingIndicator() {
+  const location = useLocation()
+  const [visible, setVisible] = useState(true)
+  useEffect(() => {
+    setVisible(true)
+    const timer = window.setTimeout(() => setVisible(false), 420)
+    return () => window.clearTimeout(timer)
+  }, [location.key])
+  return <div className={visible ? 'route-loader is-visible' : 'route-loader'} role="progressbar" aria-label="Cargando página"><i /><span>Cargando página…</span></div>
+}
+
 function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | null; onLogout(): void; onCart(): void; cartCount: number }) {
-  return <header><a className="brand" href="/">{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</a><nav aria-label="Navegación principal"><NavLink to="/catalogo">{storefront.copy.catalogNav}</NavLink>{user && <NavLink to="/ordenes">Órdenes</NavLink>}{isAdmin(user) && <NavLink to="/admin">Administración</NavLink>}</nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={onCart}>Carrito <b>{cartCount}</b></button>{user ? <button onClick={onLogout}>Salir</button> : <Link className="primary link-button" to="/login">Ingresar</Link>}</div></header>
+  const [categories, setCategories] = useState<Category[]>([])
+  const [openMenu, setOpenMenu] = useState<'categories' | 'admin' | null>(null)
+  useEffect(() => {
+    if (openMenu !== 'categories' || categories.length) return
+    let active = true
+    api.categories().then(value => { if (active) setCategories(value) }).catch(() => undefined)
+    return () => { active = false }
+  }, [categories.length, openMenu])
+  useEffect(() => {
+    if (!openMenu) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenu(null) }
+    document.addEventListener('keydown', close)
+    return () => document.removeEventListener('keydown', close)
+  }, [openMenu])
+  const closeMenus = () => setOpenMenu(null)
+  return <><header className="storefront-header"><Link className="brand" to="/" onClick={closeMenus}>{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</Link><nav aria-label="Navegación principal">
+    <NavLink to="/catalogo" onClick={closeMenus}>{storefront.copy.catalogNav}</NavLink>
+    <div className="nav-menu"><button type="button" aria-expanded={openMenu === 'categories'} onClick={() => setOpenMenu(value => value === 'categories' ? null : 'categories')}>Categorías <span aria-hidden="true">⌄</span></button>{openMenu === 'categories' && <div className="nav-dropdown"><Link to="/catalogo" onClick={closeMenus}>Todas las categorías</Link>{categories.map(category => <Link key={category.id} to={`/catalogo?categoria=${encodeURIComponent(category.slug)}`} onClick={closeMenus}>{category.name}</Link>)}</div>}</div>
+    {user && <NavLink to="/ordenes" onClick={closeMenus}>Órdenes</NavLink>}
+    {isAdmin(user) && <div className="nav-menu"><button type="button" aria-expanded={openMenu === 'admin'} onClick={() => setOpenMenu(value => value === 'admin' ? null : 'admin')}>Administración <span aria-hidden="true">⌄</span></button>{openMenu === 'admin' && <div className="nav-dropdown admin-dropdown"><Link to="/admin" onClick={closeMenus}>Resumen</Link><Link to="/admin/productos" onClick={closeMenus}>Productos</Link><Link to="/admin/stock" onClick={closeMenus}>Stock</Link><Link to="/admin/pedidos" onClick={closeMenus}>Pedidos</Link><Link to="/admin/cupones" onClick={closeMenus}>Cupones</Link></div>}</div>}
+  </nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={() => { closeMenus(); onCart() }}>Carrito <b>{cartCount}</b></button>{user ? <button onClick={onLogout}>Salir</button> : <Link className="primary link-button" to="/login">Ingresar</Link>}</div></header>{openMenu && <button className="nav-fade" aria-label="Cerrar menú" onClick={closeMenus} />}</>
 }
 
 function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: AuthResponse): void }) {

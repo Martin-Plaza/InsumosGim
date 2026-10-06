@@ -5,6 +5,7 @@ using GymShop.Application.DTOs.Orders;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Application.UseCases.Stock;
 using GymShop.Application.UseCases.Coupons;
+using GymShop.Application.UseCases.Payments;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -41,7 +42,7 @@ public interface IClearCartUseCase
 
 public interface ICheckoutCartUseCase
 {
-    Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default);
+    Task<AppResult<CheckoutResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default);
 }
 
 public class GetCartUseCase : IGetCartUseCase
@@ -234,38 +235,41 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
     private readonly ITransactionManager? _transactionManager;
     private readonly IShippingSettings _shippingSettings;
     private readonly IAuditContext? _auditContext;
+    private readonly IEnumerable<IPaymentGateway> _gateways;
 
-    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null, IShippingSettings? shippingSettings = null, IAuditContext? auditContext = null)
+    public CheckoutCartUseCase(IApplicationDbContext db, ITransactionManager? transactionManager = null, IShippingSettings? shippingSettings = null,
+        IAuditContext? auditContext = null, IEnumerable<IPaymentGateway>? gateways = null)
     {
         _db = db;
         _transactionManager = transactionManager;
         _shippingSettings = shippingSettings ?? new FreeShippingSettings();
         _auditContext = auditContext;
+        _gateways = gateways ?? [];
     }
 
-    public async Task<AppResult<OrderResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
+    public async Task<AppResult<CheckoutResponse>> ExecuteAsync(int userId, CheckoutCartRequest request, CancellationToken cancellationToken = default)
     {
         var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
             ? $"server-{Guid.NewGuid():N}"
             : request.IdempotencyKey.Trim();
         if (idempotencyKey.Length > ValidationLimits.IdempotencyKey)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia no puede superar 100 caracteres.");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia no puede superar 100 caracteres.");
         }
 
         if (!Enum.TryParse<DeliveryMethod>(request.DeliveryMethod, true, out var deliveryMethod) || !Enum.IsDefined(deliveryMethod))
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La modalidad de entrega no es valida.");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La modalidad de entrega no es valida.");
         }
 
         if (deliveryMethod == DeliveryMethod.HomeDelivery && !request.ShippingQuoteId.HasValue && string.IsNullOrWhiteSpace(request.ShippingAddress))
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La direccion de envio es obligatoria.");
         }
 
         if (request.ShippingAddress?.Trim().Length > ValidationLimits.ShippingAddress)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La direccion de envio no puede superar los 300 caracteres.");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La direccion de envio no puede superar los 300 caracteres.");
         }
 
         var pickupAddress = _shippingSettings.PickupAddress?.Trim() ?? string.Empty;
@@ -273,36 +277,36 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         var pickupInstructions = _shippingSettings.PickupInstructions?.Trim() ?? string.Empty;
         if (deliveryMethod == DeliveryMethod.StorePickup && string.IsNullOrWhiteSpace(pickupAddress))
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El retiro en tienda no esta disponible porque falta configurar su direccion.", "pickup_configuration_missing");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "El retiro en tienda no esta disponible porque falta configurar su direccion.", "pickup_configuration_missing");
         }
         if (deliveryMethod == DeliveryMethod.StorePickup &&
             (pickupAddress.Length > ValidationLimits.ShippingAddress ||
              pickupHours.Length > ValidationLimits.PickupHours ||
              pickupInstructions.Length > ValidationLimits.PickupInstructions))
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La configuracion de retiro en tienda supera los limites permitidos.", "pickup_configuration_invalid");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La configuracion de retiro en tienda supera los limites permitidos.", "pickup_configuration_invalid");
         }
 
         var requestFingerprint = BuildRequestFingerprint(request, deliveryMethod);
         await using var transaction = await BeginCheckoutTransactionAsync(cancellationToken);
 
-        var idempotentOrder = await _db.Orders
-            .AsNoTracking()
+        var idempotentCheckout = await _db.CheckoutSessions
+            .Include(x => x.Items)
+            .Include(x => x.Payments)
             .SingleOrDefaultAsync(
-                x => x.UserId == userId && x.CheckoutIdempotencyKey == idempotencyKey,
+                x => x.UserId == userId && x.IdempotencyKey == idempotencyKey,
                 cancellationToken);
-        if (idempotentOrder is not null)
+        if (idempotentCheckout is not null)
         {
-            if (!string.Equals(idempotentOrder.CheckoutRequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+            if (!string.Equals(idempotentCheckout.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
             {
-                return AppResult<OrderResponse>.Failure(
+                return AppResult<CheckoutResponse>.Failure(
                     AppErrorType.Conflict,
                     "La clave de idempotencia ya fue usada con otros datos de checkout.",
                     "checkout_idempotency_conflict");
             }
 
-            return AppResult<OrderResponse>.Success(
-                await OrderQueries.LoadOrderResponseAsync(_db, idempotentOrder.Id, cancellationToken));
+            return AppResult<CheckoutResponse>.Success(CheckoutSessionMapper.ToResponse(idempotentCheckout));
         }
 
         var cart = await _db.Carts
@@ -312,13 +316,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         if (cart is null || cart.Items.Count == 0)
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El carrito esta vacio.");
-        }
-
-        var hasPendingOrder = await CartQueries.HasPendingOrderAsync(_db, userId, cancellationToken);
-        if (hasPendingOrder)
-        {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "Ya tenes una orden pendiente. Pagala o cancelala antes de crear otra.", "pending_order_exists");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "El carrito esta vacio.");
         }
 
         var productIds = cart.Items.Select(x => x.ProductId).Distinct().ToList();
@@ -331,15 +329,15 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         {
             if (!products.TryGetValue(item.ProductId, out var product) || !product.IsActive)
             {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "Uno de los productos del carrito no existe o no esta activo.");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "Uno de los productos del carrito no existe o no esta activo.");
             }
 
             var variant = item.ProductVariantId.HasValue ? product.Variants.SingleOrDefault(x => x.Id == item.ProductVariantId && x.IsActive) : null;
             if (product.Variants.Count > 0 && variant is null)
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"La variante de {product.Name} ya no está disponible.");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, $"La variante de {product.Name} ya no está disponible.");
             if ((variant?.Stock ?? product.Stock) < item.Quantity)
             {
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, $"No hay stock suficiente para {product.Name}.");
             }
         }
 
@@ -349,24 +347,24 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
         {
             var destinationResult = ShippingQuoteRules.NormalizeAddress(request.ShippingDestination);
             if (!destinationResult.IsSuccess)
-                return AppResult<OrderResponse>.Failure(destinationResult.Error!.Type, destinationResult.Error.Message, destinationResult.Error.Code);
+                return AppResult<CheckoutResponse>.Failure(destinationResult.Error!.Type, destinationResult.Error.Message, destinationResult.Error.Code);
             shippingDestination = destinationResult.Value!;
 
             shippingQuote = await _db.ShippingQuoteReservations.SingleOrDefaultAsync(
                 x => x.Id == request.ShippingQuoteId.Value && x.UserId == userId && x.CartId == cart.Id,
                 cancellationToken);
             if (shippingQuote is null)
-                return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "La cotización de envío no existe o no pertenece a este carrito.", "shipping_quote_invalid");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "La cotización de envío no existe o no pertenece a este carrito.", "shipping_quote_invalid");
             if (shippingQuote.ExpiresAtUtc <= DateTime.UtcNow)
-                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "La cotización de envío venció. Volvé a cotizar antes de confirmar.", "shipping_quote_expired");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Conflict, "La cotización de envío venció. Volvé a cotizar antes de confirmar.", "shipping_quote_expired");
             if (!ShippingQuoteRules.Matches(shippingQuote, shippingDestination))
-                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "La dirección cambió después de cotizar el envío.", "shipping_quote_address_changed");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Conflict, "La dirección cambió después de cotizar el envío.", "shipping_quote_address_changed");
 
             var packageResult = await ShippingQuoteRules.BuildPackagesAsync(_db, cart, cancellationToken);
             if (!packageResult.IsSuccess)
-                return AppResult<OrderResponse>.Failure(packageResult.Error!.Type, packageResult.Error.Message, packageResult.Error.Code);
+                return AppResult<CheckoutResponse>.Failure(packageResult.Error!.Type, packageResult.Error.Message, packageResult.Error.Code);
             if (!string.Equals(packageResult.Value!.CartFingerprint, shippingQuote.CartFingerprint, StringComparison.Ordinal))
-                return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El carrito cambió después de cotizar el envío.", "shipping_quote_cart_changed");
+                return AppResult<CheckoutResponse>.Failure(AppErrorType.Conflict, "El carrito cambió después de cotizar el envío.", "shipping_quote_cart_changed");
         }
 
         var orderLines = cart.Items
@@ -390,11 +388,12 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             })
             .ToList();
 
-        var order = new Order
+        var checkout = new CheckoutSession
         {
             UserId = userId,
-            CheckoutIdempotencyKey = idempotencyKey,
-            CheckoutRequestFingerprint = requestFingerprint,
+            CartId = cart.Id,
+            IdempotencyKey = idempotencyKey,
+            RequestFingerprint = requestFingerprint,
             DeliveryMethod = deliveryMethod,
             ShippingAddress = deliveryMethod == DeliveryMethod.HomeDelivery
                 ? shippingDestination is null ? request.ShippingAddress!.Trim() : ShippingQuoteRules.Format(shippingDestination)
@@ -414,7 +413,8 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             PickupAddress = deliveryMethod == DeliveryMethod.StorePickup ? pickupAddress : string.Empty,
             PickupHours = deliveryMethod == DeliveryMethod.StorePickup ? pickupHours : string.Empty,
             PickupInstructions = deliveryMethod == DeliveryMethod.StorePickup ? pickupInstructions : string.Empty,
-            Status = OrderStatus.Pending
+            Status = CheckoutStatus.AwaitingPayment,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(24)
         };
 
         var subtotal = orderLines.Sum(x => x.Subtotal);
@@ -424,34 +424,27 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             var activeUses = await _db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
             var userUses = await _db.CouponRedemptions.CountAsync(x => x.CouponId == cart.CouponId && x.UserId == userId && x.Status != CouponRedemptionStatus.Released, cancellationToken);
             var couponError = CouponRules.ValidateAvailability(cart.Coupon, subtotal, DateTime.UtcNow, activeUses, userUses);
-            if (couponError is not null) return AppResult<OrderResponse>.Failure(AppErrorType.Validation, couponError);
+            if (couponError is not null) return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, couponError);
             discount = CouponRules.CalculateDiscount(cart.Coupon, subtotal);
-            order.CouponCode = cart.Coupon.Code;
-            order.CouponRedemption = new CouponRedemption { CouponId = cart.Coupon.Id, UserId = userId };
+            checkout.CouponId = cart.Coupon.Id;
+            checkout.CouponCode = cart.Coupon.Code;
         }
-        order.Subtotal = subtotal;
-        order.DiscountAmount = discount;
-        order.ShippingCost = deliveryMethod == DeliveryMethod.HomeDelivery ? shippingQuote?.Price ?? _shippingSettings.HomeDeliveryCost : 0;
-        if (order.ShippingCost < 0)
-            return AppResult<OrderResponse>.Failure(AppErrorType.Validation, "El costo de envio configurado no es valido.");
-        if (request.ExpectedShippingCost != order.ShippingCost ||
+        checkout.Subtotal = subtotal;
+        checkout.DiscountAmount = discount;
+        checkout.ShippingCost = deliveryMethod == DeliveryMethod.HomeDelivery ? shippingQuote?.Price ?? _shippingSettings.HomeDeliveryCost : 0;
+        if (checkout.ShippingCost < 0)
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Validation, "El costo de envio configurado no es valido.");
+        if (request.ExpectedShippingCost != checkout.ShippingCost ||
             (request.ExpectedSubtotal.HasValue && request.ExpectedSubtotal.Value != subtotal) ||
             (request.ExpectedDiscount.HasValue && request.ExpectedDiscount.Value != discount))
         {
-            return AppResult<OrderResponse>.Failure(AppErrorType.Conflict, "El precio, descuento o costo de envio cambio. Revisa el resumen antes de confirmar.", "checkout_pricing_changed");
+            return AppResult<CheckoutResponse>.Failure(AppErrorType.Conflict, "El precio, descuento o costo de envio cambio. Revisa el resumen antes de confirmar.", "checkout_pricing_changed");
         }
-        order.Total = Math.Max(0, subtotal - discount) + order.ShippingCost;
-        var isFreeOrder = order.Total == 0;
-        if (isFreeOrder)
-        {
-            order.Status = OrderStatus.Paid;
-            order.UpdatedAt = DateTime.UtcNow;
-            CouponRedemptionLifecycle.Consume(order);
-        }
+        checkout.Total = Math.Max(0, subtotal - discount) + checkout.ShippingCost;
 
         foreach (var line in orderLines)
         {
-            order.Items.Add(new OrderItem
+            checkout.Items.Add(new CheckoutItem
             {
                 ProductId = line.ProductId,
                 ProductName = line.ProductName,
@@ -462,37 +455,31 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
                 Quantity = line.Quantity,
                 Subtotal = line.Subtotal
             });
-
-            var previousStock = line.Variant?.Stock ?? line.Product.Stock;
-            if (line.Variant is not null) line.Variant.Stock -= line.Quantity;
-            else line.Product.Stock -= line.Quantity;
-            line.Product.UpdatedAt = DateTime.UtcNow;
-            StockMovementRecorder.Add(_db, line.Product, StockMovementType.Sale, -line.Quantity, previousStock,
-                "Reserva de stock al crear el pedido.", order: order, variant: line.Variant);
         }
 
-        _db.Orders.Add(order);
-        _db.CartItems.RemoveRange(cart.Items);
-        cart.CouponId = null;
-        cart.UpdatedAt = DateTime.UtcNow;
-
+        _db.CheckoutSessions.Add(checkout);
         await _db.SaveChangesAsync(cancellationToken);
 
-        if (isFreeOrder)
+        if (checkout.Total == 0)
         {
-            AuditTrail.Add(_db, _auditContext, "FreeOrderConfirmed", "Order", order.Id,
-                new { status = OrderStatus.Pending.ToString(), total = order.Total },
-                new { status = order.Status.ToString(), total = order.Total },
-                "Pedido confirmado sin pago porque el cupon cubrio el total de productos y el retiro no tiene costo.");
-            await _db.SaveChangesAsync(cancellationToken);
+            var completion = await CheckoutCompletion.CompleteAsync(_db, checkout, null, _auditContext, cancellationToken);
+            if (!completion.IsSuccess) return AppResult<CheckoutResponse>.Failure(completion.Error!.Type, completion.Error.Message, completion.Error.Code);
         }
 
         if (transaction is not null)
-        {
             await transaction.CommitAsync(cancellationToken);
+
+        if (checkout.Total > 0 && _gateways.Any())
+        {
+            var payment = await CheckoutPaymentCreator.CreateAsync(_db, _gateways, checkout,
+                new GymShop.Application.DTOs.Payments.CreatePaymentRequest(request.PaymentProvider ?? "BankTransfer", request.PaymentIdempotencyKey),
+                PaymentCreationPolicy.Default, cancellationToken);
+            if (!payment.IsSuccess)
+                return AppResult<CheckoutResponse>.Failure(payment.Error!.Type, payment.Error.Message, payment.Error.Code);
         }
 
-        return AppResult<OrderResponse>.Success(await OrderQueries.LoadOrderResponseAsync(_db, order.Id, cancellationToken));
+        var saved = await CheckoutSessionQueries.LoadAsync(_db, checkout.Id, userId, cancellationToken);
+        return AppResult<CheckoutResponse>.Success(CheckoutSessionMapper.ToResponse(saved!));
     }
 
     private async Task<IApplicationTransaction?> BeginCheckoutTransactionAsync(CancellationToken cancellationToken)
@@ -517,7 +504,8 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             request.ShippingQuoteId?.ToString("D") ?? "<legacy>",
             request.ExpectedShippingCost.ToString("0.00", CultureInfo.InvariantCulture),
             request.ExpectedSubtotal?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>",
-            request.ExpectedDiscount?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>");
+            request.ExpectedDiscount?.ToString("0.00", CultureInfo.InvariantCulture) ?? "<null>",
+            request.PaymentProvider?.Trim() ?? "BankTransfer");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 }
@@ -535,11 +523,6 @@ internal static class CartQueries
         cart = new Cart { UserId = userId };
         db.Carts.Add(cart);
         return cart;
-    }
-
-    public static Task<bool> HasPendingOrderAsync(IApplicationDbContext db, int userId, CancellationToken cancellationToken)
-    {
-        return db.Orders.AnyAsync(x => x.UserId == userId && x.Status == OrderStatus.Pending, cancellationToken);
     }
 
     public static Task<Cart?> GetUserCartAsync(IApplicationDbContext db, int userId, CancellationToken cancellationToken)

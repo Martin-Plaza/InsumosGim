@@ -101,17 +101,27 @@ export function CheckoutPage() {
     if (!currentUserId) { setError('Iniciá sesión para confirmar la compra.'); return }
     submitting.current = true; setBusy(true); setError(''); setRecoveryOrder(null)
     try {
-      const order = await api.checkout({ deliveryMethod, shippingAddress: null, expectedShippingCost: shippingCost, expectedSubtotal: cart.subtotal, expectedDiscount: cart.discount, idempotencyKey: checkoutKey(currentUserId), shippingQuoteId: deliveryMethod === 'HomeDelivery' ? shippingQuote?.id : null, shippingDestination: deliveryMethod === 'HomeDelivery' ? address : null })
-      clearCheckoutKey(currentUserId)
-      sessionStorage.setItem('gymshop.last-order', String(order.id))
-      await cart.refresh()
-      let paymentError = ''
-      if (order.total > 0) {
-        savePaymentProvider(order.id, paymentProvider)
-        try { await api.createPayment(order.id, paymentProvider, paymentKey(order.id)) }
-        catch (value) { paymentError = checkoutErrorMessage(value) }
+      const checkout = await api.checkout({ deliveryMethod, shippingAddress: null, expectedShippingCost: shippingCost, expectedSubtotal: cart.subtotal, expectedDiscount: cart.discount, idempotencyKey: checkoutKey(currentUserId), shippingQuoteId: deliveryMethod === 'HomeDelivery' ? shippingQuote?.id : null, shippingDestination: deliveryMethod === 'HomeDelivery' ? address : null, paymentProvider, paymentIdempotencyKey: paymentKey(currentUserId) })
+      savePaymentProvider(checkout.id, paymentProvider)
+      const legacyOrder = !Object.prototype.hasOwnProperty.call(checkout, 'orderId')
+      if (legacyOrder) {
+        let paymentError = ''
+        if (checkout.total > 0) {
+          try { await api.createPayment(checkout.id, paymentProvider, paymentKey(checkout.id)) }
+          catch (value) { paymentError = checkoutErrorMessage(value) }
+        }
+        clearCheckoutKey(currentUserId)
+        sessionStorage.setItem('gymshop.last-order', String(checkout.id))
+        await cart.refresh()
+        navigate(`/checkout/orden/${checkout.id}`, { replace: true, state: { paymentError } })
+      } else if (checkout.orderId) {
+        clearCheckoutKey(currentUserId)
+        sessionStorage.setItem('gymshop.last-order', String(checkout.orderId))
+        await cart.refresh()
+        navigate(`/checkout/orden/${checkout.orderId}`, { replace: true })
+      } else {
+        navigate(`/checkout/pago/${checkout.id}`, { replace: true })
       }
-      navigate(`/checkout/orden/${order.id}`, { replace: true, state: { paymentError } })
     } catch (value) {
       if (isCheckoutPricingConflict(value)) {
         setRecoveryOrder(null)

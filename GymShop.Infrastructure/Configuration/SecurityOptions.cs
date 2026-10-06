@@ -49,6 +49,9 @@ public sealed class MercadoPagoOptions
     public string? SuccessUrl { get; init; }
     public string? FailureUrl { get; init; }
     public string? PendingUrl { get; init; }
+    public string? CheckoutSuccessUrl { get; init; }
+    public string? CheckoutFailureUrl { get; init; }
+    public string? CheckoutPendingUrl { get; init; }
     public bool UseSandboxInitPoint { get; init; } = true;
 }
 

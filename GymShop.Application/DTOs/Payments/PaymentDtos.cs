@@ -12,7 +12,7 @@ public record UpdatePaymentStatusRequest(
     [StringLength(ValidationLimits.PaymentProviderId)] string? ProviderPaymentId,
     [StringLength(ValidationLimits.PaymentFailureReason)] string? FailureReason);
 
-public record PaymentResponse(int Id, int OrderId, string Provider, string ExternalReference,
+public record PaymentResponse(int Id, int? OrderId, int? CheckoutSessionId, string Provider, string ExternalReference,
     string? ProviderPreferenceId, string? ProviderPaymentId, string? IdempotencyKey,
     decimal Amount, string Currency, string Status, string? CheckoutUrl, string? FailureReason,
     DateTime CreatedAt, DateTime? UpdatedAt, DateTime? PaidAt);

@@ -30,12 +30,12 @@ public class ShippingQuoteUseCaseTests
 
         Assert.True(checkout.IsSuccess);
         Assert.Equal(6500, checkout.Value!.ShippingCost);
-        var order = await db.Orders.SingleAsync();
-        Assert.Equal(quote.Id, order.ShippingQuoteId);
-        Assert.Equal(OwnFleetShippingProvider.ProviderCode, order.ShippingProviderCode);
-        Assert.Equal("standard", order.ShippingServiceCode);
-        Assert.Equal("C1414ABC", order.ShippingPostalCode);
-        Assert.Contains("Av. Corrientes 5500", order.ShippingAddress);
+        var session = await db.CheckoutSessions.SingleAsync();
+        Assert.Equal(quote.Id, session.ShippingQuoteId);
+        Assert.Equal(OwnFleetShippingProvider.ProviderCode, session.ShippingProviderCode);
+        Assert.Equal("standard", session.ShippingServiceCode);
+        Assert.Equal("C1414ABC", session.ShippingPostalCode);
+        Assert.Contains("Av. Corrientes 5500", session.ShippingAddress);
     }
 
     [Fact]

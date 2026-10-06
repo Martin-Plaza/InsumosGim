@@ -152,7 +152,7 @@ public sealed class StockUseCaseTests
     }
 
     [Fact]
-    public async Task Checkout_and_cancel_create_one_sale_and_one_return_without_duplicates()
+    public async Task Checkout_does_not_create_stock_movements_before_payment()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = new User { Name = "Cliente", Email = "buyer@test.com", PasswordHash = "x", RoleId = 1 };
@@ -161,14 +161,11 @@ public sealed class StockUseCaseTests
         db.Add(cart); await db.SaveChangesAsync();
 
         var checkout = await new CheckoutCartUseCase(db).ExecuteAsync(user.Id, new CheckoutCartRequest("HomeDelivery", "Calle 123", 0));
-        Assert.True(checkout.IsSuccess); Assert.Equal(3, product.Stock);
-        var sale = Assert.Single(db.StockMovements); Assert.Equal(StockMovementType.Sale, sale.Type); Assert.Equal(-2, sale.Quantity);
-
-        var cancel = new CancelOrderUseCase(db, new FakeAuditContext(user.Id, "cancel"));
-        Assert.True((await cancel.ExecuteAsync(checkout.Value!.Id, user.Id, true, new CancelOrderRequest("Cancelado"))).IsSuccess);
-        Assert.True((await cancel.ExecuteAsync(checkout.Value.Id, user.Id, true, new CancelOrderRequest("Reintento"))).IsSuccess);
-        Assert.Equal(5, product.Stock); Assert.Equal(2, await db.StockMovements.CountAsync());
-        Assert.Single(db.StockMovements.Where(x => x.Type == StockMovementType.CancellationReturn));
+        Assert.True(checkout.IsSuccess);
+        Assert.Equal(5, product.Stock);
+        Assert.Empty(db.StockMovements);
+        Assert.Empty(db.Orders);
+        Assert.Single(db.CheckoutSessions);
     }
 
     private sealed class RejectMovementSaveInterceptor : SaveChangesInterceptor

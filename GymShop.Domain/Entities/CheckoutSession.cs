@@ -1,21 +1,23 @@
-﻿using GymShop.Domain.Enums;
+using GymShop.Domain.Enums;
 
 namespace GymShop.Domain.Entities;
 
-public class Order
+public class CheckoutSession
 {
     public int Id { get; set; }
     public int UserId { get; set; }
-    public string? CheckoutIdempotencyKey { get; set; }
-    public string? CheckoutRequestFingerprint { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int CartId { get; set; }
+    public int? OrderId { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+    public string RequestFingerprint { get; set; } = string.Empty;
+    public CheckoutStatus Status { get; set; } = CheckoutStatus.AwaitingPayment;
     public decimal Total { get; set; }
     public decimal Subtotal { get; set; }
+    public int? CouponId { get; set; }
     public string? CouponCode { get; set; }
     public decimal DiscountAmount { get; set; }
     public DeliveryMethod DeliveryMethod { get; set; } = DeliveryMethod.HomeDelivery;
     public decimal ShippingCost { get; set; }
-    public OrderStatus Status { get; set; } = OrderStatus.Paid;
     public string ShippingAddress { get; set; } = string.Empty;
     public string? ShippingPostalCode { get; set; }
     public string? ShippingProvince { get; set; }
@@ -32,17 +34,14 @@ public class Order
     public string PickupAddress { get; set; } = string.Empty;
     public string PickupHours { get; set; } = string.Empty;
     public string PickupInstructions { get; set; } = string.Empty;
-    public string? Carrier { get; set; }
-    public string? TrackingNumber { get; set; }
-    public string? TrackingUrl { get; set; }
-    public string? CancellationReason { get; set; }
-    public DateTime? UpdatedAt { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAtUtc { get; set; } = DateTime.UtcNow.AddHours(24);
+    public DateTime? CompletedAtUtc { get; set; }
 
     public User User { get; set; } = null!;
-    public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
+    public Cart Cart { get; set; } = null!;
+    public Coupon? Coupon { get; set; }
+    public Order? Order { get; set; }
+    public ICollection<CheckoutItem> Items { get; set; } = new List<CheckoutItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
-    public ICollection<BillingDocument> BillingDocuments { get; set; } = new List<BillingDocument>();
-    public CouponRedemption? CouponRedemption { get; set; }
 }
-
-

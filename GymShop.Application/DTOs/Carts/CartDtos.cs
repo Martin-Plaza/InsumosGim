@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using GymShop.Application.Common;
+using GymShop.Application.DTOs.Orders;
+using GymShop.Application.DTOs.Payments;
 
 namespace GymShop.Application.DTOs.Carts;
 
@@ -13,7 +15,33 @@ public record CheckoutCartRequest(
     [NonNegativeSqlDecimal] decimal? ExpectedDiscount = null,
     [StringLength(ValidationLimits.IdempotencyKey)] string? IdempotencyKey = null,
     Guid? ShippingQuoteId = null,
-    ShippingAddressRequest? ShippingDestination = null);
+    ShippingAddressRequest? ShippingDestination = null,
+    [StringLength(ValidationLimits.PaymentProvider)] string? PaymentProvider = null,
+    [StringLength(ValidationLimits.IdempotencyKey)] string? PaymentIdempotencyKey = null);
+
+public sealed record CheckoutResponse(
+    int Id,
+    int? OrderId,
+    int UserId,
+    DateTime CreatedAt,
+    DateTime ExpiresAt,
+    decimal Subtotal,
+    string? CouponCode,
+    decimal DiscountAmount,
+    string DeliveryMethod,
+    decimal ShippingCost,
+    decimal Total,
+    string Status,
+    string ShippingAddress,
+    string PickupAddress,
+    string PickupHours,
+    string PickupInstructions,
+    List<OrderItemResponse> Items,
+    PaymentResponse? Payment,
+    OrderShippingAddressResponse? ShippingDestination = null,
+    string? ShippingProviderCode = null,
+    string? ShippingServiceCode = null,
+    string? ShippingServiceName = null);
 
 public sealed record ShippingAddressRequest(
     [Required, StringLength(ValidationLimits.ShippingPostalCode)] string PostalCode,

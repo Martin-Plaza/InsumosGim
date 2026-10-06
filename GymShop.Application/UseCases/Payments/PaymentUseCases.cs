@@ -1,6 +1,7 @@
 using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using GymShop.Application.DTOs.Payments;
+using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Orders;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
@@ -12,6 +13,11 @@ namespace GymShop.Application.UseCases.Payments;
 public interface ICreatePaymentUseCase
 {
     Task<AppResult<PaymentResponse>> ExecuteAsync(int orderId, int userId, bool canManageAll, CreatePaymentRequest request, CancellationToken cancellationToken = default);
+}
+
+public interface ICreateCheckoutPaymentUseCase
+{
+    Task<AppResult<PaymentResponse>> ExecuteAsync(int checkoutId, int userId, CreatePaymentRequest request, CancellationToken cancellationToken = default);
 }
 
 public interface IGetPaymentByIdUseCase
@@ -321,8 +327,134 @@ internal static class PaymentCreator
         db.Payments.AsNoTracking().AnyAsync(
             x => x.Id == paymentId &&
                  x.Status == PaymentStatus.Creating &&
+                 x.Order != null &&
                  x.Order.Status == OrderStatus.Pending,
             cancellationToken);
+}
+
+public sealed class CreateCheckoutPaymentUseCase : ICreateCheckoutPaymentUseCase
+{
+    private readonly IApplicationDbContext _db;
+    private readonly IEnumerable<IPaymentGateway> _gateways;
+
+    public CreateCheckoutPaymentUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways)
+    {
+        _db = db;
+        _gateways = gateways;
+    }
+
+    public async Task<AppResult<PaymentResponse>> ExecuteAsync(int checkoutId, int userId, CreatePaymentRequest request, CancellationToken cancellationToken = default)
+    {
+        var checkout = await CheckoutSessionQueries.LoadAsync(_db, checkoutId, userId, cancellationToken);
+        if (checkout is null) return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Checkout no encontrado.");
+        if (checkout.Status != CheckoutStatus.AwaitingPayment)
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El checkout ya no admite pagos.");
+        return await CheckoutPaymentCreator.CreateAsync(_db, _gateways, checkout, request, PaymentCreationPolicy.Default, cancellationToken);
+    }
+}
+
+internal static class CheckoutPaymentCreator
+{
+    public static async Task<AppResult<PaymentResponse>> CreateAsync(
+        IApplicationDbContext db,
+        IEnumerable<IPaymentGateway> gateways,
+        CheckoutSession checkout,
+        CreatePaymentRequest request,
+        PaymentCreationPolicy policy,
+        CancellationToken cancellationToken)
+    {
+        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
+            ? $"checkout-{checkout.Id}-{Guid.NewGuid():N}"
+            : request.IdempotencyKey.Trim();
+        if (idempotencyKey.Length > ValidationLimits.IdempotencyKey)
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La clave de idempotencia no puede superar 100 caracteres.");
+
+        var existing = await db.Payments.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.CheckoutSessionId != checkout.Id)
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otro checkout.");
+            if (existing.Status != PaymentStatus.Creating || (existing.UpdatedAt ?? existing.CreatedAt) > DateTime.UtcNow.Subtract(policy.CreatingTimeout))
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(existing));
+        }
+
+        var active = existing ?? await db.Payments.AsNoTracking()
+            .Where(x => x.CheckoutSessionId == checkout.Id && (x.Status == PaymentStatus.Creating || x.Status == PaymentStatus.Pending))
+            .OrderByDescending(x => x.Id).FirstOrDefaultAsync(cancellationToken);
+        if (active is not null && active.Status != PaymentStatus.Creating)
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(active));
+
+        var provider = string.IsNullOrWhiteSpace(request.Provider) ? "BankTransfer" : request.Provider.Trim();
+        var gateway = gateways.FirstOrDefault(x => x.CanHandle(provider));
+        if (gateway is null)
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, $"Proveedor de pago no soportado: {provider}.");
+
+        Payment reservation;
+        if (active is null)
+        {
+            reservation = new Payment
+            {
+                CheckoutSessionId = checkout.Id,
+                Provider = provider,
+                ExternalReference = $"checkout-{checkout.Id}",
+                IdempotencyKey = idempotencyKey,
+                Amount = checkout.Total,
+                Currency = "ARS",
+                Status = PaymentStatus.Creating,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            db.Payments.Add(reservation);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                db.Payments.Remove(reservation);
+                var winner = await db.Payments.AsNoTracking()
+                    .Where(x => x.IdempotencyKey == idempotencyKey ||
+                                (x.CheckoutSessionId == checkout.Id &&
+                                 (x.Status == PaymentStatus.Creating || x.Status == PaymentStatus.Pending)))
+                    .OrderByDescending(x => x.IdempotencyKey == idempotencyKey)
+                    .ThenByDescending(x => x.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (winner is null) throw;
+                if (winner.IdempotencyKey == idempotencyKey && winner.CheckoutSessionId != checkout.Id)
+                    return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "La clave de idempotencia ya fue usada en otro checkout.");
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(winner));
+            }
+        }
+        else
+        {
+            reservation = await db.Payments.SingleAsync(x => x.Id == active.Id, cancellationToken);
+            reservation.UpdatedAt = DateTime.UtcNow;
+        }
+
+        reservation.ExternalReference = PaymentExternalReferences.BuildCheckout(checkout.Id, reservation.Id);
+        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            var preference = await gateway.CreatePreferenceAsync(checkout, reservation.IdempotencyKey, reservation.ExternalReference, cancellationToken);
+            reservation.Provider = preference.Provider;
+            reservation.ProviderPreferenceId = preference.ProviderPreferenceId;
+            reservation.CheckoutUrl = preference.CheckoutUrl;
+            reservation.Status = PaymentStatus.Pending;
+            reservation.FailureReason = null;
+            reservation.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(reservation));
+        }
+        catch (PaymentGatewayException exception)
+        {
+            reservation.Status = PaymentStatus.CreationFailed;
+            reservation.FailureReason = exception.Message;
+            reservation.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Unavailable, exception.Message, "payment_creation_failed");
+        }
+    }
 }
 public class GetPaymentByIdUseCase : IGetPaymentByIdUseCase
 {
@@ -337,7 +469,8 @@ public class GetPaymentByIdUseCase : IGetPaymentByIdUseCase
     {
         var payment = await _db.Payments
             .AsNoTracking()
-            .Include(x => x.Order)
+            .Include(x => x.Order!)
+            .Include(x => x.CheckoutSession)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (payment is null)
@@ -345,7 +478,8 @@ public class GetPaymentByIdUseCase : IGetPaymentByIdUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Pago no encontrado.");
         }
 
-        if (payment.Order.UserId != userId && !canManageAll)
+        var ownerId = payment.Order?.UserId ?? payment.CheckoutSession?.UserId;
+        if (ownerId != userId && !canManageAll)
         {
             return AppResult<PaymentResponse>.Failure(AppErrorType.Forbidden, "No tenes permisos para ver este pago.");
         }
@@ -391,11 +525,13 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
 {
     private readonly IApplicationDbContext _db;
     private readonly IAuditContext? _auditContext;
+    private readonly ITransactionManager? _transactionManager;
 
-    public UpdatePaymentStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null)
+    public UpdatePaymentStatusUseCase(IApplicationDbContext db, IAuditContext? auditContext = null, ITransactionManager? transactionManager = null)
     {
         _db = db;
         _auditContext = auditContext;
+        _transactionManager = transactionManager;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(int id, UpdatePaymentStatusRequest request, CancellationToken cancellationToken = default)
@@ -415,6 +551,7 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "Estado de pago invalido.");
         }
 
+        await using var transaction = _transactionManager is null ? null : await _transactionManager.BeginCheckoutTransactionAsync(cancellationToken);
         var payment = await PaymentQueries.LoadTrackedPaymentAsync(_db, id, cancellationToken);
         if (payment is null)
         {
@@ -432,7 +569,7 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La referencia o motivo de la acreditacion es obligatorio.");
         }
 
-        return await PaymentStatusApplier.ApplyAsync(
+        var result = await PaymentStatusApplier.ApplyAsync(
             _db,
             payment,
             newStatus,
@@ -441,6 +578,8 @@ public class UpdatePaymentStatusUseCase : IUpdatePaymentStatusUseCase
             isProviderNotification: false,
             _auditContext,
             cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 }
 
@@ -449,12 +588,14 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
     private readonly IApplicationDbContext _db;
     private readonly IEnumerable<IPaymentGateway> _gateways;
     private readonly IAuditContext? _auditContext;
+    private readonly ITransactionManager? _transactionManager;
 
-    public HandlePaymentWebhookUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways, IAuditContext? auditContext = null)
+    public HandlePaymentWebhookUseCase(IApplicationDbContext db, IEnumerable<IPaymentGateway> gateways, IAuditContext? auditContext = null, ITransactionManager? transactionManager = null)
     {
         _db = db;
         _gateways = gateways;
         _auditContext = auditContext;
+        _transactionManager = transactionManager;
     }
 
     public async Task<AppResult<PaymentResponse>> ExecuteAsync(string provider, string providerPaymentId, CancellationToken cancellationToken = default)
@@ -481,17 +622,21 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
         }
 
         var orderId = PaymentExternalReferences.TryGetOrderId(providerPayment.ExternalReference);
-        if (orderId is null)
+        var checkoutId = PaymentExternalReferences.TryGetCheckoutId(providerPayment.ExternalReference);
+        if (orderId is null && checkoutId is null)
         {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La referencia externa del pago no corresponde a una orden valida.");
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "La referencia externa del pago no corresponde a un checkout válido.");
         }
 
+        await using var transaction = _transactionManager is null ? null : await _transactionManager.BeginCheckoutTransactionAsync(cancellationToken);
         var paymentQuery = _db.Payments
-            .Include(x => x.Order)
+            .Include(x => x.Order!)
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
-            .Include(x => x.Order)
+            .Include(x => x.Order!)
             .ThenInclude(x => x.CouponRedemption)
+            .Include(x => x.CheckoutSession!)
+            .ThenInclude(x => x.Items)
             .Where(x => x.Provider == provider);
 
         var payment = await paymentQuery.SingleOrDefaultAsync(
@@ -514,14 +659,17 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
                     providerPayment.ExternalReference,
                     matches = referenceMatches.Count
                 };
-                if (!await HasUnmatchedIncidentAsync(orderId.Value, incident.ProviderPaymentId, incident.ExternalReference, incident.matches, cancellationToken))
+                var entityType = checkoutId.HasValue ? "CheckoutSession" : "Order";
+                var entityId = checkoutId ?? orderId!.Value;
+                if (!await HasUnmatchedIncidentAsync(entityType, entityId, incident.ProviderPaymentId, incident.ExternalReference, incident.matches, cancellationToken))
                 {
-                    AuditTrail.Add(_db, _auditContext, "PaymentWebhookUnmatched", "Order", orderId.Value,
+                    AuditTrail.Add(_db, _auditContext, "PaymentWebhookUnmatched", entityType, entityId,
                         null,
                         incident,
                         reason);
                     await _db.SaveChangesAsync(cancellationToken);
                 }
+                if (transaction is not null) await transaction.CommitAsync(cancellationToken);
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, reason);
             }
 
@@ -541,12 +689,12 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
 
         if (payment.Amount != providerPayment.Amount || !string.Equals(payment.Currency, providerPayment.Currency, StringComparison.OrdinalIgnoreCase))
         {
-            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El monto o la moneda del pago no coinciden con la orden.");
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El monto o la moneda del pago no coinciden con el checkout.");
         }
 
         if (PaymentStatusMapper.IsPartialRefund(providerPayment.Status))
         {
-            if (payment.Status != PaymentStatus.Approved ||
+            if (payment.Status != PaymentStatus.Approved || payment.Order is null ||
                 payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
             {
                 return AppResult<PaymentResponse>.Failure(
@@ -560,6 +708,7 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
                 new { status = payment.Status.ToString(), failureReason = (string?)null },
                 new { status = payment.Status.ToString(), payment.FailureReason }, payment.FailureReason);
             await _db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
@@ -568,6 +717,7 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
         {
             payment.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
@@ -580,6 +730,29 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
             isProviderNotification: true,
             _auditContext,
             cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+
+        if (!applyResult.IsSuccess && applyResult.Error?.Code == "paid_checkout_stock_unavailable")
+        {
+            try
+            {
+                if (await gateway.RefundPaymentAsync(providerPayment.ProviderPaymentId, cancellationToken))
+                {
+                    payment.Status = PaymentStatus.Refunded;
+                    payment.FailureReason = "Pago devuelto automáticamente porque la compra ya no podía confirmarse.";
+                    payment.UpdatedAt = DateTime.UtcNow;
+                    if (payment.CheckoutSession is not null) payment.CheckoutSession.Status = CheckoutStatus.Refunded;
+                    await _db.SaveChangesAsync(cancellationToken);
+                    return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+                }
+            }
+            catch (PaymentGatewayException exception)
+            {
+                payment.FailureReason = $"No había stock y la devolución automática falló: {exception.Message}";
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            return applyResult;
+        }
 
         if (!applyResult.IsSuccess || status != PaymentStatus.Approved ||
             string.IsNullOrWhiteSpace(payment.ProviderPreferenceId))
@@ -617,7 +790,8 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
     }
 
     private async Task<bool> HasUnmatchedIncidentAsync(
-        int orderId,
+        string entityType,
+        int entityId,
         string providerPaymentId,
         string externalReference,
         int matches,
@@ -626,8 +800,8 @@ public class HandlePaymentWebhookUseCase : IHandlePaymentWebhookUseCase
         var recordedValues = await _db.AuditEntries
             .AsNoTracking()
             .Where(x => x.Action == "PaymentWebhookUnmatched" &&
-                        x.EntityType == "Order" &&
-                        x.EntityId == orderId.ToString() &&
+                        x.EntityType == entityType &&
+                        x.EntityId == entityId.ToString() &&
                         x.NewValue != null)
             .Select(x => x.NewValue!)
             .ToListAsync(cancellationToken);
@@ -668,11 +842,13 @@ internal static class PaymentQueries
     public static Task<Payment?> LoadTrackedPaymentAsync(IApplicationDbContext db, int id, CancellationToken cancellationToken)
     {
         return db.Payments
-            .Include(x => x.Order)
+            .Include(x => x.Order!)
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
-            .Include(x => x.Order)
+            .Include(x => x.Order!)
             .ThenInclude(x => x.CouponRedemption)
+            .Include(x => x.CheckoutSession!)
+            .ThenInclude(x => x.Items)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
     }
 }
@@ -689,13 +865,62 @@ internal static class PaymentStatusApplier
         IAuditContext? auditContext,
         CancellationToken cancellationToken)
     {
+        if (newStatus == PaymentStatus.Approved && payment.CheckoutSession?.Status == CheckoutStatus.StockUnavailable)
+        {
+            return AppResult<PaymentResponse>.Failure(
+                AppErrorType.Conflict,
+                "El pago fue acreditado, pero la compra ya no podía confirmarse.",
+                "paid_checkout_stock_unavailable");
+        }
+
         if (payment.Status == newStatus)
         {
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
+        if (payment.CheckoutSession is not null && payment.Order is null)
+        {
+            if (payment.Status != PaymentStatus.Pending)
+                return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Transición de estado de pago inválida.");
+
+            payment.ProviderPaymentId = NormalizeProviderPaymentId(payment.ProviderPaymentId, providerPaymentId);
+            payment.UpdatedAt = DateTime.UtcNow;
+            if (newStatus == PaymentStatus.Pending)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+            }
+
+            if (newStatus == PaymentStatus.Approved)
+            {
+                payment.PaidAt = DateTime.UtcNow;
+                var completion = await CheckoutCompletion.CompleteAsync(db, payment.CheckoutSession, payment, auditContext, cancellationToken);
+                return completion.IsSuccess
+                    ? AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment))
+                    : AppResult<PaymentResponse>.Failure(completion.Error!.Type, completion.Error.Message, completion.Error.Code);
+            }
+
+            if (newStatus is PaymentStatus.Rejected or PaymentStatus.Canceled or PaymentStatus.Expired)
+            {
+                payment.Status = newStatus;
+                payment.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
+                payment.CheckoutSession.Status = CheckoutStatus.PaymentFailed;
+                payment.CheckoutSession.CompletedAtUtc = DateTime.UtcNow;
+                AuditTrail.Add(db, auditContext,
+                    isProviderNotification ? "CheckoutPaymentResolvedByProvider" : "CheckoutPaymentResolvedManually",
+                    "Payment", payment.Id,
+                    new { paymentStatus = PaymentStatus.Pending.ToString(), checkoutStatus = CheckoutStatus.AwaitingPayment.ToString() },
+                    new { paymentStatus = newStatus.ToString(), checkoutStatus = payment.CheckoutSession.Status.ToString() },
+                    payment.FailureReason);
+                await db.SaveChangesAsync(cancellationToken);
+                return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+            }
+
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Validation, "Estado de pago no permitido para un checkout sin orden.");
+        }
+
         if (isProviderNotification && newStatus == PaymentStatus.Approved &&
-            payment.Status == PaymentStatus.Canceled && payment.Order.Status == OrderStatus.Canceled)
+            payment.Status == PaymentStatus.Canceled && payment.Order?.Status == OrderStatus.Canceled)
         {
             var canceledPaymentStatus = payment.Status;
             const string incident = "Mercado Pago informo una aprobacion despues de la cancelacion administrativa; requiere revision y devolucion.";
@@ -719,7 +944,7 @@ internal static class PaymentStatusApplier
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Un reembolso solo puede aplicarse despues de ser confirmado por el proveedor.");
             }
 
-            if (payment.Status != PaymentStatus.Approved ||
+            if (payment.Status != PaymentStatus.Approved || payment.Order is null ||
                 payment.Order.Status is not (OrderStatus.Paid or OrderStatus.Preparing or OrderStatus.Shipped or OrderStatus.Delivered))
             {
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pago y el pedido no se encuentran en un estado reembolsable.");
@@ -758,6 +983,9 @@ internal static class PaymentStatusApplier
             await db.SaveChangesAsync(cancellationToken);
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
+
+        if (payment.Order is null)
+            return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El pago no está asociado a una orden o checkout válido.");
 
         if (payment.Order.Status != OrderStatus.Pending)
         {
@@ -833,6 +1061,17 @@ internal static class PaymentStatusMapper
 internal static class PaymentExternalReferences
 {
     public static string Build(int orderId, int paymentId) => $"order-{orderId}-payment-{paymentId}";
+    public static string BuildCheckout(int checkoutId, int paymentId) => $"checkout-{checkoutId}-payment-{paymentId}";
+
+    public static int? TryGetCheckoutId(string externalReference)
+    {
+        const string prefix = "checkout-";
+        if (!externalReference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var value = externalReference[prefix.Length..];
+        var separator = value.IndexOf("-payment-", StringComparison.OrdinalIgnoreCase);
+        if (separator >= 0) value = value[..separator];
+        return int.TryParse(value, out var checkoutId) ? checkoutId : null;
+    }
 
     public static int? TryGetOrderId(string externalReference)
     {
@@ -854,6 +1093,7 @@ internal static class PaymentMapper
         return new PaymentResponse(
             payment.Id,
             payment.OrderId,
+            payment.CheckoutSessionId,
             payment.Provider,
             payment.ExternalReference,
             payment.ProviderPreferenceId,

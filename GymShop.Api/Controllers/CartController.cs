@@ -20,6 +20,7 @@ public class CartController : ApiControllerBase
     private readonly IRemoveCartItemUseCase _removeCartItem;
     private readonly IClearCartUseCase _clearCart;
     private readonly ICheckoutCartUseCase _checkoutCart;
+    private readonly IGetCheckoutSessionUseCase _getCheckout;
     private readonly ICurrentUserService _currentUser;
     private readonly IApplyCartCouponUseCase _applyCoupon;
     private readonly IRemoveCartCouponUseCase _removeCoupon;
@@ -33,6 +34,7 @@ public class CartController : ApiControllerBase
         IRemoveCartItemUseCase removeCartItem,
         IClearCartUseCase clearCart,
         ICheckoutCartUseCase checkoutCart,
+        IGetCheckoutSessionUseCase getCheckout,
         ICurrentUserService currentUser, IApplyCartCouponUseCase applyCoupon, IRemoveCartCouponUseCase removeCoupon,
         IShippingSettings shippingSettings,
         IQuoteCartShippingUseCase quoteShipping)
@@ -43,6 +45,7 @@ public class CartController : ApiControllerBase
         _removeCartItem = removeCartItem;
         _clearCart = clearCart;
         _checkoutCart = checkoutCart;
+        _getCheckout = getCheckout;
         _currentUser = currentUser;
         _applyCoupon = applyCoupon; _removeCoupon = removeCoupon;
         _shippingSettings = shippingSettings;
@@ -107,8 +110,14 @@ public class CartController : ApiControllerBase
     }
 
     [HttpPost("checkout")]
-    public async Task<ActionResult<OrderResponse>> Checkout(CheckoutCartRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<CheckoutResponse>> Checkout(CheckoutCartRequest request, CancellationToken cancellationToken)
     {
         return FromResult(await _checkoutCart.ExecuteAsync(_currentUser.UserId, request, cancellationToken));
+    }
+
+    [HttpGet("checkout/{id:int}")]
+    public async Task<ActionResult<CheckoutResponse>> GetCheckout(int id, CancellationToken cancellationToken)
+    {
+        return FromResult(await _getCheckout.ExecuteAsync(id, _currentUser.UserId, cancellationToken));
     }
 }

@@ -34,17 +34,18 @@ public sealed class PostgresBehaviorTests
     }
 
     [Fact]
-    public async Task Postgres_enforces_single_pending_order_and_product_checks_and_lengths()
+    public async Task Postgres_allows_legacy_pending_orders_and_enforces_product_checks_and_lengths()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         var seed = await database.SeedPendingOrderAsync();
-        await using (var duplicateContext = database.CreateContext())
+        await using (var legacyContext = database.CreateContext())
         {
-            duplicateContext.Orders.Add(new Order
+            legacyContext.Orders.Add(new Order
             {
-                UserId = seed.UserId, Total = 10, Status = OrderStatus.Pending, ShippingAddress = "Duplicate pending"
+                UserId = seed.UserId, Total = 10, Status = OrderStatus.Pending, ShippingAddress = "Legacy pending"
             });
-            await Assert.ThrowsAsync<DbUpdateException>(() => duplicateContext.SaveChangesAsync());
+            await legacyContext.SaveChangesAsync();
+            Assert.Equal(2, await legacyContext.Orders.CountAsync(x => x.UserId == seed.UserId && x.Status == OrderStatus.Pending));
         }
         await using (var checkContext = database.CreateContext())
         {
@@ -77,7 +78,7 @@ public sealed class PostgresBehaviorTests
     }
 
     [Fact]
-    public async Task Checkout_transaction_rolls_back_stock_order_and_cart_when_post_save_step_fails()
+    public async Task Checkout_transaction_rolls_back_session_and_preserves_stock_order_and_cart_when_post_save_step_fails()
     {
         await using var database = await SqlTestDatabase.CreateMigratedAsync();
         int userId;
@@ -106,6 +107,7 @@ public sealed class PostgresBehaviorTests
 
         await using var verification = database.CreateContext();
         Assert.Equal(2, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
+        Assert.Empty(await verification.CheckoutSessions.Where(x => x.UserId == userId).ToListAsync());
         Assert.Empty(await verification.Orders.Where(x => x.UserId == userId).ToListAsync());
         Assert.Single(await verification.CartItems.ToListAsync());
     }

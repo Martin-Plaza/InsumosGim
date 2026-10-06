@@ -95,7 +95,7 @@ public sealed class ProductVariantUseCaseTests
     }
 
     [Fact]
-    public async Task Checkout_decrements_only_selected_variant_and_snapshots_attributes()
+    public async Task Checkout_snapshots_selected_variant_without_reserving_its_stock()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await User(db); var product = ProductWithVariants(); db.Products.Add(product); await db.SaveChangesAsync();
@@ -104,7 +104,7 @@ public sealed class ProductVariantUseCaseTests
 
         var result = await new CheckoutCartUseCase(db, shippingSettings: new Shipping()).ExecuteAsync(user.Id, new("StorePickup", null, 0, 240, 0));
 
-        Assert.True(result.IsSuccess); Assert.Equal(0, selected.Stock);
+        Assert.True(result.IsSuccess); Assert.Equal(2, selected.Stock);
         Assert.Equal(4, product.Variants.Single(x => x.Sku == "REM-L-AZUL").Stock);
         var line = Assert.Single(result.Value!.Items); Assert.Equal("REM-M-NEGRO", line.VariantSku); Assert.Equal("M", line.VariantAttributes!["Talle"]);
     }

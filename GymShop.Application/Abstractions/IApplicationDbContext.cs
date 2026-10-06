@@ -18,6 +18,8 @@ public interface IApplicationDbContext
     DbSet<OrderItem> OrderItems { get; }
     DbSet<Cart> Carts { get; }
     DbSet<CartItem> CartItems { get; }
+    DbSet<CheckoutSession> CheckoutSessions { get; }
+    DbSet<CheckoutItem> CheckoutItems { get; }
     DbSet<Payment> Payments { get; }
     DbSet<AuditEntry> AuditEntries { get; }
     DbSet<StockMovement> StockMovements { get; }

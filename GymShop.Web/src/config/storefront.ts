@@ -6,6 +6,13 @@ export const storefront = {
   },
   market: { locale: 'es-AR', currency: 'ARS', region: 'AR' },
   contact: { email: 'hola@gymshop.demo', phone: '+54 11 5555 0101', whatsapp: '+54 9 11 5555 0101' },
+  legal: {
+    businessName: import.meta.env.VITE_LEGAL_BUSINESS_NAME?.trim() || 'Comercio de demostración',
+    cuit: import.meta.env.VITE_LEGAL_CUIT?.trim() || '',
+    address: import.meta.env.VITE_LEGAL_ADDRESS?.trim() || '',
+    email: import.meta.env.VITE_LEGAL_EMAIL?.trim() || 'hola@gymshop.demo',
+    lastUpdated: '5 de octubre de 2026',
+  },
   copy: {
     catalogNav: 'Catálogo', heroEyebrow: 'EQUIPÁ TU MEJOR VERSIÓN', heroTitle: 'Entrená sin límites.',
     heroDescription: 'Equipamiento seleccionado para construir fuerza, constancia y resultados.', heroAction: 'Ver catálogo', heroSecondaryAction: 'Explorar productos',
@@ -42,6 +49,10 @@ export const storefront = {
     cardio: { symbol: '04', color: '#57d7ff' },
   } as Record<string, { symbol: string; color: string }>,
 } as const
+
+export const legalIdentityConfigured = Boolean(
+  storefront.legal.businessName && storefront.legal.cuit && storefront.legal.address && storefront.legal.email
+)
 
 export const money = (value: number, currency: string = storefront.market.currency) =>
   new Intl.NumberFormat(storefront.market.locale, { style: 'currency', currency }).format(value)

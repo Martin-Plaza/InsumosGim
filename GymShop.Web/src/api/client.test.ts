@@ -54,6 +54,15 @@ describe('cliente HTTP y contrato GymShop', () => {
     await expect(request('/api/test')).rejects.toMatchObject({ status: 500, traceId: 'server-trace' })
   })
 
+  it('distingue una falla de red de una respuesta HTTP', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(request('/api/test')).rejects.toMatchObject({
+      status: 0,
+      code: 'network_unavailable',
+      message: 'No pudimos conectarnos con el servicio. Revisá tu conexión e intentá nuevamente.',
+    })
+  })
+
   it('solicita solo el catálogo activo por defecto', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response([]))
     await api.products()

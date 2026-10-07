@@ -31,11 +31,29 @@ public sealed class GetAuditEntriesUseCase : IGetAuditEntriesUseCase
         if (request.ToUtc.HasValue) query = query.Where(x => x.CreatedAtUtc <= request.ToUtc);
 
         var total = await query.LongCountAsync(cancellationToken);
-        var items = await query.OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
+        var rows = await query.OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
             .Skip((request.Page - 1) * request.PageSize).Take(request.PageSize)
-            .Select(x => new AuditEntryResponse(x.Id, x.ActorUserId, x.Action, x.EntityType, x.EntityId,
-                x.OldValue, x.NewValue, x.Reason, x.CreatedAtUtc, x.CorrelationId))
+            .Select(x => new
+            {
+                x.Id, x.ActorUserId, x.Action, x.EntityType, x.EntityId, x.OldValue, x.NewValue, x.Reason,
+                x.CreatedAtUtc, x.CorrelationId,
+                ActorName = x.ActorUser == null ? null : (x.ActorUser.Name + " " + (x.ActorUser.LastName ?? "")).Trim()
+            })
             .ToListAsync(cancellationToken);
+
+        var userEntityIds = rows
+            .Where(x => x.EntityType == "User" && int.TryParse(x.EntityId, out _))
+            .Select(x => int.Parse(x.EntityId)).Distinct().ToList();
+        var userNames = userEntityIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await _db.Users.AsNoTracking().Where(x => userEntityIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => (x.Name + " " + (x.LastName ?? "")).Trim(), cancellationToken);
+        var items = rows.Select(x => new AuditEntryResponse(
+            x.Id, x.ActorUserId, x.Action, x.EntityType, x.EntityId, x.OldValue, x.NewValue, x.Reason,
+            x.CreatedAtUtc, x.CorrelationId, x.ActorName,
+            x.EntityType == "User" && int.TryParse(x.EntityId, out var userId) && userNames.TryGetValue(userId, out var userName)
+                ? userName
+                : null)).ToList();
         var pages = total == 0 ? 0 : (int)Math.Ceiling(total / (double)request.PageSize);
         return AppResult<PagedAuditResponse>.Success(new PagedAuditResponse(items, request.Page, request.PageSize, total, pages));
     }

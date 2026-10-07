@@ -58,7 +58,7 @@ export interface BillingDocument { id: string; orderId: number; paymentId: numbe
 export interface BillingProfile { mode: string; taxCondition: string; businessName: string; cuit: string; fiscalAddress: string; grossIncomeNumber: string; activityStartDate: string | null; pointOfSale: number | null; arcaEnabled: boolean; electronicInvoicingReady: boolean }
 export interface ArcaConnectionStatus { environment: string; configurationReady: boolean; wsaaAuthenticated: boolean; wsfeReachable: boolean; pointsOfSale: number[]; errorCode: string | null; message: string | null; checkedAtUtc: string }
 export interface AuditPage { items: AuditEntry[]; page: number; pageSize: number; totalItems: number; totalPages: number }
-export interface AuditEntry { id: number; actorUserId: number | null; action: string; entityType: string; entityId: string; reason: string | null; createdAtUtc: string; correlationId: string }
+export interface AuditEntry { id: number; actorUserId: number | null; actorName?: string | null; action: string; entityType: string; entityId: string; entityDisplayName?: string | null; reason: string | null; createdAtUtc: string; correlationId: string }
 export interface DashboardStatusCount { status: OrderStatus; count: number }
 export interface DashboardDailySales { date: string; amount: number; orders: number }
 export interface DashboardTopProduct { productId: number; productName: string; quantity: number; amount: number }

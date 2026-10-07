@@ -18,6 +18,10 @@ public class AuditUseCaseTests
     public async Task Query_is_filtered_paginated_and_ordered()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
+        db.Users.Add(new User
+        {
+            Id = 2, Email = "ana@test.com", Name = "Ana", LastName = "Pérez", PasswordHash = "not-used", RoleId = 1, IsActive = true
+        });
         db.AuditEntries.AddRange(
             Entry("ProductStockChanged", "Product", "1", DateTime.UtcNow.AddMinutes(-2)),
             Entry("ProductStatusChanged", "Product", "1", DateTime.UtcNow.AddMinutes(-1)),
@@ -31,6 +35,10 @@ public class AuditUseCaseTests
         Assert.Equal(2, result.Value!.TotalItems);
         Assert.Equal(2, result.Value.TotalPages);
         Assert.Equal("ProductStatusChanged", Assert.Single(result.Value.Items).Action);
+
+        var userResult = await new GetAuditEntriesUseCase(db).ExecuteAsync(
+            new AuditQueryRequest(EntityType: "User", EntityId: "2"));
+        Assert.Equal("Ana Pérez", Assert.Single(userResult.Value!.Items).EntityDisplayName);
     }
 
     [Fact]

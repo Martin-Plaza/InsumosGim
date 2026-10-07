@@ -65,5 +65,10 @@ export function Home({ onCatalog, onProduct }: { onCatalog(category?: string): v
       {storefront.copy.benefits.map(benefit => <article key={benefit.title}><span>{benefit.icon}</span><div><h3>{benefit.title}</h3><p>{benefit.description}</p></div></article>)}
     </section>
 
+    <section className="closing-cta" aria-label="Inspiración para empezar a entrenar">
+      <img src="/images/home/train-with-purpose.png" alt="Atleta entrenando con kettlebell en un gimnasio equipado" loading="lazy" />
+      <div><p className="eyebrow">EQUIPÁ TU OBJETIVO</p><h2>Tu próxima versión empieza hoy</h2><p>Elegí el equipo que te impulse a entrenar con más fuerza, constancia y ganas.</p><button className="primary" onClick={() => onCatalog()}>Encontrá tu próximo equipo</button></div>
+    </section>
+
   </>
 }

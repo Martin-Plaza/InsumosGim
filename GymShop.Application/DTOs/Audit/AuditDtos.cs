@@ -13,6 +13,7 @@ public sealed record AuditQueryRequest(
     DateTime? ToUtc = null);
 
 public sealed record AuditEntryResponse(long Id, int? ActorUserId, string Action, string EntityType,
-    string EntityId, string? OldValue, string? NewValue, string? Reason, DateTime CreatedAtUtc, string CorrelationId);
+    string EntityId, string? OldValue, string? NewValue, string? Reason, DateTime CreatedAtUtc, string CorrelationId,
+    string? ActorName, string? EntityDisplayName);
 
 public sealed record PagedAuditResponse(List<AuditEntryResponse> Items, int Page, int PageSize, long TotalItems, int TotalPages);

@@ -50,7 +50,10 @@ public sealed class RegisterUserUseCase : IRegisterUserUseCase
         if (!new StrongPasswordAttribute().IsValid(request.Password))
             return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Validation, "La password debe tener entre 8 y 128 caracteres e incluir al menos una letra y un numero.");
         if (await _db.Users.AnyAsync(x => x.Email == email, cancellationToken))
-            return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Conflict, "El email ya esta registrado.");
+        {
+            _ = _hasher.Hash(request.Password); // Reduce la diferencia temporal con un alta real.
+            return AppResult<RegistrationPendingResponse>.Success(new(email, Verification.LifetimeSeconds, null));
+        }
 
         var role = await _db.Roles.SingleAsync(x => x.Name == "User", cancellationToken);
         var user = new User {
@@ -100,19 +103,19 @@ internal static class Verification
 
 public sealed class VerifyEmailUseCase : IVerifyEmailUseCase
 {
+    private const string GenericInvalidMessage = "El codigo no es valido, vencio o ya fue utilizado.";
     private readonly IApplicationDbContext _db; private readonly IJwtTokenService _jwt; private readonly TimeProvider _time;
     public VerifyEmailUseCase(IApplicationDbContext db, IJwtTokenService jwt, TimeProvider time) => (_db, _jwt, _time) = (db, jwt, time);
     public async Task<AppResult<AuthResponse>> ExecuteAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default)
     {
         var email = request.Email.Trim().ToLowerInvariant(); var now = _time.GetUtcNow().UtcDateTime;
         var user = await _db.Users.Include(x => x.Role).Include(x => x.EmailVerificationCodes).SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
-        if (user is null || user.EmailVerifiedAt is not null) return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "No hay una verificacion pendiente para este email.");
+        if (user is null || user.EmailVerifiedAt is not null) return AppResult<AuthResponse>.Failure(AppErrorType.Validation, GenericInvalidMessage);
         var verification = user.EmailVerificationCodes.Where(x => x.ConsumedAtUtc == null).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
-        if (verification is null) return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "No hay un codigo vigente. Solicita uno nuevo.");
-        if (verification.ExpiresAtUtc <= now) return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "El codigo vencio. Solicita uno nuevo.");
-        if (verification.FailedAttempts >= 5) return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "Superaste la cantidad de intentos. Solicita un codigo nuevo.");
+        if (verification is null || verification.ExpiresAtUtc <= now || verification.FailedAttempts >= 5)
+            return AppResult<AuthResponse>.Failure(AppErrorType.Validation, GenericInvalidMessage);
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(verification.CodeHash), Convert.FromHexString(Verification.Hash(request.Code))))
-        { verification.FailedAttempts++; await _db.SaveChangesAsync(cancellationToken); return AppResult<AuthResponse>.Failure(AppErrorType.Validation, "El codigo es incorrecto."); }
+        { verification.FailedAttempts++; await _db.SaveChangesAsync(cancellationToken); return AppResult<AuthResponse>.Failure(AppErrorType.Validation, GenericInvalidMessage); }
         verification.ConsumedAtUtc = now; user.EmailVerifiedAt = now; user.TokenVersion++;
         await _db.SaveChangesAsync(cancellationToken);
         return AppResult<AuthResponse>.Success(AuthMapping.Auth(user, _jwt));
@@ -126,10 +129,11 @@ public sealed class ResendVerificationUseCase : IResendVerificationUseCase
     public async Task<AppResult<RegistrationPendingResponse>> ExecuteAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default)
     {
         var email = request.Email.Trim().ToLowerInvariant(); var user = await _db.Users.SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
-        if (user is null || user.EmailVerifiedAt is not null) return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Validation, "No se puede reenviar el codigo.");
+        if (user is null || user.EmailVerifiedAt is not null)
+            return AppResult<RegistrationPendingResponse>.Success(new(email, Verification.LifetimeSeconds, null));
         var now = _time.GetUtcNow().UtcDateTime;
         if (await _db.EmailVerificationCodes.AnyAsync(x => x.UserId == user.Id && x.ConsumedAtUtc == null && x.ExpiresAtUtc > now, cancellationToken))
-            return AppResult<RegistrationPendingResponse>.Failure(AppErrorType.Conflict, "El codigo actual sigue vigente.");
+            return AppResult<RegistrationPendingResponse>.Success(new(email, Verification.LifetimeSeconds, null));
         return await Verification.CreateAsync(_db, _sender, _time, user, cancellationToken);
     }
 }

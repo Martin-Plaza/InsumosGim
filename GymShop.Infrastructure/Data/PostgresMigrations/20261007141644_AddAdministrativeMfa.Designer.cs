@@ -3,6 +3,7 @@ using System;
 using GymShop.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace GymShop.Infrastructure.Data.PostgresMigrations
 {
     [DbContext(typeof(GymShopDbContext))]
-    partial class GymShopDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261007141644_AddAdministrativeMfa")]
+    partial class AddAdministrativeMfa
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1944,38 +1947,6 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .IsUnique();
 
                     b.ToTable("UserExternalLogins", (string)null);
-                });
-
-            modelBuilder.Entity("GymShop.Domain.Entities.WebhookReceipt", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("ProcessedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Provider")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("RequestIdHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("SignedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProcessedAtUtc");
-
-                    b.HasIndex("Provider", "RequestIdHash")
-                        .IsUnique();
-
-                    b.ToTable("WebhookReceipts", (string)null);
                 });
 
             modelBuilder.Entity("GymShop.Domain.Entities.AuditEntry", b =>

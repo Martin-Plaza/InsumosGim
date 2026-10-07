@@ -52,7 +52,7 @@ public class AuthUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakeSender();
         await Register(db, sender).ExecuteAsync(new RegisterRequest("Cliente", "Test", "cliente@test.com", "clave123"));
         var result = await new VerifyEmailUseCase(db, new FakeJwtTokenService(), TimeProvider.System).ExecuteAsync(new VerifyEmailRequest("cliente@test.com", "999999"));
-        Assert.False(result.IsSuccess); Assert.Equal("El codigo es incorrecto.", result.Error!.Message); Assert.Equal(1, db.EmailVerificationCodes.Single().FailedAttempts);
+        Assert.False(result.IsSuccess); Assert.Equal("El codigo no es valido, vencio o ya fue utilizado.", result.Error!.Message); Assert.Equal(1, db.EmailVerificationCodes.Single().FailedAttempts);
     }
 
     [Fact]
@@ -62,16 +62,16 @@ public class AuthUseCaseTests
         await Register(db, sender).ExecuteAsync(new RegisterRequest("Cliente", "Test", "cliente@test.com", "clave123"));
         db.EmailVerificationCodes.Single().ExpiresAtUtc = DateTime.UtcNow.AddSeconds(-1); await db.SaveChangesAsync();
         var result = await new VerifyEmailUseCase(db, new FakeJwtTokenService(), TimeProvider.System).ExecuteAsync(new VerifyEmailRequest("cliente@test.com", sender.Code!));
-        Assert.False(result.IsSuccess); Assert.Equal("El codigo vencio. Solicita uno nuevo.", result.Error!.Message); Assert.Null(db.Users.Single().EmailVerifiedAt);
+        Assert.False(result.IsSuccess); Assert.Equal("El codigo no es valido, vencio o ya fue utilizado.", result.Error!.Message); Assert.Null(db.Users.Single().EmailVerifiedAt);
     }
 
     [Fact]
-    public async Task Resend_is_blocked_while_current_code_is_valid()
+    public async Task Resend_is_indistinguishable_while_current_code_is_valid()
     {
         await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakeSender();
         await Register(db, sender).ExecuteAsync(new RegisterRequest("Cliente", "Test", "cliente@test.com", "clave123"));
         var result = await new ResendVerificationUseCase(db, sender, TimeProvider.System).ExecuteAsync(new ResendVerificationRequest("cliente@test.com"));
-        Assert.False(result.IsSuccess); Assert.Equal(AppErrorType.Conflict, result.Error!.Type); Assert.Single(db.EmailVerificationCodes);
+        Assert.True(result.IsSuccess); Assert.Null(result.Value!.DevelopmentCode); Assert.Single(db.EmailVerificationCodes);
     }
 
     [Fact]
@@ -131,12 +131,12 @@ public class AuthUseCaseTests
     }
 
     [Fact]
-    public async Task Register_rejects_duplicate_email_case_insensitively()
+    public async Task Register_hides_duplicate_email_case_insensitively()
     {
         await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakeSender(); var register = Register(db, sender);
         await register.ExecuteAsync(new RegisterRequest("Cliente", "Test", "Cliente@Test.com", "clave123"));
         var result = await register.ExecuteAsync(new RegisterRequest("Otro", "Test", "cliente@test.com", "clave123"));
-        Assert.False(result.IsSuccess); Assert.Equal(AppErrorType.Conflict, result.Error!.Type);
+        Assert.True(result.IsSuccess); Assert.Null(result.Value!.DevelopmentCode); Assert.Single(db.Users);
     }
 
     [Fact]

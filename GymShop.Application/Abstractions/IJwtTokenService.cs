@@ -10,4 +10,5 @@ public interface IJwtTokenService
 public static class JwtClaimNames
 {
     public const string TokenVersion = "token_version";
+    public const string Mfa = "mfa";
 }

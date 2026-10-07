@@ -13,6 +13,9 @@ public class User
     public bool IsActive { get; set; } = true;
     public int TokenVersion { get; set; }
     public DateTime? EmailVerifiedAt { get; set; }
+    public string? MfaSecretEncrypted { get; set; }
+    public DateTime? MfaEnabledAtUtc { get; set; }
+    public long? MfaLastUsedTimeStep { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
@@ -24,6 +27,7 @@ public class User
     public ICollection<EmailVerificationCode> EmailVerificationCodes { get; set; } = new List<EmailVerificationCode>();
     public ICollection<PasswordResetCode> PasswordResetCodes { get; set; } = new List<PasswordResetCode>();
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+    public ICollection<MfaRecoveryCode> MfaRecoveryCodes { get; set; } = new List<MfaRecoveryCode>();
 }
 
 

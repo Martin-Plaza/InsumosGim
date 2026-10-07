@@ -1,5 +1,5 @@
 import { json, request, requestBlob } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, CheckoutSession, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, CheckoutSession, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, MfaCompleted, MfaSetup, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
@@ -8,6 +8,9 @@ export const api = {
   resendVerification: (email: string) => request<RegistrationPending>('/api/auth/resend-verification', json('POST', { email })),
   googleLogin: (credential: string) => request<AuthResponse>('/api/auth/google', json('POST', { credential })),
   login: (data: { email: string; password: string }) => request<AuthResponse>('/api/auth/login', json('POST', data)),
+  mfaSetup: () => request<MfaSetup>('/api/auth/mfa/setup', json('POST')),
+  mfaEnable: (code: string) => request<MfaCompleted>('/api/auth/mfa/enable', json('POST', { code })),
+  mfaComplete: (code: string) => request<MfaCompleted>('/api/auth/mfa/complete', json('POST', { code })),
   forgotPassword: (email: string) => request<PasswordResetPending>('/api/auth/forgot-password', json('POST', { email })),
   resetPassword: (data: { email: string; code: string; newPassword: string }) => request<PasswordResetCompleted>('/api/auth/reset-password', json('POST', data)),
   me: () => request<User>('/api/auth/me'),

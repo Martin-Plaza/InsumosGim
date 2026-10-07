@@ -180,7 +180,8 @@ public sealed class JwtSessionValidationTests
             Name = user.Name,
             Role = user.Role,
             RoleId = user.RoleId,
-            TokenVersion = tokenVersion ?? user.TokenVersion
+            TokenVersion = tokenVersion ?? user.TokenVersion,
+            MfaEnabledAtUtc = user.MfaEnabledAtUtc
         };
         return new JwtTokenService(Options.Create(new JwtOptions
         {
@@ -214,7 +215,8 @@ public sealed class JwtSessionValidationTests
             PasswordHash = "not-used",
             RoleId = role.Id,
             Role = role,
-            IsActive = true
+            IsActive = true,
+            MfaEnabledAtUtc = roleName is "Admin" or "SuperAdmin" ? DateTime.UtcNow : null
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();

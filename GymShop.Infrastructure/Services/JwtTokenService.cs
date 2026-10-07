@@ -30,6 +30,8 @@ public class JwtTokenService : IJwtTokenService
             new(ClaimTypes.Role, user.Role.Name),
             new(JwtClaimNames.TokenVersion, user.TokenVersion.ToString(System.Globalization.CultureInfo.InvariantCulture))
         };
+        if (user.Role.Name is "Admin" or "SuperAdmin" && user.MfaEnabledAtUtc is not null)
+            claims.Add(new Claim(JwtClaimNames.Mfa, "true"));
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Secret!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

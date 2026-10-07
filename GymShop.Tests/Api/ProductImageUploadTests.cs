@@ -34,11 +34,11 @@ public sealed class ProductImageUploadTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var storage = new FakeStorage();
         var controller = new ProductImagesController(storage, db, new FakeAuditContext(1, "upload-test"));
-        var result = await controller.Upload(FormFile([0xff, 0xd8, 0xff, 0x00]), 42, default);
+        var result = await controller.Upload(FormFile(ValidPng), 42, default);
         var created = Assert.IsType<CreatedResult>(result.Result);
         var response = Assert.IsType<ProductImageUploadResponse>(created.Value);
         Assert.Equal("products/draft/id.jpg", response.Key);
-        Assert.Equal("image/jpeg", storage.LastContentType);
+        Assert.Equal("image/png", storage.LastContentType);
         Assert.Single(db.AuditEntries, entry => entry.Action == "ProductImageUploaded");
     }
 
@@ -57,11 +57,22 @@ public sealed class ProductImageUploadTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var controller = new ProductImagesController(new FakeStorage { FailUpload = true }, db, new FakeAuditContext(1, "upload-test"));
-        var result = await controller.Upload(FormFile([0xff, 0xd8, 0xff, 0x00]), null, default);
+        var result = await controller.Upload(FormFile(ValidPng), null, default);
         var response = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(StatusCodes.Status502BadGateway, response.StatusCode);
         Assert.DoesNotContain("credential", response.Value?.ToString(), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task Rejects_truncated_file_even_when_magic_bytes_match()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var controller = new ProductImagesController(new FakeStorage(), db, new FakeAuditContext(1, "upload-test"));
+        var result = await controller.Upload(FormFile([0xff, 0xd8, 0xff, 0x00]), null, default);
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    private static byte[] ValidPng => Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
 
     private static FormFile FormFile(byte[] content) => new(new MemoryStream(content), 0, content.Length, "file", "original.jpg")
     {

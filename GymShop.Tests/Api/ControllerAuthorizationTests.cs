@@ -3,6 +3,8 @@ using GymShop.Api.Controllers;
 using GymShop.Infrastructure.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace GymShop.Tests.Api;
 
@@ -46,9 +48,35 @@ public class ControllerAuthorizationTests
             "ts=123456,v1=invalid-signature",
             "request-id-1",
             "payment-id-1",
-            "webhook-secret");
+            "webhook-secret",
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromMinutes(5),
+            out _, out _);
 
         Assert.False(isValid);
+    }
+
+    [Fact]
+    public void MercadoPago_webhook_signature_validator_accepts_fresh_and_rejects_stale_signature()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var freshTimestamp = now.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var staleTimestamp = now.AddMinutes(-6).ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        Assert.True(Validate(Sign("payment", "request-fresh", freshTimestamp), "request-fresh", now, out var requestHash));
+        Assert.NotNull(requestHash);
+        Assert.False(Validate(Sign("payment", "request-stale", staleTimestamp), "request-stale", now, out _));
+    }
+
+    private static bool Validate(string signature, string requestId, DateTimeOffset now, out string? requestHash) =>
+        MercadoPagoWebhookSignatureValidator.IsValid(signature, requestId, "payment", "webhook-secret", now,
+            TimeSpan.FromMinutes(5), out requestHash, out _);
+
+    private static string Sign(string dataId, string requestId, string timestamp)
+    {
+        var manifest = $"id:{dataId};request-id:{requestId};ts:{timestamp};";
+        var hash = HMACSHA256.HashData(Encoding.UTF8.GetBytes("webhook-secret"), Encoding.UTF8.GetBytes(manifest));
+        return $"ts={timestamp},v1={Convert.ToHexString(hash).ToLowerInvariant()}";
     }
 
     [Theory]

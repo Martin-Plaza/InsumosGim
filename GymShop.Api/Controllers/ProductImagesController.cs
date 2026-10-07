@@ -2,6 +2,12 @@ using GymShop.Application.Abstractions;
 using GymShop.Application.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Webp;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Processing;
 
 namespace GymShop.Api.Controllers;
 
@@ -11,6 +17,8 @@ namespace GymShop.Api.Controllers;
 public sealed class ProductImagesController : ControllerBase
 {
     public const long MaxFileSize = 5 * 1024 * 1024;
+    public const int MaxDimension = 8000;
+    public const long MaxPixels = 25_000_000;
     private readonly IProductImageStorage _storage;
     private readonly IApplicationDbContext _db;
     private readonly IAuditContext _auditContext;
@@ -35,16 +43,20 @@ public sealed class ProductImagesController : ControllerBase
         await using var buffer = new MemoryStream((int)file.Length);
         await input.CopyToAsync(buffer, cancellationToken);
         var bytes = buffer.ToArray();
-        var contentType = DetectContentType(bytes);
-        if (contentType is null) return BadRequest(new { message = "Solo se permiten imágenes JPEG, PNG o WebP válidas." });
+        SanitizedImage sanitized;
+        try { sanitized = Sanitize(bytes); }
+        catch (InvalidImageException)
+        {
+            return BadRequest(new { message = $"Solo se permiten imágenes JPEG, PNG o WebP completas de hasta {MaxDimension}px y {MaxPixels:N0} píxeles." });
+        }
 
         ProductImageUpload? uploaded = null;
         try
         {
-            buffer.Position = 0;
-            uploaded = await _storage.UploadAsync(buffer, contentType, productId, cancellationToken);
+            await using var sanitizedStream = new MemoryStream(sanitized.Bytes, writable: false);
+            uploaded = await _storage.UploadAsync(sanitizedStream, sanitized.ContentType, productId, cancellationToken);
             AuditTrail.Add(_db, _auditContext, "ProductImageUploaded", "ProductImage", uploaded.Key, null,
-                new { uploaded.Key, contentType, size = file.Length, productId });
+                new { uploaded.Key, contentType = sanitized.ContentType, originalSize = file.Length, sanitizedSize = sanitized.Bytes.Length, sanitized.Width, sanitized.Height, productId });
             await _db.SaveChangesAsync(cancellationToken);
         }
         catch (ProductImageStorageException)
@@ -83,7 +95,41 @@ public sealed class ProductImagesController : ControllerBase
         if (bytes.Length >= 12 && bytes[..4].SequenceEqual("RIFF"u8) && bytes.Slice(8, 4).SequenceEqual("WEBP"u8)) return "image/webp";
         return null;
     }
+
+    public static SanitizedImage Sanitize(byte[] bytes)
+    {
+        try
+        {
+            var info = Image.Identify(bytes) ?? throw new InvalidImageException();
+            var contentType = info.Metadata.DecodedImageFormat?.DefaultMimeType;
+            if (contentType is not ("image/jpeg" or "image/png" or "image/webp") ||
+                info.Width <= 0 || info.Height <= 0 || info.Width > MaxDimension || info.Height > MaxDimension ||
+                (long)info.Width * info.Height > MaxPixels)
+                throw new InvalidImageException();
+
+            using var image = Image.Load(new DecoderOptions { MaxFrames = 1 }, bytes);
+            image.Mutate(context => context.AutoOrient());
+            image.Metadata.ExifProfile = null;
+            image.Metadata.IccProfile = null;
+            image.Metadata.XmpProfile = null;
+            using var output = new MemoryStream();
+            switch (contentType)
+            {
+                case "image/jpeg": image.Save(output, new JpegEncoder { Quality = 90 }); break;
+                case "image/png": image.Save(output, new PngEncoder()); break;
+                case "image/webp": image.Save(output, new WebpEncoder { Quality = 90 }); break;
+            }
+            if (output.Length == 0 || output.Length > MaxFileSize) throw new InvalidImageException();
+            return new SanitizedImage(output.ToArray(), contentType, image.Width, image.Height);
+        }
+        catch (Exception exception) when (exception is UnknownImageFormatException or InvalidImageContentException or NotSupportedException or ArgumentException)
+        {
+            throw new InvalidImageException();
+        }
+    }
 }
 
 public sealed record ProductImageUploadResponse(string Url, string Key);
 public sealed record ProductImageDeleteRequest(string? Key, string? Url);
+public sealed record SanitizedImage(byte[] Bytes, string ContentType, int Width, int Height);
+public sealed class InvalidImageException : Exception;

@@ -30,6 +30,8 @@ services:
       Email__FromName: ${GYMSHOP_EMAIL_FROM_NAME:-GymShop}
       Email__PublicAppUrl: ${GYMSHOP_EMAIL_PUBLIC_APP_URL:-}
       Email__TransactionalNotificationsEnabled: ${GYMSHOP_EMAIL_TRANSACTIONAL_NOTIFICATIONS_ENABLED:-true}
+      Email__ExposeDevelopmentCodes: ${GYMSHOP_EXPOSE_DEVELOPMENT_CODES:-false}
+      RateLimiting__Enabled: "true"
       SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
       SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
       SeedSuperAdmin__Password: ${GYMSHOP_SEED_ADMIN_PASSWORD}
@@ -39,7 +41,7 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-2}
       PRODUCT_IMAGE_BUCKET: ${PRODUCT_IMAGE_BUCKET:-gymshop-product-images}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       database:
         condition: service_healthy

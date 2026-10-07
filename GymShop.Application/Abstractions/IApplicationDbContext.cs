@@ -25,6 +25,7 @@ public interface IApplicationDbContext
     DbSet<StockMovement> StockMovements { get; }
     DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
     DbSet<PasswordResetCode> PasswordResetCodes { get; }
+    DbSet<RefreshToken> RefreshTokens { get; }
     DbSet<UserExternalLogin> UserExternalLogins { get; }
     DbSet<Coupon> Coupons { get; }
     DbSet<CouponRedemption> CouponRedemptions { get; }

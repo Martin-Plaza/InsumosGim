@@ -219,7 +219,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
         } else {
           const localAuth = await api.login({ email, password: String(data.get('password')) })
           if (pendingGoogleCredential) {
-            complete(await api.googleLogin(pendingGoogleCredential, localAuth.token))
+            complete(await api.googleLogin(pendingGoogleCredential))
           } else {
             complete(localAuth)
           }

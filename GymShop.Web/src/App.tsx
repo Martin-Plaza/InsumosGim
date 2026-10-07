@@ -51,13 +51,13 @@ function AppShell() {
     if (/^\/catalogo\/[^/]+$/.test(location.pathname) && (!testEnvironment || mockedScroll)) window.scrollTo(0, 0)
     else if (!testEnvironment) window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [location.pathname])
-  const logout = () => { session.clear(); navigate('/'); setNotice('Sesión cerrada.') }
+  const logout = () => { void api.logout().catch(() => undefined).finally(() => { session.clear(); navigate('/'); setNotice('Sesión cerrada.') }) }
   const adminArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
 
   return <div className={adminArea ? 'app admin-app' : 'app'}>
     <RouteLoadingIndicator />
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
-    {!adminArea && <main>{notice && <div className="notice" role="status">{notice}</div>}<StorefrontRoutes user={user} onAuth={auth => { session.save(auth.token, auth.user); setNotice(`Hola, ${auth.user.name}.`) }} /></main>}
+    {!adminArea && <main>{notice && <div className="notice" role="status">{notice}</div>}<StorefrontRoutes user={user} onAuth={auth => { session.save(auth.user); setNotice(`Hola, ${auth.user.name}.`) }} /></main>}
     {adminArea && <AdminRoutes user={user} onLogout={logout} />}
     {!adminArea && <StorefrontFooter />}
   </div>

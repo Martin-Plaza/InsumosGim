@@ -10,6 +10,16 @@ namespace GymShop.Tests.Api;
 
 public sealed class EmailDeliveryTests
 {
+    [Fact]
+    public void Development_codes_cannot_be_exposed_outside_development()
+    {
+        var result = new EmailOptionsValidator("Production").Validate(null, new EmailOptions
+        {
+            Provider = "Resend", ApiKey = "key", FromAddress = "test@example.com", ExposeDevelopmentCodes = true
+        });
+
+        Assert.True(result.Failed);
+    }
     private const string Recipient = "private@example.com";
     private const string Code = "123456";
     private const string ApiKey = "secret-api-key";

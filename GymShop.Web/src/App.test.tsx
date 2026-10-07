@@ -60,7 +60,7 @@ describe('flujos y permisos de la aplicación', () => {
     await userEvent.type(screen.getByLabelText('Contraseña'), 'clave123')
     await userEvent.click(screen.getAllByRole('button', { name: 'Ingresar' }).at(-1)!)
     expect(await screen.findByRole('status')).toHaveTextContent('Hola, Ana.')
-    expect(localStorage.getItem('gymshop.token')).toBe('jwt')
+    expect(localStorage.getItem('gymshop.token')).toBeNull()
   })
 
   it('muestra credenciales inválidas y no crea sesión', async () => {
@@ -99,7 +99,7 @@ describe('flujos y permisos de la aplicación', () => {
     await waitFor(() => expect(verificationCode).toBeEnabled())
     await userEvent.type(verificationCode, '123456')
     await userEvent.click(screen.getByRole('button', { name: 'Verificar e ingresar' }))
-    await waitFor(() => expect(localStorage.getItem('gymshop.token')).toBe('verified-jwt'))
+    await waitFor(() => expect(localStorage.getItem('gymshop.token')).toBeNull())
     expect(screen.getByRole('status')).toHaveTextContent('Nueva')
   })
 

@@ -6,28 +6,36 @@ import { session } from '../auth/session'
 const response = (body: unknown, status = 200, headers?: HeadersInit) => new Response(body === undefined ? undefined : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 
 describe('cliente HTTP y contrato GymShop', () => {
-  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear() })
+  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); document.cookie = 'XSRF-TOKEN=; Max-Age=0; Path=/' })
 
-  it('envía el JWT mediante Bearer sin cambiarlo', async () => {
-    session.save('token-secreto', { id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
+  it('usa cookies del navegador sin exponer un Bearer', async () => {
+    session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ ok: true }))
     await request('/api/test')
     const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
-    expect(headers.get('Authorization')).toBe('Bearer token-secreto')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
+  })
+
+  it('envía el token CSRF en operaciones mutables', async () => {
+    document.cookie = 'XSRF-TOKEN=csrf-seguro; Path=/'
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ ok: true }))
+    await request('/api/test', { method: 'POST', body: '{}' })
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('X-CSRF-TOKEN')).toBe('csrf-seguro')
   })
 
   it('un 401 invalida la sesión', async () => {
-    session.save('token', { id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
+    session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(undefined, { status: 401 }))
     await expect(request('/api/private')).rejects.toMatchObject({ status: 401 })
-    expect(session.token()).toBeNull()
+    expect(session.user()).toBeNull()
   })
 
   it('un 403 informa permisos insuficientes sin cerrar sesión', async () => {
-    session.save('token', { id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
+    session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(undefined, { status: 403 }))
     await expect(request('/api/admin')).rejects.toMatchObject({ status: 403 })
-    expect(session.token()).toBe('token')
+    expect(session.user()?.email).toBe('u@gym.com')
   })
 
   it('normaliza ProblemDetails y conserva traceId', async () => {
@@ -89,7 +97,7 @@ describe('cliente HTTP y contrato GymShop', () => {
   })
 
   it('descarga PDFs autenticados sin intentar interpretarlos como JSON', async () => {
-    session.save('token-pdf', { id: 1, email: 'admin@gym.com', name: 'Admin', role: 'Admin' })
+    session.save({ id: 1, email: 'admin@gym.com', name: 'Admin', role: 'Admin' })
     const expected = new Blob(['%PDF-1.4'], { type: 'application/pdf' })
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(expected, { headers: { 'Content-Type': 'application/pdf' } }))
 
@@ -98,6 +106,7 @@ describe('cliente HTTP y contrato GymShop', () => {
     expect(result.type).toBe('application/pdf')
     const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
     expect(headers.get('Accept')).toBe('application/pdf')
-    expect(headers.get('Authorization')).toBe('Bearer token-pdf')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
   })
 })

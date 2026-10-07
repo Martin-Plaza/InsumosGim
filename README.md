@@ -151,7 +151,7 @@ como pagada        y restaurar stock
 
 Salidas del sistema:
 
-- token JWT para sesiones validas
+- sesion web protegida mediante cookies HttpOnly
 - productos disponibles para compra
 - carrito actualizado
 - pedido creado
@@ -232,11 +232,11 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Precondiciones:** debe existir una cuenta sin verificar y un codigo vigente no consumido.
 
-**Flujo esperado:** se localiza el ultimo codigo activo, se compara de forma segura, se marca como consumido, se verifica la cuenta y se emite un JWT.
+**Flujo esperado:** se localiza el ultimo codigo activo, se compara de forma segura, se marca como consumido, se verifica la cuenta y se establece una sesion mediante cookies seguras.
 
 **Reglas de negocio:** el codigo vence a los 60 segundos, admite como maximo cinco intentos fallidos y sólo puede consumirse una vez.
 
-**Resultado:** devuelve el JWT y los datos del usuario autenticado.
+**Resultado:** devuelve los datos del usuario autenticado y establece las cookies de sesion.
 
 **Errores esperados:** `400 Bad Request` si no hay verificacion pendiente, el codigo es incorrecto, vencio o supero los intentos permitidos.
 
@@ -268,7 +268,7 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 #### Iniciar sesion con email y password
 
-**Objetivo:** autenticar una cuenta local y obtener una sesion JWT.
+**Objetivo:** autenticar una cuenta local y obtener una sesion web protegida.
 
 **Actor y permisos:** usuario no autenticado.
 
@@ -280,7 +280,7 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Reglas de negocio:** cuentas inexistentes, inactivas, no verificadas o con password incorrecta producen la misma respuesta; el rate limiting se aplica por IP.
 
-**Resultado:** devuelve el JWT y los datos del usuario.
+**Resultado:** devuelve los datos del usuario y establece las cookies de sesion.
 
 **Errores esperados:** `400 Bad Request` por formato invalido, `401 Unauthorized` por credenciales no validas y `429 Too Many Requests` por exceso de intentos.
 
@@ -298,11 +298,11 @@ Los casos siguientes describen el contrato funcional implementado actualmente. U
 
 **Precondiciones:** la credencial debe ser valida y el email informado por Google debe estar verificado.
 
-**Flujo esperado:** se verifica criptograficamente la identidad externa; se reutiliza el vinculo existente por `sub`; si no existe usuario se crea uno activo con rol `User`; finalmente se emite un JWT.
+**Flujo esperado:** se verifica criptograficamente la identidad externa; se reutiliza el vinculo existente por `sub`; si no existe usuario se crea uno activo con rol `User`; finalmente se establece una sesion mediante cookies seguras.
 
 **Reglas de negocio:** una cuenta inactiva no puede ingresar; Gmail y Google Workspace pueden vincular por email porque Google es autoridad sobre esas direcciones; otros dominios exigen una sesion local valida del mismo usuario y el mismo email; el email de una cuenta nueva se considera verificado por Google.
 
-**Resultado:** devuelve el JWT y los datos del usuario.
+**Resultado:** devuelve los datos del usuario y establece las cookies de sesion.
 
 **Errores esperados:** `400 Bad Request` si falta la credencial, `401 Unauthorized` si es invalida, el email no esta verificado o la cuenta esta inactiva, y `409 Conflict` si una cuenta local debe vincularse de forma autenticada.
 
@@ -1099,7 +1099,7 @@ La vista inicial es Home tanto para visitantes como para usuarios autenticados. 
 
 Las imagenes locales del frontend se guardan bajo `GymShop.Web/public/images` y se referencian desde productos con rutas publicas que comienzan con `/`, por ejemplo `/images/products/mancuerna-10kg.webp`. Tambien se admiten URLs HTTP/HTTPS. Si una imagen no existe o no puede cargarse, la interfaz muestra el fallback visual `GS`.
 
-El cliente envia el JWT mediante `Authorization: Bearer`, invalida la sesion ante `401` y conserva la sesion ante `403`. Normaliza respuestas `{ message }`, ProblemDetails, ValidationProblemDetails, `409`, `429` con `Retry-After` y errores `500` con `traceId`. La clave de idempotencia del pago se conserva por orden en el almacenamiento local y la creacion usa exclusivamente `POST /api/orders/{orderId}/payments` con el proveedor `Mock`.
+El cliente usa cookies HttpOnly para la sesion y nunca guarda el JWT en `localStorage`. En cada operacion que modifica estado envia el token CSRF de doble cookie mediante `X-CSRF-TOKEN`; puede obtenerlo con `GET /api/auth/csrf`, lo que permite separar frontend y API en origenes autorizados distintos. Ante `401` intenta una sola rotacion del refresh token y repite el request. Los clientes API que usan explicitamente `Authorization: Bearer` siguen siendo compatibles y no pasan por la validacion CSRF. El cliente conserva la sesion ante `403` y normaliza respuestas `{ message }`, ProblemDetails, ValidationProblemDetails, `409`, `429` con `Retry-After` y errores `500` con `traceId`. La clave de idempotencia del pago se conserva por orden en el almacenamiento local y la creacion usa exclusivamente `POST /api/orders/{orderId}/payments` con el proveedor `Mock`.
 
 Variables frontend:
 
@@ -1118,7 +1118,7 @@ Los datos `VITE_LEGAL_*` son públicos y alimentan las páginas de términos, pr
 
 ### Registro, verificacion y Google
 
-El registro manual requiere `name`, `lastName`, `email` y `password`. No emite un JWT inmediatamente: crea una cuenta pendiente y envia un codigo de seis digitos que vence a los 60 segundos. El codigo se guarda hasheado, permite hasta cinco intentos y queda consumido al verificar o reenviar. La verificacion correcta marca el email y devuelve la sesion JWT automaticamente.
+El registro manual requiere `name`, `lastName`, `email` y `password`. No inicia una sesion inmediatamente: crea una cuenta pendiente y envia un codigo de seis digitos que vence a los 60 segundos. El codigo se guarda hasheado, permite hasta cinco intentos y queda consumido al verificar o reenviar. La verificacion correcta marca el email y establece la sesion automaticamente.
 
 Endpoints:
 
@@ -1127,7 +1127,7 @@ Endpoints:
 - `POST /api/auth/resend-verification`
 - `POST /api/auth/google`
 
-`IVerificationEmailSender` usa Resend mediante su API HTTP en entornos desplegados. El proveedor Mock solo puede arrancar con `ASPNETCORE_ENVIRONMENT=Development`; en ese entorno el codigo se muestra como `developmentCode` y se escribe en el log local. En cualquier otro entorno la configuracion Mock es rechazada al iniciar y `developmentCode` se omite de la respuesta.
+`IVerificationEmailSender` usa Resend mediante su API HTTP en entornos desplegados. El proveedor Mock solo puede arrancar con `ASPNETCORE_ENVIRONMENT=Development`. Incluso allí los codigos quedan ocultos por defecto y nunca se escriben en el log; `developmentCode` solo aparece si un desarrollador habilita explicitamente `Email:ExposeDevelopmentCodes=true`. Esa opcion es rechazada fuera de Development y no debe usarse cuando la API sea accesible desde otra maquina.
 
 El frontend conserva en `localStorage` solamente el email y el vencimiento de una verificacion pendiente para poder retomarla tras recargar o cerrar la pagina. El codigo Mock no se persiste: si ya no esta visible, hay que esperar el vencimiento y usar **Reenviar codigo** para obtener uno nuevo.
 
@@ -1155,7 +1155,7 @@ POST /api/auth/reset-password
 { "email": "usuario@example.com", "code": "123456", "newPassword": "NuevaClave123" }
 ```
 
-`forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. En Development el proveedor Mock incluye `developmentCode` y escribe el código en el log; en staging y producción la propiedad se omite y el código se envía por Resend solamente cuando la cuenta existe.
+`forgot-password` devuelve siempre el mismo mensaje y el mismo tiempo de vencimiento, exista o no la cuenta. Esto evita usar el endpoint para enumerar emails registrados. Los codigos del proveedor Mock permanecen ocultos por defecto; únicamente pueden exponerse en la respuesta con `Email:ExposeDevelopmentCodes=true` en Development y nunca se escriben en logs. En staging y produccion esa opcion es invalida y el codigo se envia por Resend solamente cuando la cuenta existe.
 
 Un HTTP 2xx de Resend significa que el proveedor aceptó la solicitud, no que el correo llegó a destino. Los rechazos HTTP, timeouts y errores de red se registran por tipo y propósito sin incluir destinatario, código ni credenciales. En registro esos fallos devuelven `503` y revierten la cuenta pendiente para permitir repetir el alta. En recuperación se conserva la respuesta genérica para no revelar cuentas registradas y el código cuyo envío falló se invalida inmediatamente.
 
@@ -1187,7 +1187,7 @@ GoogleAuth__ClientId=<GOOGLE_CLIENT_ID_PUBLICO>
 VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
 ```
 
-El backend valida firma, emisor, audiencia y vencimiento con la biblioteca oficial `Google.Apis.Auth`, exige `email_verified=true` y reconoce el vinculo por el identificador estable `sub`. `tokeninfo` no participa del flujo productivo. Si una cuenta manual usa Gmail o un dominio Google Workspace confirmado mediante `hd`, el primer acceso vincula la identidad automáticamente. Para otros proveedores responde `409 google_link_required`; el frontend conserva temporalmente la credencial, solicita la contraseña local una única vez y repite el mismo `POST /api/auth/google` con el JWT local. La vinculacion conserva contraseña, rol, estado y version de sesion; una cuenta nueva siempre nace con rol `User` y puede establecer una contraseña mediante recuperación. No se usa ni se expone un Client Secret en el navegador.
+El backend valida firma, emisor, audiencia y vencimiento con la biblioteca oficial `Google.Apis.Auth`, exige `email_verified=true` y reconoce el vinculo por el identificador estable `sub`. `tokeninfo` no participa del flujo productivo. Si una cuenta manual usa Gmail o un dominio Google Workspace confirmado mediante `hd`, el primer acceso vincula la identidad automáticamente. Para otros proveedores responde `409 google_link_required`; el frontend conserva temporalmente la credencial, solicita la contraseña local una única vez y repite el mismo `POST /api/auth/google` autenticado por la cookie HttpOnly recién establecida. La vinculacion conserva contraseña, rol, estado y version de sesion; una cuenta nueva siempre nace con rol `User` y puede establecer una contraseña mediante recuperación. No se usa ni se expone un Client Secret en el navegador.
 
 La API no accede directamente a la persistencia. La logica se concentra en casos de uso de Application, con EF Core y servicios externos implementados en Infrastructure.
 
@@ -1388,19 +1388,21 @@ Payments__CreatingTimeoutSeconds=300
 
 Debe ser un entero mayor que cero. Un valor menor recupera antes los procesos interrumpidos, pero aumenta el riesgo de solaparse con una llamada externa excepcionalmente lenta.
 
-## Sesiones JWT y cambios de rol
+## Sesiones, rotacion y cambios de rol
 
-Cada JWT incluye el claim privado `token_version`, además de los claims existentes de identidad y rol. En cada request autenticado, la API consulta el usuario actual y exige que:
+El navegador recibe un access token de 15 minutos en una cookie HttpOnly y un refresh token opaco de 14 dias en otra cookie HttpOnly. El refresh token solo se guarda hasheado en la base, se consume una unica vez y cada rotacion revoca el anterior antes de emitir el reemplazo. Cerrar sesion revoca el refresh token presentado y elimina todas las cookies de sesion.
+
+Cada access token incluye el claim privado `token_version`, además de los claims existentes de identidad y rol. En cada request autenticado, la API consulta el usuario actual y exige que:
 
 - el usuario exista y este activo;
 - `token_version` coincida con `Users.TokenVersion`;
 - el rol del token coincida con el rol persistido.
 
-Cambiar el rol o estado de un usuario incrementa `TokenVersion` cuando el valor realmente cambia. Por eso los tokens emitidos anteriormente reciben `401 Unauthorized` inmediatamente. Un token vigente cuyo rol no alcanza para un endpoint recibe `403 Forbidden`.
+Cambiar la contraseña, el rol o el estado de un usuario incrementa `TokenVersion` cuando corresponde. Por eso los access tokens anteriores reciben `401 Unauthorized` inmediatamente y los refresh tokens emitidos con la version anterior tampoco pueden rotarse. Un token vigente cuyo rol no alcanza para un endpoint recibe `403 Forbidden`.
 
-La migracion `AddUserTokenVersion` agrega la columna con valor inicial `0`. Al desplegar esta version, todos los JWT emitidos por versiones anteriores —que no contienen `token_version`— quedan invalidados y los usuarios deben iniciar sesion otra vez. La migracion debe aplicarse antes o junto con el backend actualizado.
+Las migraciones `AddUserTokenVersion` y `AddRefreshTokens` agregan la version de seguridad y el almacenamiento de refresh tokens. Deben aplicarse antes o junto con el backend actualizado. Los access tokens de versiones anteriores que no contienen `token_version` quedan invalidados y los usuarios deben iniciar sesion otra vez.
 
-Esta implementacion realiza una consulta indexada por usuario en cada request autenticado para priorizar invalidacion inmediata y coherencia entre instancias. No utiliza cache de sesiones, refresh tokens ni cambia la duracion configurada de los JWT.
+Esta implementacion realiza una consulta indexada por usuario en cada request autenticado para priorizar invalidacion inmediata y coherencia entre instancias. Las operaciones mutables autenticadas por cookie exigen ademas que el valor legible de `XSRF-TOKEN` coincida con el encabezado `X-CSRF-TOKEN`. Los clientes que presentan un Bearer token de forma explicita conservan el flujo API sin CSRF.
 
 ## Validacion de entradas y visibilidad del catalogo
 
@@ -1550,7 +1552,7 @@ Si un producto ya no existe, está inactivo o no tiene stock, se avisa y su entr
 
 El estado compartido usa React Context porque el carrito solamente cruza catálogo, detalle, encabezado, popup y checkout. Es una opción pequeña y sin dependencias adicionales; Redux u otra store ofrecerían herramientas más potentes para estados globales muy grandes, pero aumentarían complejidad y tamaño sin una ventaja clara en este MVP.
 
-El checkout permite armar el carrito sin sesión, pero redirige a `/login` antes de crear la orden y vuelve a `/carrito` después de autenticar. La fusión ocurre en ese cambio de sesión. No se agregaron refresh tokens, secretos ni cambios al proveedor Mock.
+El checkout permite armar el carrito sin sesión, pero redirige a `/login` antes de crear la orden y vuelve a `/carrito` después de autenticar. La fusión ocurre en ese cambio de sesión. La renovacion de sesion utiliza refresh tokens rotatorios; no se agregaron secretos al navegador ni cambios al proveedor Mock.
 
 Una orden pendiente no bloquea el carrito: el usuario puede agregar, actualizar, quitar o vaciar productos porque ese carrito representa una compra futura distinta de la orden ya creada. El checkout sí evita crear una segunda orden pendiente por ahora. Esta separación permite seguir comprando sin acumular órdenes ni mezclar productos nuevos con una orden cuyo precio y stock ya quedaron congelados.
 

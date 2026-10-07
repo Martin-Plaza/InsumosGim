@@ -81,6 +81,7 @@ function RouteLoadingIndicator() {
 function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | null; onLogout(): void; onCart(): void; cartCount: number }) {
   const [categories, setCategories] = useState<Category[]>([])
   const [openMenu, setOpenMenu] = useState<'categories' | 'admin' | null>(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   useEffect(() => {
     if (openMenu !== 'categories' || categories.length) return
     let active = true
@@ -88,18 +89,20 @@ function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | 
     return () => { active = false }
   }, [categories.length, openMenu])
   useEffect(() => {
-    if (!openMenu) return
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenu(null) }
+    if (!openMenu && !mobileMenuOpen) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpenMenu(null); setMobileMenuOpen(false) } }
     document.addEventListener('keydown', close)
     return () => document.removeEventListener('keydown', close)
-  }, [openMenu])
-  const closeMenus = () => setOpenMenu(null)
-  return <><header className="storefront-header"><Link className="brand" to="/" onClick={closeMenus}>{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</Link><nav aria-label="Navegación principal">
+  }, [mobileMenuOpen, openMenu])
+  const closeMenus = () => { setOpenMenu(null); setMobileMenuOpen(false) }
+  const toggleMobileMenu = () => { setOpenMenu(null); setMobileMenuOpen(value => !value) }
+  return <><header className="storefront-header"><Link className="brand" to="/" onClick={closeMenus}>{storefront.identity.logoUrl ? <img src={storefront.identity.logoUrl} alt="" /> : <span>{storefront.identity.monogram}</span>} {storefront.identity.name}</Link><nav id="storefront-navigation" className={mobileMenuOpen ? 'is-open' : ''} aria-label="Navegación principal">
     <NavLink to="/catalogo" onClick={closeMenus}>{storefront.copy.catalogNav}</NavLink>
     <div className="nav-menu"><button type="button" aria-expanded={openMenu === 'categories'} onClick={() => setOpenMenu(value => value === 'categories' ? null : 'categories')}>Categorías <span aria-hidden="true">⌄</span></button>{openMenu === 'categories' && <div className="nav-dropdown"><Link to="/catalogo" onClick={closeMenus}>Todas las categorías</Link>{categories.map(category => <Link key={category.id} to={`/catalogo?categoria=${encodeURIComponent(category.slug)}`} onClick={closeMenus}>{category.name}</Link>)}</div>}</div>
     {user && <NavLink to="/ordenes" onClick={closeMenus}>Órdenes</NavLink>}
     {isAdmin(user) && <div className="nav-menu"><button type="button" aria-expanded={openMenu === 'admin'} onClick={() => setOpenMenu(value => value === 'admin' ? null : 'admin')}>Administración <span aria-hidden="true">⌄</span></button>{openMenu === 'admin' && <div className="nav-dropdown admin-dropdown"><Link to="/admin" onClick={closeMenus}>Resumen</Link><Link to="/admin/productos" onClick={closeMenus}>Productos</Link><Link to="/admin/stock" onClick={closeMenus}>Stock</Link><Link to="/admin/pedidos" onClick={closeMenus}>Pedidos</Link><Link to="/admin/cupones" onClick={closeMenus}>Cupones</Link></div>}</div>}
-  </nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={() => { closeMenus(); onCart() }}>Carrito <b>{cartCount}</b></button>{user ? <button onClick={onLogout}>Salir</button> : <Link className="primary link-button" to="/login">Ingresar</Link>}</div></header>{openMenu && <button className="nav-fade" aria-label="Cerrar menú" onClick={closeMenus} />}</>
+    {user ? <button className="mobile-session-action" aria-hidden={!mobileMenuOpen} tabIndex={mobileMenuOpen ? 0 : -1} onClick={() => { closeMenus(); onLogout() }}>Salir</button> : <Link className="mobile-session-action" to="/login" aria-hidden={!mobileMenuOpen} tabIndex={mobileMenuOpen ? 0 : -1} onClick={closeMenus}>Ingresar</Link>}
+  </nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={() => { closeMenus(); onCart() }}>Carrito <b>{cartCount}</b></button>{user ? <button className="desktop-session-action" aria-hidden={mobileMenuOpen} tabIndex={mobileMenuOpen ? -1 : 0} onClick={onLogout}>Salir</button> : <Link className="primary link-button desktop-session-action" to="/login" aria-hidden={mobileMenuOpen} tabIndex={mobileMenuOpen ? -1 : 0}>Ingresar</Link>}</div><button className="mobile-menu-button" type="button" aria-controls="storefront-navigation" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'} onClick={toggleMobileMenu}><span /><span /><span /></button></header>{(openMenu || mobileMenuOpen) && <button className="nav-fade" aria-label="Cerrar menú" onClick={closeMenus} />}</>
 }
 
 function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: AuthResponse): void }) {

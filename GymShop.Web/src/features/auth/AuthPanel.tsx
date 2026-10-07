@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api/gymshop'
-import type { AuthResponse } from '../../api/types'
+import type { AuthResponse, MfaSetup, User } from '../../api/types'
 import { storefront } from '../../config/storefront'
 import { authErrorMessage } from './authMessages'
 import { ApiError } from '../../api/client'
@@ -41,6 +41,9 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState(() => pending ? 'Retomamos tu verificación pendiente.' : '')
   const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null)
+  const [mfaUser, setMfaUser] = useState<User | null>(null)
+  const [mfaSetup, setMfaSetup] = useState<MfaSetup | null>(null)
+  const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([])
   const googleButton = useRef<HTMLDivElement>(null)
   const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID && !import.meta.env.VITE_GOOGLE_CLIENT_ID.startsWith('<'))
 
@@ -48,6 +51,12 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
     clearPendingRegistration()
     onDone(auth)
   }, [onDone])
+
+  const handleAuthentication = useCallback(async (auth: AuthResponse) => {
+    if (!auth.mfaRequired) return complete(auth)
+    setMfaUser(auth.user)
+    if (auth.setupRequired) setMfaSetup(await api.mfaSetup())
+  }, [complete])
 
   const execute = useCallback(async (action: () => Promise<void>) => {
     if (busyRef.current) return
@@ -96,7 +105,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
           }
           void execute(async () => {
             try {
-              complete(await api.googleLogin(credential))
+              await handleAuthentication(await api.googleLogin(credential))
             } catch (value) {
               if (value instanceof ApiError && value.code === 'google_link_required') {
                 setPendingGoogleCredential(credential)
@@ -126,7 +135,24 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
       cancelled = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
     }
-  }, [complete, execute, forgot, googleConfigured, register, resetEmail])
+  }, [execute, forgot, googleConfigured, handleAuthentication, register, resetEmail])
+
+  if (mfaRecoveryCodes.length > 0 && mfaUser) {
+    return <section className="auth-card">
+      <div><p className="eyebrow">CÓDIGOS DE RECUPERACIÓN</p><h1>Guardalos ahora</h1><p>Cada código sirve una sola vez si perdés acceso a tu aplicación autenticadora.</p></div>
+      <div className="mfa-recovery-codes">{mfaRecoveryCodes.map(code => <code key={code}>{code}</code>)}</div>
+      <button className="primary" type="button" onClick={() => complete({ user: mfaUser })}>Ya los guardé</button>
+    </section>
+  }
+
+  if (mfaUser) {
+    return <section className="auth-card">
+      <div><p className="eyebrow">SEGURIDAD ADMINISTRATIVA</p><h1>{mfaSetup ? 'Configurá la autenticación en dos pasos' : 'Ingresá tu segundo factor'}</h1><p>{mfaSetup ? 'Escaneá el código con una aplicación TOTP o cargá la clave manualmente.' : 'Usá el código de tu aplicación autenticadora o un código de recuperación.'}</p>{mfaSetup && <><div className="mfa-qr" aria-label="Código QR TOTP">{mfaSetup.qrCodeRows.map((row, index) => <div key={index}>{row.replaceAll('1', '██').replaceAll('0', '  ')}</div>)}</div><p>Clave manual: <code>{mfaSetup.sharedKey}</code></p></>}</div>
+      <form onSubmit={event => { event.preventDefault(); const code = String(new FormData(event.currentTarget).get('code')); void execute(async () => { const result = mfaSetup ? await api.mfaEnable(code) : await api.mfaComplete(code); if (result.recoveryCodes.length) setMfaRecoveryCodes(result.recoveryCodes); else complete({ user: result.user }) }) }}>
+        {error && <div className="error" role="alert">{error}</div>}<label>Código<input name="code" inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={32} required autoFocus disabled={busy} /></label><button className="primary" type="submit" disabled={busy}>{busy ? 'Verificando…' : 'Verificar e ingresar'}</button>
+      </form>
+    </section>
+  }
 
   if (pending) {
     return <section className="auth-card">
@@ -140,7 +166,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
       <form onSubmit={event => {
         event.preventDefault()
         const code = String(new FormData(event.currentTarget).get('code'))
-        void execute(async () => complete(await api.verifyEmail({ email: pending.email, code })))
+        void execute(async () => handleAuthentication(await api.verifyEmail({ email: pending.email, code })))
       }}>
         {notice && <div className="notice" role="status">{notice}</div>}
         {error && <div className="error" role="alert">{error}</div>}
@@ -219,9 +245,9 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
         } else {
           const localAuth = await api.login({ email, password: String(data.get('password')) })
           if (pendingGoogleCredential) {
-            complete(await api.googleLogin(pendingGoogleCredential))
+            await handleAuthentication(await api.googleLogin(pendingGoogleCredential))
           } else {
-            complete(localAuth)
+            await handleAuthentication(localAuth)
           }
         }
       })

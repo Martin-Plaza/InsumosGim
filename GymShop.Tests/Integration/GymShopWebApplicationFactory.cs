@@ -63,6 +63,7 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
                 ["Jwt:Audience"] = "GymShop.HttpTests.Client",
                 ["Jwt:Secret"] = TestJwtSecret,
                 ["Jwt:ExpirationMinutes"] = "15",
+                ["Mfa:EncryptionKey"] = "R3ltU2hvcC1Mb2NhbC1NZmEtS2V5LTMyLUJ5dGVzISE=",
                 ["RateLimiting:Enabled"] = "false",
                 ["MercadoPago:Enabled"] = "false",
                 ["ReverseProxy:Enabled"] = "false",
@@ -126,7 +127,8 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
         var user = new User
         {
             Email = email.ToLowerInvariant(), Name = roleName + " HTTP", PasswordHash = new PasswordHasher().Hash(password), EmailVerifiedAt = DateTime.UtcNow,
-            RoleId = role.Id, IsActive = true
+            RoleId = role.Id, Role = role, IsActive = true,
+            MfaEnabledAtUtc = roleName is "Admin" or "SuperAdmin" ? DateTime.UtcNow : null
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
@@ -135,6 +137,14 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
 
     public async Task<string> LoginAsync(HttpClient client, string email, string password = "clave123")
     {
+        await using (var scope = Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<GymShopDbContext>();
+            var privileged = await db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Email == email.ToLowerInvariant());
+            if (privileged?.Role.Name is "Admin" or "SuperAdmin")
+                return scope.ServiceProvider.GetRequiredService<IJwtTokenService>().CreateToken(privileged);
+        }
+
         var response = await client.PostAsJsonAsync("/api/auth/login", new { email, password });
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)

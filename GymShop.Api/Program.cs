@@ -75,7 +75,9 @@ builder.Services.AddOptions<GymShopRateLimitingOptions>()
 builder.Services.AddOptions<ReverseProxyOptions>()
     .Bind(builder.Configuration.GetSection(ReverseProxyOptions.SectionName))
     .ValidateOnStart();
-builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
+var migrateOnly = args.Any(argument => string.Equals(argument, "--migrate-only", StringComparison.OrdinalIgnoreCase));
+var initializeOnly = args.Any(argument => string.Equals(argument, "--initialize-only", StringComparison.OrdinalIgnoreCase));
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment, migrateOnly || initializeOnly);
 
 var rateLimiting = builder.Configuration.GetSection(GymShopRateLimitingOptions.SectionName).Get<GymShopRateLimitingOptions>() ?? new();
 builder.Services.AddRateLimiter(options =>
@@ -162,9 +164,15 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-if (args.Any(argument => string.Equals(argument, "--migrate-only", StringComparison.OrdinalIgnoreCase)))
+if (migrateOnly)
 {
     await DatabaseInitializer.MigrateAsync(app.Services);
+    return;
+}
+
+if (initializeOnly)
+{
+    await DatabaseInitializer.InitializeAsync(app.Services);
     return;
 }
 

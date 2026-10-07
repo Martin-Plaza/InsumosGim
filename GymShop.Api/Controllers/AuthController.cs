@@ -28,7 +28,9 @@ public class AuthController : ApiControllerBase
     private readonly IGymShopRequestLimiter _requestLimiter;
     private readonly IRefreshTokenService _refreshTokens;
     private readonly IJwtTokenService _jwtTokens;
+    private readonly IMfaService _mfa;
     private readonly JwtOptions _jwtOptions;
+    private readonly MfaOptions _mfaOptions;
     private readonly IHostEnvironment _environment;
 
     public AuthController(
@@ -44,6 +46,8 @@ public class AuthController : ApiControllerBase
         IRefreshTokenService refreshTokens,
         IJwtTokenService jwtTokens,
         IOptions<JwtOptions> jwtOptions,
+        IMfaService mfa,
+        IOptions<MfaOptions> mfaOptions,
         IHostEnvironment environment)
     {
         _registerUser = registerUser;
@@ -57,7 +61,9 @@ public class AuthController : ApiControllerBase
         _requestLimiter = requestLimiter;
         _refreshTokens = refreshTokens;
         _jwtTokens = jwtTokens;
+        _mfa = mfa;
         _jwtOptions = jwtOptions.Value;
+        _mfaOptions = mfaOptions.Value;
         _environment = environment;
     }
 
@@ -191,14 +197,70 @@ public class AuthController : ApiControllerBase
         return NoContent();
     }
 
+    [HttpPost("mfa/setup")]
+    [EnableRateLimiting(RateLimitPolicies.LoginIp)]
+    public async Task<ActionResult<MfaSetupResponse>> BeginMfaSetup(CancellationToken cancellationToken)
+    {
+        if (!TryGetMfaChallenge(out var challenge)) return Unauthorized();
+        var setup = await _mfa.BeginSetupAsync(challenge, cancellationToken);
+        return setup is null ? Unauthorized() : Ok(new MfaSetupResponse(setup.SharedKey, setup.OtpAuthUri, setup.QrCodeRows));
+    }
+
+    [HttpPost("mfa/enable")]
+    [EnableRateLimiting(RateLimitPolicies.LoginIp)]
+    public async Task<ActionResult<MfaCompletedResponse>> EnableMfa(MfaCodeRequest request, CancellationToken cancellationToken)
+    {
+        if (!TryGetMfaChallenge(out var challenge)) return Unauthorized();
+        var verified = await _mfa.EnableAsync(challenge, request.Code, cancellationToken);
+        return verified is null ? BadRequest(new { message = "El código de autenticación no es válido." }) : await CompleteMfaAsync(verified, cancellationToken);
+    }
+
+    [HttpPost("mfa/complete")]
+    [EnableRateLimiting(RateLimitPolicies.LoginIp)]
+    public async Task<ActionResult<MfaCompletedResponse>> CompleteMfa(MfaCodeRequest request, CancellationToken cancellationToken)
+    {
+        if (!TryGetMfaChallenge(out var challenge)) return Unauthorized();
+        var verified = await _mfa.CompleteAsync(challenge, request.Code, cancellationToken);
+        return verified is null ? BadRequest(new { message = "El código de autenticación no es válido." }) : await CompleteMfaAsync(verified, cancellationToken);
+    }
+
     private async Task<ActionResult<AuthResponse>> CompleteAuthenticationAsync(
         AppResult<AuthResponse> result,
         CancellationToken cancellationToken)
     {
         if (!result.IsSuccess) return ToErrorResponse(result.Error!);
+        var requirement = await _mfa.CreateLoginRequirementAsync(result.Value!.User.Id, cancellationToken);
+        if (requirement is not null)
+        {
+            WriteMfaChallengeCookie(requirement.ChallengeToken);
+            WriteCsrfCookie(BrowserSessionSecurity.CreateCsrfToken());
+            return Ok(new MfaChallengeResponse(true, requirement.SetupRequired, result.Value.User));
+        }
         var refreshToken = await _refreshTokens.IssueAsync(result.Value!.User.Id, cancellationToken);
         WriteSessionCookies(result.Value.Token, refreshToken);
         return Ok(result.Value);
+    }
+
+    private async Task<ActionResult<MfaCompletedResponse>> CompleteMfaAsync(MfaVerification verified, CancellationToken cancellationToken)
+    {
+        var accessToken = _jwtTokens.CreateToken(verified.User);
+        var refreshToken = await _refreshTokens.IssueAsync(verified.User.Id, cancellationToken);
+        WriteSessionCookies(accessToken, refreshToken);
+        Response.Cookies.Delete(BrowserSessionSecurity.MfaChallengeCookie, new CookieOptions { Path = "/api/auth/mfa" });
+        return Ok(new MfaCompletedResponse(new UserResponse(verified.User.Id, verified.User.Email, verified.User.Name, verified.User.LastName, verified.User.Role.Name), verified.RecoveryCodes));
+    }
+
+    private bool TryGetMfaChallenge(out string challenge) =>
+        Request.Cookies.TryGetValue(BrowserSessionSecurity.MfaChallengeCookie, out challenge!) && !string.IsNullOrWhiteSpace(challenge);
+
+    private void WriteMfaChallengeCookie(string challenge)
+    {
+        var secure = !_environment.IsDevelopment();
+        Response.Cookies.Append(BrowserSessionSecurity.MfaChallengeCookie, challenge, new CookieOptions
+        {
+            HttpOnly = true, Secure = secure, SameSite = secure ? SameSiteMode.None : SameSiteMode.Lax,
+            Path = "/api/auth/mfa", MaxAge = TimeSpan.FromMinutes(_mfaOptions.ChallengeMinutes)
+        });
     }
 
     private void WriteSessionCookies(string accessToken, string refreshToken)
@@ -235,5 +297,6 @@ public class AuthController : ApiControllerBase
         Response.Cookies.Delete(BrowserSessionSecurity.AccessCookie, new CookieOptions { Path = "/" });
         Response.Cookies.Delete(BrowserSessionSecurity.RefreshCookie, new CookieOptions { Path = "/api/auth" });
         Response.Cookies.Delete(BrowserSessionSecurity.CsrfCookie, new CookieOptions { Path = "/" });
+        Response.Cookies.Delete(BrowserSessionSecurity.MfaChallengeCookie, new CookieOptions { Path = "/api/auth/mfa" });
     }
 }

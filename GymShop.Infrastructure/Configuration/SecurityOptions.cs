@@ -44,6 +44,37 @@ public sealed class JwtOptionsValidator : IValidateOptions<JwtOptions>
     }
 }
 
+public sealed class MfaOptions
+{
+    public const string SectionName = "Mfa";
+    public string Issuer { get; init; } = "GymShop";
+    public string? EncryptionKey { get; init; }
+    public int ChallengeMinutes { get; init; } = 5;
+}
+
+public sealed class MfaOptionsValidator : IValidateOptions<MfaOptions>
+{
+    public ValidateOptionsResult Validate(string? name, MfaOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.Issuer) || options.Issuer.Length > 50)
+            return ValidateOptionsResult.Fail("Mfa:Issuer is required and cannot exceed 50 characters.");
+        if (options.ChallengeMinutes is < 2 or > 10)
+            return ValidateOptionsResult.Fail("Mfa:ChallengeMinutes must be between 2 and 10 minutes.");
+        if (string.IsNullOrWhiteSpace(options.EncryptionKey))
+            return ValidateOptionsResult.Fail("Mfa:EncryptionKey is required and must be a Base64-encoded 32-byte key.");
+        try
+        {
+            if (Convert.FromBase64String(options.EncryptionKey).Length != 32)
+                return ValidateOptionsResult.Fail("Mfa:EncryptionKey must decode to exactly 32 bytes.");
+        }
+        catch (FormatException)
+        {
+            return ValidateOptionsResult.Fail("Mfa:EncryptionKey must be valid Base64.");
+        }
+        return ValidateOptionsResult.Success;
+    }
+}
+
 public sealed class MercadoPagoOptions
 {
     public const string SectionName = "MercadoPago";
@@ -60,6 +91,7 @@ public sealed class MercadoPagoOptions
     public string? CheckoutFailureUrl { get; init; }
     public string? CheckoutPendingUrl { get; init; }
     public bool UseSandboxInitPoint { get; init; } = true;
+    public int WebhookSignatureMaxAgeSeconds { get; init; } = 300;
 }
 
 public sealed class MercadoPagoOptionsValidator : IValidateOptions<MercadoPagoOptions>
@@ -82,6 +114,9 @@ public sealed class MercadoPagoOptionsValidator : IValidateOptions<MercadoPagoOp
         {
             return ValidateOptionsResult.Fail("MercadoPago:WebhookSecret is required when Mercado Pago is enabled in Production.");
         }
+
+        if (options.WebhookSignatureMaxAgeSeconds is < 60 or > 900)
+            return ValidateOptionsResult.Fail("MercadoPago:WebhookSignatureMaxAgeSeconds must be between 60 and 900 seconds.");
 
         return ValidateOptionsResult.Success;
     }

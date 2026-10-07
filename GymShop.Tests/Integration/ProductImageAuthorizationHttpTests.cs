@@ -50,9 +50,9 @@ public sealed class ProductImageAuthorizationHttpTests : IAsyncLifetime
     private static Task<HttpResponseMessage> UploadAsync(HttpClient client)
     {
         var content = new MultipartFormDataContent();
-        var image = new ByteArrayContent([0xff, 0xd8, 0xff, 0x00]);
-        image.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
-        content.Add(image, "file", "product.jpg");
+        var image = new ByteArrayContent(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="));
+        image.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        content.Add(image, "file", "product.png");
         return client.PostAsync("/api/products/images", content);
     }
 

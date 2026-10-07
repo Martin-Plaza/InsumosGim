@@ -12,7 +12,9 @@ export interface AdminUserPage { items: AdminUser[]; page: number; pageSize: num
 export interface AdminUserFilters { page?: number; pageSize?: number; search?: string; role?: Role; isActive?: boolean }
 export interface UserOrderSummary { id: number; createdAt: string; total: number; status: OrderStatus; deliveryMethod?: DeliveryMethod }
 export interface AdminUserDetail extends AdminUser { orderCount: number; totalPurchased: number; lastOrderAt: string | null; ordersTotal: number; ordersPageSize: number; recentOrders: UserOrderSummary[] }
-export interface AuthResponse { user: User }
+export interface AuthResponse { user: User; mfaRequired?: boolean; setupRequired?: boolean }
+export interface MfaSetup { sharedKey: string; otpAuthUri: string; qrCodeRows: string[] }
+export interface MfaCompleted { user: User; recoveryCodes: string[] }
 export interface CategorySummary { id: number; name: string; slug: string }
 export interface Category extends CategorySummary { description: string | null; displayOrder: number; color: string | null }
 export interface AdminCategory extends Category { isActive: boolean; productCount: number }

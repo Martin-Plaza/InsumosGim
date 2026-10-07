@@ -10,6 +10,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using GymShop.Domain.Entities;
+using Npgsql;
 
 namespace GymShop.Api.Controllers;
 
@@ -29,6 +32,8 @@ public class PaymentsController : ApiControllerBase
     private readonly IGymShopRequestLimiter _requestLimiter;
     private readonly BankTransferOptions _bankTransferOptions;
     private readonly ILogger<PaymentsController> _logger;
+    private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _time;
 
     public PaymentsController(
         ICreatePaymentUseCase createPayment,
@@ -41,7 +46,9 @@ public class PaymentsController : ApiControllerBase
         IOptions<MercadoPagoOptions> mercadoPagoOptions,
         IGymShopRequestLimiter requestLimiter,
         IOptions<BankTransferOptions> bankTransferOptions,
-        ILogger<PaymentsController> logger)
+        ILogger<PaymentsController> logger,
+        IApplicationDbContext db,
+        TimeProvider time)
     {
         _createPayment = createPayment;
         _createCheckoutPayment = createCheckoutPayment;
@@ -54,6 +61,8 @@ public class PaymentsController : ApiControllerBase
         _requestLimiter = requestLimiter;
         _bankTransferOptions = bankTransferOptions.Value;
         _logger = logger;
+        _db = db;
+        _time = time;
     }
 
     [HttpGet("bank-transfer-details")]
@@ -152,18 +161,41 @@ public class PaymentsController : ApiControllerBase
         }
 
         var secret = _mercadoPagoOptions.WebhookSecret;
-        if (notification.RequiresSignature &&
-            !string.IsNullOrWhiteSpace(secret) &&
+        string? requestIdHash = null;
+        DateTime signedAtUtc = default;
+        if (notification.RequiresSignature && !string.IsNullOrWhiteSpace(secret) &&
             !MercadoPagoWebhookSignatureValidator.IsValid(
-                Request.Headers["x-signature"], Request.Headers["x-request-id"], notification.PaymentId, secret))
+                Request.Headers["x-signature"], Request.Headers["x-request-id"], notification.PaymentId, secret,
+                _time.GetUtcNow(), TimeSpan.FromSeconds(_mercadoPagoOptions.WebhookSignatureMaxAgeSeconds),
+                out requestIdHash, out signedAtUtc))
         {
             return Unauthorized(new { message = "Firma de Mercado Pago invalida." });
         }
+
+        if (requestIdHash is not null && await _db.WebhookReceipts.AnyAsync(
+                x => x.Provider == "MercadoPago" && x.RequestIdHash == requestIdHash, cancellationToken))
+            return Ok(new { received = true, duplicate = true });
 
         var decision = _requestLimiter.Acquire(RateLimitPolicies.WebhookGlobal, "all");
         if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
 
         var result = await _handlePaymentWebhook.ExecuteAsync("MercadoPago", notification.PaymentId, cancellationToken);
+        if (result.IsSuccess && requestIdHash is not null)
+        {
+            var cutoff = _time.GetUtcNow().UtcDateTime.AddDays(-1);
+            var expired = await _db.WebhookReceipts.Where(x => x.ProcessedAtUtc < cutoff).Take(100).ToListAsync(cancellationToken);
+            _db.WebhookReceipts.RemoveRange(expired);
+            _db.WebhookReceipts.Add(new WebhookReceipt
+            {
+                Provider = "MercadoPago", RequestIdHash = requestIdHash,
+                SignedAtUtc = signedAtUtc, ProcessedAtUtc = _time.GetUtcNow().UtcDateTime
+            });
+            try { await _db.SaveChangesAsync(cancellationToken); }
+            catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            {
+                return Ok(new { received = true, duplicate = true });
+            }
+        }
         return result.IsSuccess ? Ok(new { received = true }) : ToErrorResponse(result.Error!);
     }
 
@@ -237,30 +269,50 @@ public class PaymentsController : ApiControllerBase
 
 public static class MercadoPagoWebhookSignatureValidator
 {
-    public static bool IsValid(string? xSignature, string? xRequestId, string dataId, string secret)
+    public static bool IsValid(string? xSignature, string? xRequestId, string dataId, string secret,
+        DateTimeOffset now, TimeSpan maximumAge, out string? requestIdHash, out DateTime signedAtUtc)
     {
-        if (string.IsNullOrWhiteSpace(xSignature) || string.IsNullOrWhiteSpace(xRequestId))
+        requestIdHash = null;
+        signedAtUtc = default;
+        if (string.IsNullOrWhiteSpace(xSignature) || string.IsNullOrWhiteSpace(xRequestId) || xRequestId.Length > 200)
         {
             return false;
         }
 
-        var parts = xSignature.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(part => part.Split('=', 2))
-            .Where(part => part.Length == 2)
-            .ToDictionary(part => part[0], part => part[1], StringComparer.OrdinalIgnoreCase);
+        var parts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawPart in xSignature.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var part = rawPart.Split('=', 2);
+            if (part.Length != 2 || !parts.TryAdd(part[0], part[1])) return false;
+        }
 
         if (!parts.TryGetValue("ts", out var timestamp) || !parts.TryGetValue("v1", out var receivedSignature))
         {
             return false;
         }
 
+        if (!long.TryParse(timestamp, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var timestampValue))
+            return false;
+        try
+        {
+            var signedAt = timestampValue >= 100_000_000_000
+                ? DateTimeOffset.FromUnixTimeMilliseconds(timestampValue)
+                : DateTimeOffset.FromUnixTimeSeconds(timestampValue);
+            if ((now - signedAt).Duration() > maximumAge) return false;
+            signedAtUtc = signedAt.UtcDateTime;
+        }
+        catch (ArgumentOutOfRangeException) { return false; }
+
         var manifest = $"id:{dataId};request-id:{xRequestId};ts:{timestamp};";
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(manifest));
         var expectedSignature = Convert.ToHexString(hash).ToLowerInvariant();
 
-        return CryptographicOperations.FixedTimeEquals(
+        var valid = receivedSignature.Length == expectedSignature.Length && CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expectedSignature),
             Encoding.UTF8.GetBytes(receivedSignature.ToLowerInvariant()));
+        if (valid)
+            requestIdHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(xRequestId))).ToLowerInvariant();
+        return valid;
     }
 }

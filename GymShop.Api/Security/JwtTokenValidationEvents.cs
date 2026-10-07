@@ -17,8 +17,13 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
 
     public override Task MessageReceived(MessageReceivedContext context)
     {
-        if (string.IsNullOrWhiteSpace(context.Token) &&
-            context.Request.Cookies.TryGetValue(BrowserSessionSecurity.AccessCookie, out var token))
+        var authorization = context.Request.Headers.Authorization.ToString();
+        if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Token = authorization["Bearer ".Length..].Trim();
+        }
+        else if (string.IsNullOrWhiteSpace(context.Token) &&
+                 context.Request.Cookies.TryGetValue(BrowserSessionSecurity.AccessCookie, out var token))
         {
             context.Token = token;
         }
@@ -31,6 +36,7 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
         var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
         var tokenVersionValue = context.Principal?.FindFirstValue(JwtClaimNames.TokenVersion);
         var tokenRole = context.Principal?.FindFirstValue(ClaimTypes.Role);
+        var tokenHasMfa = string.Equals(context.Principal?.FindFirstValue(JwtClaimNames.Mfa), "true", StringComparison.Ordinal);
 
         if (!int.TryParse(userIdValue, NumberStyles.None, CultureInfo.InvariantCulture, out var userId) ||
             !int.TryParse(tokenVersionValue, NumberStyles.None, CultureInfo.InvariantCulture, out var tokenVersion) ||
@@ -47,6 +53,7 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
             {
                 user.IsActive,
                 user.TokenVersion,
+                user.MfaEnabledAtUtc,
                 Role = user.Role.Name
             })
             .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
@@ -54,7 +61,8 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
         if (currentUser is null ||
             !currentUser.IsActive ||
             currentUser.TokenVersion != tokenVersion ||
-            !string.Equals(currentUser.Role, tokenRole, StringComparison.Ordinal))
+            !string.Equals(currentUser.Role, tokenRole, StringComparison.Ordinal) ||
+            (currentUser.Role is "Admin" or "SuperAdmin" && (currentUser.MfaEnabledAtUtc is null || !tokenHasMfa)))
         {
             context.Fail("The token is no longer valid.");
         }

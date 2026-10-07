@@ -14,9 +14,9 @@ namespace GymShop.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment, bool useMigrationConnection = false)
     {
-        var connectionString = GetPostgresConnectionString(configuration);
+        var connectionString = GetPostgresConnectionString(configuration, environment, useMigrationConnection);
 
         services.AddDbContext<GymShopDbContext>(options =>
             options.UseNpgsql(connectionString));
@@ -85,6 +85,11 @@ public static class DependencyInjection
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddScoped<IMfaService, MfaService>();
+        services.AddSingleton<IValidateOptions<MfaOptions>, MfaOptionsValidator>();
+        services.AddOptions<MfaOptions>()
+            .Bind(configuration.GetSection(MfaOptions.SectionName))
+            .ValidateOnStart();
         services.AddSingleton<IValidateOptions<EmailOptions>>(new EmailOptionsValidator(environment.EnvironmentName));
         services.AddOptions<EmailOptions>()
             .Bind(configuration.GetSection(EmailOptions.SectionName))
@@ -123,10 +128,15 @@ public static class DependencyInjection
         return services;
     }
 
-    private static string GetPostgresConnectionString(IConfiguration configuration)
+    private static string GetPostgresConnectionString(IConfiguration configuration, IHostEnvironment environment, bool useMigrationConnection)
     {
-        var configuredValue = configuration["DATABASE_URL"]
-            ?? configuration.GetConnectionString("DefaultConnection");
+        var migrationValue = configuration["DATABASE_MIGRATION_URL"] ?? configuration.GetConnectionString("Migration");
+        if (useMigrationConnection && string.IsNullOrWhiteSpace(migrationValue))
+            throw new InvalidOperationException("Configure DATABASE_MIGRATION_URL with the direct, limited migration-role connection.");
+
+        var configuredValue = useMigrationConnection
+            ? migrationValue
+            : configuration["DATABASE_URL"] ?? configuration.GetConnectionString("DefaultConnection");
 
         if (string.IsNullOrWhiteSpace(configuredValue))
         {
@@ -145,7 +155,15 @@ public static class DependencyInjection
         if (!Uri.TryCreate(configuredValue, UriKind.Absolute, out var uri)
             || (uri.Scheme != "postgres" && uri.Scheme != "postgresql"))
         {
-            return configuredValue;
+        {
+            var builder = new NpgsqlConnectionStringBuilder(configuredValue);
+            if (environment.IsProduction())
+            {
+                builder.SslMode = SslMode.Require;
+                builder.ChannelBinding = ChannelBinding.Require;
+            }
+            return builder.ConnectionString;
+        }
         }
 
         var credentials = uri.UserInfo.Split(':', 2);

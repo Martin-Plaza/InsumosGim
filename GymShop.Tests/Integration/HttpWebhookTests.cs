@@ -70,7 +70,7 @@ public sealed class HttpWebhookTests : IAsyncLifetime
             Content = JsonContent.Create(new { data = new { id = paymentId } })
         };
         signedRequest.Headers.Add("x-request-id", "request-http-1");
-        signedRequest.Headers.Add("x-signature", CreateSignature(paymentId, "request-http-1", "123456"));
+        signedRequest.Headers.Add("x-signature", CreateSignature(paymentId, "request-http-1", CurrentTimestamp()));
         var signed = await _client.SendAsync(signedRequest);
 
         Assert.Equal(HttpStatusCode.Unauthorized, unsigned.StatusCode);
@@ -88,7 +88,7 @@ public sealed class HttpWebhookTests : IAsyncLifetime
         const string paymentId = "mp-query-only-http";
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/payments/mercadopago/webhook?data.id={paymentId}");
         request.Headers.Add("x-request-id", "request-query-only-1");
-        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-query-only-1", "123456"));
+        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-query-only-1", CurrentTimestamp()));
 
         var response = await _client.SendAsync(request);
 
@@ -120,7 +120,7 @@ public sealed class HttpWebhookTests : IAsyncLifetime
             Content = JsonContent.Create(new { data = new { id = paymentId } })
         };
         request.Headers.Add("x-request-id", "request-body-only-1");
-        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-body-only-1", "123456"));
+        request.Headers.Add("x-signature", CreateSignature(paymentId, "request-body-only-1", CurrentTimestamp()));
 
         var response = await _client.SendAsync(request);
 
@@ -150,6 +150,29 @@ public sealed class HttpWebhookTests : IAsyncLifetime
         Assert.Equal(OrderStatus.Paid, (await db.Orders.SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task Replayed_signed_webhook_is_acknowledged_without_reprocessing()
+    {
+        const string paymentId = "mp-replay-http";
+        const string requestId = "request-replay-1";
+        var signature = CreateSignature(paymentId, requestId, CurrentTimestamp());
+
+        async Task<HttpResponseMessage> SendAsync()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/payments/mercadopago/webhook?data.id={paymentId}");
+            request.Headers.Add("x-request-id", requestId);
+            request.Headers.Add("x-signature", signature);
+            return await _client.SendAsync(request);
+        }
+
+        using var first = await SendAsync();
+        using var replay = await SendAsync();
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(1, _gateway.GetCalls);
+    }
+
     [Theory]
     [InlineData("merchant_order", "123456789")]
     [InlineData("payment", "not-numeric")]
@@ -170,6 +193,8 @@ public sealed class HttpWebhookTests : IAsyncLifetime
         var value = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(manifest))).ToLowerInvariant();
         return $"ts={timestamp},v1={value}";
     }
+
+    private static string CurrentTimestamp() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private sealed class FakeWebhookGateway : IPaymentGateway
     {

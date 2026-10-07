@@ -8,6 +8,7 @@ public static class BrowserSessionSecurity
 {
     public const string AccessCookie = "gymshop-access";
     public const string RefreshCookie = "gymshop-refresh";
+    public const string MfaChallengeCookie = "gymshop-mfa";
     public const string CsrfCookie = "XSRF-TOKEN";
     public const string CsrfHeader = "X-CSRF-TOKEN";
 
@@ -61,6 +62,8 @@ public sealed class BrowserCsrfMiddleware(RequestDelegate next)
         if (PublicAuthenticationPaths.Contains(path.Value ?? string.Empty)) return false;
         if (path.StartsWithSegments("/api/auth/refresh") || path.StartsWithSegments("/api/auth/logout"))
             return context.Request.Cookies.ContainsKey(BrowserSessionSecurity.RefreshCookie);
+        if (path.StartsWithSegments("/api/auth/mfa"))
+            return context.Request.Cookies.ContainsKey(BrowserSessionSecurity.MfaChallengeCookie);
 
         return context.User.Identity?.IsAuthenticated == true &&
                context.Request.Cookies.ContainsKey(BrowserSessionSecurity.AccessCookie);

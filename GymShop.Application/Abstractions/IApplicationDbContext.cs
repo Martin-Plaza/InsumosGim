@@ -26,6 +26,8 @@ public interface IApplicationDbContext
     DbSet<EmailVerificationCode> EmailVerificationCodes { get; }
     DbSet<PasswordResetCode> PasswordResetCodes { get; }
     DbSet<RefreshToken> RefreshTokens { get; }
+    DbSet<MfaRecoveryCode> MfaRecoveryCodes { get; }
+    DbSet<WebhookReceipt> WebhookReceipts { get; }
     DbSet<UserExternalLogin> UserExternalLogins { get; }
     DbSet<Coupon> Coupons { get; }
     DbSet<CouponRedemption> CouponRedemptions { get; }

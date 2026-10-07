@@ -33,6 +33,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
     public DbSet<EmailVerificationCode> EmailVerificationCodes => Set<EmailVerificationCode>();
     public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
+    public DbSet<WebhookReceipt> WebhookReceipts => Set<WebhookReceipt>();
     public DbSet<UserExternalLogin> UserExternalLogins => Set<UserExternalLogin>();
     public DbSet<Coupon> Coupons => Set<Coupon>();
     public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
@@ -140,6 +142,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.Phone).HasMaxLength(50);
             entity.Property(x => x.Address).HasMaxLength(300);
             entity.Property(x => x.TokenVersion).HasDefaultValue(0);
+            entity.Property(x => x.MfaSecretEncrypted).HasMaxLength(500);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => x.Email).IsUnique();
 
@@ -148,6 +151,26 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 .WithMany(x => x.Users)
                 .HasForeignKey(x => x.RoleId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<WebhookReceipt>(entity =>
+        {
+            entity.ToTable("WebhookReceipts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Provider).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.RequestIdHash).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.Provider, x.RequestIdHash }).IsUnique();
+            entity.HasIndex(x => x.ProcessedAtUtc);
+        });
+
+        modelBuilder.Entity<MfaRecoveryCode>(entity =>
+        {
+            entity.ToTable("MfaRecoveryCodes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CodeHash).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(x => new { x.UserId, x.UsedAtUtc });
+            entity.HasOne(x => x.User).WithMany(x => x.MfaRecoveryCodes).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<EmailVerificationCode>(entity =>

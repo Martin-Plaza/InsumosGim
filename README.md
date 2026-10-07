@@ -1211,7 +1211,7 @@ La integracion cubre:
 - Creacion de preferencias de Checkout Pro.
 - Asociacion local entre pago y orden mediante `OrderId` y `ExternalReference`.
 - Recepcion de Webhook e IPN de pagos en `POST /api/payments/mercadopago/webhook`.
-- Validacion HMAC de Webhooks con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`.
+- Validacion HMAC de Webhooks con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`; el timestamp debe estar dentro de `MercadoPago:WebhookSignatureMaxAgeSeconds` (300 segundos por defecto) y los request IDs procesados se registran en PostgreSQL durante 24 horas para rechazar replays entre instancias.
 - Invalidacion de la preferencia de Checkout Pro despues del primer pago aprobado para cerrar enlaces abiertos; si Mercado Pago no acepta el cierre, el webhook responde `503` y el intento queda auditado para permitir el reintento sin aplicar el pago dos veces.
 - Compatibilidad con IPN legacy limitada a `topic=payment` e ID numerico. La IPN nunca se toma como prueba de pago: el backend consulta Mercado Pago con su propio access token y valida referencia externa, monto y moneda antes de modificar estados.
 - Idempotencia con `IdempotencyKey`.
@@ -1744,6 +1744,15 @@ dotnet GymShop.Api.dll --migrate-only
 
 En Railway este comando debe configurarse como **Pre-deploy Command**. Se ejecuta dentro de la imagen publicada y con las variables del servicio; si una migracion falla, el despliegue se detiene antes de reemplazar la version activa. No es necesario volver a habilitar `DatabaseInitialization__Enabled`.
 
+La aplicación y las migraciones deben usar credenciales separadas:
+
+- `DATABASE_URL`: URL pooled del rol `gymshop_app`, sin superusuario, creación de bases, roles ni objetos DDL.
+- `DATABASE_MIGRATION_URL`: URL directa del rol `gymshop_migrator`, usada únicamente por el pre-deploy.
+- ambas conexiones deben exigir TLS en producción; no reutilizar contraseñas entre ambientes.
+- `Mfa__EncryptionKey`: Base64 de 32 bytes aleatorios, estable entre despliegues y almacenado como secreto.
+
+El comando `--migrate-only` elige deliberadamente `DATABASE_MIGRATION_URL`; el servidor web nunca necesita recibir permisos de migración. Los administradores existentes deberán enrolar TOTP en el primer ingreso posterior a esta migración.
+
 El historial valido para Npgsql contiene un unico baseline, `20260910144849_InitialPostgreSql`,
 en `GymShop.Infrastructure/Data/PostgresMigrations`. El snapshot asociado se mantiene en
 `GymShop.Infrastructure/Data/Migrations/GymShopDbContextModelSnapshot.cs` por compatibilidad con
@@ -1752,12 +1761,15 @@ reintroducirse al crear migraciones nuevas.
 
 ## Docker local
 
-El entorno Docker levanta dos servicios definidos en `compose.yaml`:
+El entorno Docker levanta tres servicios definidos en `compose.yaml`:
 
 ```text
 api       -> API ASP.NET Core, publicada en http://localhost:8080
+initialize -> proceso efímero que migra y carga datos con gymshop_migrator
 database  -> PostgreSQL 17, accesible solo desde la red de Docker
 ```
+
+PostgreSQL arranca con `postgres` únicamente para administrar el motor y crear los roles. El tráfico normal usa `gymshop_app`. Si ya existe el volumen `gymshop-postgres-data`, los scripts de inicialización no vuelven a ejecutarse automáticamente: hay que crear los roles en esa base existente antes de levantar esta versión o recrear el volumen sólo si sus datos pueden descartarse.
 
 Crear primero el archivo local de variables a partir de la plantilla y reemplazar los valores de ejemplo:
 

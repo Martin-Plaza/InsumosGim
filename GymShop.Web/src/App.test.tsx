@@ -15,7 +15,7 @@ describe('flujos y permisos de la aplicación', () => {
     render(<App />)
     expect(await screen.findByText('Productos destacados')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Inicio' })).not.toBeInTheDocument()
-    expect(screen.getByText('Producto 6')).toBeInTheDocument()
+    expect(await screen.findByText('Producto 6')).toBeInTheDocument()
     expect(screen.queryByText('Producto 7')).not.toBeInTheDocument()
     expect(await screen.findByText(/Entrená fuerte/)).toBeInTheDocument()
     expect(screen.getByText('Envíos a todo el país')).toBeInTheDocument()
@@ -76,6 +76,9 @@ describe('flujos y permisos de la aplicación', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Ingresar' }).at(-1)!)
     expect(await screen.findByRole('status')).toHaveTextContent('Hola, Ana.')
     expect(localStorage.getItem('gymshop.token')).toBeNull()
+    expect(sessionStorage.getItem('gymshop.access-token')).toBe('jwt')
+    await userEvent.click(screen.getByRole('link', { name: 'Catálogo' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('muestra credenciales inválidas y no crea sesión', async () => {

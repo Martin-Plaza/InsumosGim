@@ -43,14 +43,12 @@ public record ConfirmPasswordResetRequest(
 
 public record PasswordResetCompletedResponse(string Message);
 
-public record AuthResponse(
-    [property: JsonIgnore] string Token,
-    UserResponse User);
+public record AuthResponse(string Token, UserResponse User);
 
 public record MfaChallengeResponse(bool MfaRequired, bool SetupRequired, UserResponse User);
 public record MfaCodeRequest([Required, StringLength(32, MinimumLength = 6)] string Code);
 public record MfaSetupResponse(string SharedKey, string OtpAuthUri, IReadOnlyList<string> QrCodeRows);
-public record MfaCompletedResponse(UserResponse User, IReadOnlyList<string> RecoveryCodes);
+public record MfaCompletedResponse(string Token, UserResponse User, IReadOnlyList<string> RecoveryCodes);
 
 public record UserResponse(int Id, string Email, string Name, string? LastName, string Role);
 

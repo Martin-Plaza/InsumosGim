@@ -44,6 +44,7 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
   const [mfaUser, setMfaUser] = useState<User | null>(null)
   const [mfaSetup, setMfaSetup] = useState<MfaSetup | null>(null)
   const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([])
+  const [mfaAccessToken, setMfaAccessToken] = useState<string | undefined>()
   const googleButton = useRef<HTMLDivElement>(null)
   const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID && !import.meta.env.VITE_GOOGLE_CLIENT_ID.startsWith('<'))
 
@@ -141,14 +142,14 @@ export function AuthPanel({ onDone }: AuthPanelProps) {
     return <section className="auth-card">
       <div><p className="eyebrow">CÓDIGOS DE RECUPERACIÓN</p><h1>Guardalos ahora</h1><p>Cada código sirve una sola vez si perdés acceso a tu aplicación autenticadora.</p></div>
       <div className="mfa-recovery-codes">{mfaRecoveryCodes.map(code => <code key={code}>{code}</code>)}</div>
-      <button className="primary" type="button" onClick={() => complete({ user: mfaUser })}>Ya los guardé</button>
+      <button className="primary" type="button" onClick={() => complete({ user: mfaUser, token: mfaAccessToken })}>Ya los guardé</button>
     </section>
   }
 
   if (mfaUser) {
     return <section className="auth-card">
       <div><p className="eyebrow">SEGURIDAD ADMINISTRATIVA</p><h1>{mfaSetup ? 'Configurá la autenticación en dos pasos' : 'Ingresá tu segundo factor'}</h1><p>{mfaSetup ? 'Escaneá el código con una aplicación TOTP o cargá la clave manualmente.' : 'Usá el código de tu aplicación autenticadora o un código de recuperación.'}</p>{mfaSetup && <><div className="mfa-qr" aria-label="Código QR TOTP">{mfaSetup.qrCodeRows.map((row, index) => <div key={index}>{row.replaceAll('1', '██').replaceAll('0', '  ')}</div>)}</div><p>Clave manual: <code>{mfaSetup.sharedKey}</code></p></>}</div>
-      <form onSubmit={event => { event.preventDefault(); const code = String(new FormData(event.currentTarget).get('code')); void execute(async () => { const result = mfaSetup ? await api.mfaEnable(code) : await api.mfaComplete(code); if (result.recoveryCodes.length) setMfaRecoveryCodes(result.recoveryCodes); else complete({ user: result.user }) }) }}>
+      <form onSubmit={event => { event.preventDefault(); const code = String(new FormData(event.currentTarget).get('code')); void execute(async () => { const result = mfaSetup ? await api.mfaEnable(code) : await api.mfaComplete(code); setMfaAccessToken(result.token); if (result.recoveryCodes.length) setMfaRecoveryCodes(result.recoveryCodes); else complete({ user: result.user, token: result.token }) }) }}>
         {error && <div className="error" role="alert">{error}</div>}<label>Código<input name="code" inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={32} required autoFocus disabled={busy} /></label><button className="primary" type="submit" disabled={busy}>{busy ? 'Verificando…' : 'Verificar e ingresar'}</button>
       </form>
     </section>

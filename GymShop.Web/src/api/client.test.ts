@@ -6,7 +6,7 @@ import { session } from '../auth/session'
 const response = (body: unknown, status = 200, headers?: HeadersInit) => new Response(body === undefined ? undefined : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 
 describe('cliente HTTP y contrato GymShop', () => {
-  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); document.cookie = 'XSRF-TOKEN=; Max-Age=0; Path=/' })
+  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); sessionStorage.clear(); document.cookie = 'XSRF-TOKEN=; Max-Age=0; Path=/' })
 
   it('usa cookies del navegador sin exponer un Bearer', async () => {
     session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' })
@@ -14,6 +14,17 @@ describe('cliente HTTP y contrato GymShop', () => {
     await request('/api/test')
     const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
     expect(headers.get('Authorization')).toBeNull()
+    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
+  })
+
+  it('envía el token de acceso de la pestaña cuando el navegador bloquea cookies cross-site', async () => {
+    session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' }, 'access-token')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ ok: true }))
+
+    await request('/api/cart')
+
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
+    expect(headers.get('Authorization')).toBe('Bearer access-token')
     expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
   })
 

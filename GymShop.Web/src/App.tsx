@@ -39,7 +39,7 @@ export default function App() {
 
 function AppShell() {
   const [user, setUser] = useState(session.user())
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState<{ message: string; destination: string; shown: boolean } | null>(null)
   const cart = useCart()
   const navigate = useNavigate()
   const location = useLocation()
@@ -51,13 +51,19 @@ function AppShell() {
     if (/^\/catalogo\/[^/]+$/.test(location.pathname) && (!testEnvironment || mockedScroll)) window.scrollTo(0, 0)
     else if (!testEnvironment) window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [location.pathname])
-  const logout = () => { void api.logout().catch(() => undefined).finally(() => { session.clear(); navigate('/'); setNotice('Sesión cerrada.') }) }
+  useEffect(() => {
+    if (!notice) return
+    const current = `${location.pathname}${location.search}`
+    if (current === notice.destination && !notice.shown) setNotice({ ...notice, shown: true })
+    else if (notice.shown && current !== notice.destination) setNotice(null)
+  }, [location.pathname, location.search, notice])
+  const logout = () => { void api.logout().catch(() => undefined).finally(() => { session.clear(); setNotice({ message: 'Sesión cerrada.', destination: '/', shown: false }); navigate('/') }) }
   const adminArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
 
   return <div className={adminArea ? 'app admin-app' : 'app'}>
     <RouteLoadingIndicator />
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
-    {!adminArea && <main>{notice && <div className="notice" role="status">{notice}</div>}<StorefrontRoutes user={user} onAuth={auth => { session.save(auth.user); setNotice(`Hola, ${auth.user.name}.`) }} /></main>}
+    {!adminArea && <main>{notice && <div className="notice route-notice" role="status">{notice.message}</div>}<StorefrontRoutes user={user} onAuth={(auth, destination) => { session.save(auth.user, auth.token); setNotice({ message: `Hola, ${auth.user.name}.`, destination, shown: false }) }} /></main>}
     {adminArea && <AdminRoutes user={user} onLogout={logout} />}
     {!adminArea && <StorefrontFooter />}
   </div>
@@ -105,7 +111,7 @@ function StorefrontHeader({ user, onLogout, onCart, cartCount }: { user: User | 
   </nav><div className="account">{user && <small>{user.name}<br />{user.role}</small>}<button className="cart-button" onClick={() => { closeMenus(); onCart() }}>Carrito <b>{cartCount}</b></button>{user ? <button className="desktop-session-action" aria-hidden={mobileMenuOpen} tabIndex={mobileMenuOpen ? -1 : 0} onClick={onLogout}>Salir</button> : <Link className="primary link-button desktop-session-action" to="/login" aria-hidden={mobileMenuOpen} tabIndex={mobileMenuOpen ? -1 : 0}>Ingresar</Link>}</div><button className="mobile-menu-button" type="button" aria-controls="storefront-navigation" aria-expanded={mobileMenuOpen} aria-label={mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'} onClick={toggleMobileMenu}><span /><span /><span /></button></header>{(openMenu || mobileMenuOpen) && <button className="nav-fade" aria-label="Cerrar menú" onClick={closeMenus} />}</>
 }
 
-function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: AuthResponse): void }) {
+function StorefrontRoutes({ user, onAuth }: { user: User | null; onAuth(auth: AuthResponse, destination: string): void }) {
   const navigate = useNavigate()
   return <Routes>
     <Route path="/" element={<Home onCatalog={category => navigate(category ? `/catalogo?categoria=${encodeURIComponent(category)}` : '/catalogo')} onProduct={id => navigate(`/catalogo/${id}`)} />} />
@@ -124,10 +130,10 @@ function AdminRoutes({ user, onLogout }: { user: User | null; onLogout(): void }
   </Route><Route path="*" element={<Navigate to="/admin" replace />} /></Routes>
 }
 
-function AuthRoute({ user, onDone }: { user: User | null; onDone(auth: AuthResponse): void }) {
+function AuthRoute({ user, onDone }: { user: User | null; onDone(auth: AuthResponse, destination: string): void }) {
   const location = useLocation(); const navigate = useNavigate(); const state = location.state as { returnTo?: string; message?: string } | null
   if (user) return <Navigate to={state?.returnTo || '/'} replace />
-  return <>{state?.message && <div className="notice" role="status">{state.message}</div>}<AuthPanel onDone={auth => { onDone(auth); navigate(state?.returnTo || '/', { replace: true }) }} /></>
+  return <>{state?.message && <div className="notice" role="status">{state.message}</div>}<AuthPanel onDone={auth => { const destination = state?.returnTo || '/'; onDone(auth, destination); navigate(destination, { replace: true }) }} /></>
 }
 
 function RequireLogin() { const location = useLocation(); return <Navigate to="/login" replace state={{ returnTo: `${location.pathname}${location.search}`, message: 'Iniciá sesión para continuar.' }} /> }

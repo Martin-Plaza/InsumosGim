@@ -1,5 +1,5 @@
 import { session } from '../auth/session'
-import type { ApiErrorShape } from './types'
+import type { ApiErrorShape, AuthResponse } from './types'
 
 export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5093').replace(/\/$/, '')
 
@@ -49,6 +49,8 @@ function captureCsrfToken(response: Response) {
 async function prepareHeaders(init: RequestInit, accept: string) {
   const headers = new Headers(init.headers)
   headers.set('Accept', accept)
+  const accessToken = session.accessToken()
+  if (accessToken && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${accessToken}`)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const method = (init.method || 'GET').toUpperCase()
   const csrf = unsafeMethods.has(method) ? await ensureCsrfToken() : undefined
@@ -63,6 +65,10 @@ async function refreshBrowserSession() {
     method: 'POST', credentials: 'include', headers: { 'X-CSRF-TOKEN': csrf, Accept: 'application/json' },
   })
   captureCsrfToken(response)
+  if (response.ok) {
+    const auth = await response.json() as AuthResponse
+    if (auth.token) session.save(auth.user, auth.token)
+  }
   return response.ok
 }
 

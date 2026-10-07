@@ -17,8 +17,13 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
 
     public override Task MessageReceived(MessageReceivedContext context)
     {
-        if (string.IsNullOrWhiteSpace(context.Token) &&
-            context.Request.Cookies.TryGetValue(BrowserSessionSecurity.AccessCookie, out var token))
+        var authorization = context.Request.Headers.Authorization.ToString();
+        if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Token = authorization["Bearer ".Length..].Trim();
+        }
+        else if (string.IsNullOrWhiteSpace(context.Token) &&
+                 context.Request.Cookies.TryGetValue(BrowserSessionSecurity.AccessCookie, out var token))
         {
             context.Token = token;
         }

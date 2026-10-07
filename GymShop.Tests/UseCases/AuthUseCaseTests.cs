@@ -113,6 +113,24 @@ public class AuthUseCaseTests
     }
 
     [Fact]
+    public async Task Login_progressively_upgrades_legacy_password_hash()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var hasher = new PasswordHasher();
+        var user = await SeedVerifiedUserAsync(db, hasher, "legacy@test.com", "clave123");
+        user.PasswordHash = GymShop.Tests.Services.PasswordHasherTests.LegacyHash("clave123");
+        await db.SaveChangesAsync();
+
+        var result = await new LoginUserUseCase(db, hasher, new FakeJwtTokenService())
+            .ExecuteAsync(new LoginRequest("legacy@test.com", "clave123"));
+
+        Assert.True(result.IsSuccess);
+        Assert.True(hasher.Verify("clave123", user.PasswordHash));
+        Assert.False(hasher.NeedsRehash(user.PasswordHash));
+        Assert.Equal("600000", user.PasswordHash.Split('.')[2]);
+    }
+
+    [Fact]
     public async Task Register_rejects_duplicate_email_case_insensitively()
     {
         await using var db = await TestDbContextFactory.CreateAsync(); var sender = new FakeSender(); var register = Register(db, sender);

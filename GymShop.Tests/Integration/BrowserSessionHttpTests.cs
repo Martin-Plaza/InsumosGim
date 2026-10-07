@@ -33,9 +33,9 @@ public sealed class BrowserSessionHttpTests : IAsyncLifetime
 
         Assert.False(body.TryGetProperty("token", out _));
         Assert.Equal("browser-session@test.com", body.GetProperty("user").GetProperty("email").GetString());
-        Assert.Contains(cookies, value => value.StartsWith("gymshop-access=") && value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(cookies, value => value.StartsWith("gymshop-refresh=") && value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(cookies, value => value.StartsWith("XSRF-TOKEN=") && !value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(cookies, value => value.StartsWith("gymshop-access=") && HasFlags(value, "httponly", "secure", "samesite=none", "partitioned"));
+        Assert.Contains(cookies, value => value.StartsWith("gymshop-refresh=") && HasFlags(value, "httponly", "secure", "samesite=none", "partitioned"));
+        Assert.Contains(cookies, value => value.StartsWith("XSRF-TOKEN=") && !value.Contains("httponly", StringComparison.OrdinalIgnoreCase) && HasFlags(value, "secure", "samesite=none", "partitioned"));
     }
 
     [Fact]
@@ -79,4 +79,7 @@ public sealed class BrowserSessionHttpTests : IAsyncLifetime
             .Single(value => value.StartsWith(name + "=", StringComparison.Ordinal));
         return Uri.UnescapeDataString(pair[(name.Length + 1)..]);
     }
+
+    private static bool HasFlags(string cookie, params string[] flags) =>
+        flags.All(flag => cookie.Contains(flag, StringComparison.OrdinalIgnoreCase));
 }

@@ -255,48 +255,54 @@ public class AuthController : ApiControllerBase
 
     private void WriteMfaChallengeCookie(string challenge)
     {
-        var secure = !_environment.IsDevelopment();
-        Response.Cookies.Append(BrowserSessionSecurity.MfaChallengeCookie, challenge, new CookieOptions
-        {
-            HttpOnly = true, Secure = secure, SameSite = secure ? SameSiteMode.None : SameSiteMode.Lax,
-            Path = "/api/auth/mfa", MaxAge = TimeSpan.FromMinutes(_mfaOptions.ChallengeMinutes)
-        });
+        Response.Cookies.Append(
+            BrowserSessionSecurity.MfaChallengeCookie,
+            challenge,
+            BrowserCookieOptions(true, "/api/auth/mfa", TimeSpan.FromMinutes(_mfaOptions.ChallengeMinutes)));
     }
 
     private void WriteSessionCookies(string accessToken, string refreshToken)
     {
-        var secure = !_environment.IsDevelopment();
-        var sameSite = secure ? SameSiteMode.None : SameSiteMode.Lax;
-        Response.Cookies.Append(BrowserSessionSecurity.AccessCookie, accessToken, new CookieOptions
-        {
-            HttpOnly = true, Secure = secure, SameSite = sameSite, Path = "/",
-            MaxAge = TimeSpan.FromMinutes(_jwtOptions.ExpirationMinutes)
-        });
-        Response.Cookies.Append(BrowserSessionSecurity.RefreshCookie, refreshToken, new CookieOptions
-        {
-            HttpOnly = true, Secure = secure, SameSite = sameSite, Path = "/api/auth",
-            MaxAge = TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)
-        });
+        Response.Cookies.Append(
+            BrowserSessionSecurity.AccessCookie,
+            accessToken,
+            BrowserCookieOptions(true, "/", TimeSpan.FromMinutes(_jwtOptions.ExpirationMinutes)));
+        Response.Cookies.Append(
+            BrowserSessionSecurity.RefreshCookie,
+            refreshToken,
+            BrowserCookieOptions(true, "/api/auth", TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)));
         WriteCsrfCookie(BrowserSessionSecurity.CreateCsrfToken());
     }
 
     private void WriteCsrfCookie(string token)
     {
-        var secure = !_environment.IsDevelopment();
-        var sameSite = secure ? SameSiteMode.None : SameSiteMode.Lax;
-        Response.Cookies.Append(BrowserSessionSecurity.CsrfCookie, token, new CookieOptions
-        {
-            HttpOnly = false, Secure = secure, SameSite = sameSite, Path = "/",
-            MaxAge = TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)
-        });
+        Response.Cookies.Append(
+            BrowserSessionSecurity.CsrfCookie,
+            token,
+            BrowserCookieOptions(false, "/", TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)));
         Response.Headers[BrowserSessionSecurity.CsrfHeader] = token;
     }
 
     private void DeleteSessionCookies()
     {
-        Response.Cookies.Delete(BrowserSessionSecurity.AccessCookie, new CookieOptions { Path = "/" });
-        Response.Cookies.Delete(BrowserSessionSecurity.RefreshCookie, new CookieOptions { Path = "/api/auth" });
-        Response.Cookies.Delete(BrowserSessionSecurity.CsrfCookie, new CookieOptions { Path = "/" });
-        Response.Cookies.Delete(BrowserSessionSecurity.MfaChallengeCookie, new CookieOptions { Path = "/api/auth/mfa" });
+        Response.Cookies.Delete(BrowserSessionSecurity.AccessCookie, BrowserCookieOptions(true, "/"));
+        Response.Cookies.Delete(BrowserSessionSecurity.RefreshCookie, BrowserCookieOptions(true, "/api/auth"));
+        Response.Cookies.Delete(BrowserSessionSecurity.CsrfCookie, BrowserCookieOptions(false, "/"));
+        Response.Cookies.Delete(BrowserSessionSecurity.MfaChallengeCookie, BrowserCookieOptions(true, "/api/auth/mfa"));
+    }
+
+    private CookieOptions BrowserCookieOptions(bool httpOnly, string path, TimeSpan? maxAge = null)
+    {
+        var secure = !_environment.IsDevelopment();
+        var options = new CookieOptions
+        {
+            HttpOnly = httpOnly,
+            Secure = secure,
+            SameSite = secure ? SameSiteMode.None : SameSiteMode.Lax,
+            Path = path,
+            MaxAge = maxAge
+        };
+        if (secure) options.Extensions.Add("Partitioned");
+        return options;
     }
 }

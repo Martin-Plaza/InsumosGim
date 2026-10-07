@@ -24,6 +24,15 @@ public sealed class BrowserCsrfMiddleware(RequestDelegate next)
     {
         HttpMethods.Get, HttpMethods.Head, HttpMethods.Options, HttpMethods.Trace
     };
+    private static readonly HashSet<string> PublicAuthenticationPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/verify-email",
+        "/api/auth/resend-verification",
+        "/api/auth/forgot-password",
+        "/api/auth/reset-password"
+    };
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -49,6 +58,7 @@ public sealed class BrowserCsrfMiddleware(RequestDelegate next)
         if (context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return false;
 
         var path = context.Request.Path;
+        if (PublicAuthenticationPaths.Contains(path.Value ?? string.Empty)) return false;
         if (path.StartsWithSegments("/api/auth/refresh") || path.StartsWithSegments("/api/auth/logout"))
             return context.Request.Cookies.ContainsKey(BrowserSessionSecurity.RefreshCookie);
 

@@ -37,15 +37,18 @@ public sealed class HttpPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Login_serializes_token_and_user_with_camel_case()
+    public async Task Login_serializes_user_without_token_and_sets_http_only_session_cookies()
     {
         var response = await _client.PostAsJsonAsync("/api/auth/login", new { email = "user-http@test.com", password = "clave123" });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("token").GetString()));
+        Assert.False(json.RootElement.TryGetProperty("token", out _));
         Assert.Equal("User", json.RootElement.GetProperty("user").GetProperty("role").GetString());
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        var cookies = response.Headers.GetValues("Set-Cookie").ToArray();
+        Assert.Contains(cookies, value => value.StartsWith("gymshop-access=") && value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(cookies, value => value.StartsWith("gymshop-refresh=") && value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

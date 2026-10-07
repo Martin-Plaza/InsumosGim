@@ -25,6 +25,21 @@ describe('flujos y permisos de la aplicación', () => {
     expect(await screen.findByText('Producto 7')).toBeInTheDocument()
   })
 
+  it('abre y cierra la navegación móvil de forma accesible', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))
+    render(<App />)
+    const menuButton = screen.getByRole('button', { name: 'Abrir menú' })
+    const navigation = screen.getByRole('navigation', { name: 'Navegación principal' })
+
+    await userEvent.click(menuButton)
+    expect(screen.getByRole('button', { name: 'Cerrar menú', expanded: true })).toBeInTheDocument()
+    expect(navigation).toHaveClass('is-open')
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Abrir menú', expanded: false })).toBeInTheDocument()
+    expect(navigation).not.toHaveClass('is-open')
+  })
+
   it('muestra navegación legal y una página 404 real sin redirigir al inicio', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => json([]))
     window.history.replaceState(null, '', '/ruta-que-no-existe')

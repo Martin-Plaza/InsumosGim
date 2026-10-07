@@ -1404,6 +1404,12 @@ Las migraciones `AddUserTokenVersion` y `AddRefreshTokens` agregan la version de
 
 Esta implementacion realiza una consulta indexada por usuario en cada request autenticado para priorizar invalidacion inmediata y coherencia entre instancias. Las operaciones mutables autenticadas por cookie exigen ademas que el valor legible de `XSRF-TOKEN` coincida con el encabezado `X-CSRF-TOKEN`. Los clientes que presentan un Bearer token de forma explicita conservan el flujo API sin CSRF.
 
+## Seguridad del frontend y contraseñas
+
+Vercel entrega una `Content-Security-Policy` que limita scripts al propio frontend y a Google Identity Services, bloquea plugins, restringe formularios y evita que la tienda sea embebida mediante `frame-ancestors 'none'`. También se envían `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, una `Permissions-Policy` restrictiva y `X-Frame-Options: DENY` como compatibilidad adicional. Las fuentes de Google, imágenes HTTPS de productos y conexiones HTTPS a la API se mantienen permitidas.
+
+Las contraseñas nuevas usan PBKDF2-HMAC-SHA256 con salt aleatorio de 128 bits, clave derivada de 256 bits y 600.000 iteraciones. El hash conserva salt, clave, costo y algoritmo. Los hashes anteriores de 100.000 iteraciones siguen siendo verificables y se reemplazan por el formato vigente después del siguiente login exitoso, sin guardar ni recuperar la contraseña en texto plano y sin una migración masiva de base de datos.
+
 ## Validacion de entradas y visibilidad del catalogo
 
 ASP.NET Core valida los contratos antes de ejecutar el caso de uso. Las entradas invalidas responden `400 Bad Request` con `ValidationProblemDetails`; las validaciones de Application repiten las reglas críticas antes de persistir para proteger también llamadas que no provengan de HTTP.

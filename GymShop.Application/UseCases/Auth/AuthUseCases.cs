@@ -175,6 +175,11 @@ public sealed class LoginUserUseCase : ILoginUserUseCase
     {
         var email = request.Email.Trim().ToLowerInvariant(); var user = await _db.Users.Include(x => x.Role).SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
         if (user is null || !user.IsActive || user.EmailVerifiedAt is null || !_hasher.Verify(request.Password, user.PasswordHash)) return AppResult<AuthResponse>.Failure(AppErrorType.Unauthorized, "Credenciales invalidas o email sin verificar.");
+        if (_hasher.NeedsRehash(user.PasswordHash))
+        {
+            user.PasswordHash = _hasher.Hash(request.Password);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
         return AppResult<AuthResponse>.Success(AuthMapping.Auth(user, _jwt));
     }
 }

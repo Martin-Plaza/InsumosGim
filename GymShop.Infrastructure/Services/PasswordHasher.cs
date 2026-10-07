@@ -7,7 +7,7 @@ public class PasswordHasher : IPasswordHasher
 {
     private const int SaltSize = 16;
     private const int KeySize = 32;
-    private const int Iterations = 100_000;
+    private const int Iterations = 600_000;
     private static readonly HashAlgorithmName Algorithm = HashAlgorithmName.SHA256;
 
     public string Hash(string password)
@@ -20,18 +20,49 @@ public class PasswordHasher : IPasswordHasher
 
     public bool Verify(string password, string passwordHash)
     {
-        var parts = passwordHash.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 4)
+        if (!TryRead(passwordHash, out var salt, out var expectedKey, out var iterations, out var algorithm))
         {
             return false;
         }
 
-        var salt = Convert.FromBase64String(parts[0]);
-        var expectedKey = Convert.FromBase64String(parts[1]);
-        var iterations = int.Parse(parts[2]);
-        var algorithm = new HashAlgorithmName(parts[3]);
         var actualKey = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, algorithm, expectedKey.Length);
 
         return CryptographicOperations.FixedTimeEquals(actualKey, expectedKey);
+    }
+
+    public bool NeedsRehash(string passwordHash) =>
+        !TryRead(passwordHash, out var salt, out var key, out var iterations, out var algorithm) ||
+        salt.Length != SaltSize || key.Length != KeySize || iterations < Iterations || algorithm != Algorithm;
+
+    private static bool TryRead(
+        string passwordHash,
+        out byte[] salt,
+        out byte[] key,
+        out int iterations,
+        out HashAlgorithmName algorithm)
+    {
+        salt = [];
+        key = [];
+        iterations = 0;
+        algorithm = default;
+        var parts = passwordHash.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 4 ||
+            !int.TryParse(parts[2], out iterations) || iterations <= 0 ||
+            !string.Equals(parts[3], Algorithm.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            salt = Convert.FromBase64String(parts[0]);
+            key = Convert.FromBase64String(parts[1]);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+
+        if (salt.Length == 0 || key.Length == 0) return false;
+        algorithm = Algorithm;
+        return true;
     }
 }

@@ -8,21 +8,25 @@ using GymShop.Infrastructure.Configuration;
 
 namespace GymShop.Infrastructure.Services;
 
-public sealed class MockVerificationEmailSender(ILogger<MockVerificationEmailSender> logger) : IVerificationEmailSender
+public sealed class MockVerificationEmailSender(
+    ILogger<MockVerificationEmailSender> logger,
+    IOptions<EmailOptions> options) : IVerificationEmailSender
 {
     public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Mock verification email generated for {Email}. Code: {VerificationCode}", email, code);
-        return Task.FromResult(EmailSendResult.Accepted(code));
+        logger.LogInformation("Mock verification email generated for {Email}.", email);
+        return Task.FromResult(EmailSendResult.Accepted(options.Value.ExposeDevelopmentCodes ? code : null));
     }
 }
 
-public sealed class MockPasswordResetEmailSender(ILogger<MockPasswordResetEmailSender> logger) : IPasswordResetEmailSender
+public sealed class MockPasswordResetEmailSender(
+    ILogger<MockPasswordResetEmailSender> logger,
+    IOptions<EmailOptions> options) : IPasswordResetEmailSender
 {
     public Task<EmailSendResult> SendAsync(string email, string code, bool deliver = true, CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Mock password-reset email generated for {Email}. Code: {PasswordResetCode}", email, code);
-        return Task.FromResult(EmailSendResult.Accepted(code));
+        logger.LogInformation("Mock password-reset email generated for {Email}.", email);
+        return Task.FromResult(EmailSendResult.Accepted(options.Value.ExposeDevelopmentCodes ? code : null));
     }
 }
 

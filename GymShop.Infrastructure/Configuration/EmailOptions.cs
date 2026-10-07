@@ -12,15 +12,20 @@ public sealed class EmailOptions
     public string FromName { get; set; } = "GymShop";
     public string PublicAppUrl { get; set; } = string.Empty;
     public bool TransactionalNotificationsEnabled { get; set; } = true;
+    public bool ExposeDevelopmentCodes { get; set; }
 }
 
 public sealed class EmailOptionsValidator(string environmentName) : IValidateOptions<EmailOptions>
 {
     public ValidateOptionsResult Validate(string? name, EmailOptions options)
     {
+        var isDevelopment = string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase);
+        if (options.ExposeDevelopmentCodes && !isDevelopment)
+            return ValidateOptionsResult.Fail("Email:ExposeDevelopmentCodes is only allowed in the Development environment.");
+
         if (string.Equals(options.Provider, "Mock", StringComparison.OrdinalIgnoreCase))
         {
-            return string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase)
+            return isDevelopment
                 ? ValidateOptionsResult.Success
                 : ValidateOptionsResult.Fail("Email:Provider=Mock is only allowed in the Development environment.");
         }

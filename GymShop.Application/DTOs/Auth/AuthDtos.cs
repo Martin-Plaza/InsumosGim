@@ -43,7 +43,9 @@ public record ConfirmPasswordResetRequest(
 
 public record PasswordResetCompletedResponse(string Message);
 
-public record AuthResponse(string Token, UserResponse User);
+public record AuthResponse(
+    [property: JsonIgnore] string Token,
+    UserResponse User);
 
 public record UserResponse(int Id, string Email, string Name, string? LastName, string Role);
 

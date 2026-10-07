@@ -44,6 +44,18 @@ public sealed class SecurityOptionsTests
     }
 
     [Fact]
+    public void Jwt_week_long_access_token_is_rejected()
+    {
+        var result = _jwtValidator.Validate(null, new JwtOptions
+        {
+            Secret = "a-development-secret-with-at-least-32-characters",
+            ExpirationMinutes = 10080
+        });
+
+        Assert.True(result.Failed);
+    }
+
+    [Fact]
     public void Production_enabled_mercado_pago_requires_webhook_secret()
     {
         var validator = new MercadoPagoOptionsValidator("Production");

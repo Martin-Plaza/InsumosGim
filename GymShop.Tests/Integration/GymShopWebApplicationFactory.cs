@@ -62,7 +62,7 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
                 ["Jwt:Issuer"] = "GymShop.HttpTests",
                 ["Jwt:Audience"] = "GymShop.HttpTests.Client",
                 ["Jwt:Secret"] = TestJwtSecret,
-                ["Jwt:ExpirationMinutes"] = "60",
+                ["Jwt:ExpirationMinutes"] = "15",
                 ["RateLimiting:Enabled"] = "false",
                 ["MercadoPago:Enabled"] = "false",
                 ["ReverseProxy:Enabled"] = "false",
@@ -144,7 +144,9 @@ internal sealed class GymShopWebApplicationFactory : WebApplicationFactory<Progr
                 null,
                 response.StatusCode);
         }
-        using var json = System.Text.Json.JsonDocument.Parse(body);
-        return json.RootElement.GetProperty("token").GetString()!;
+        var accessCookie = response.Headers.GetValues("Set-Cookie")
+            .Select(value => value.Split(';', 2)[0])
+            .Single(value => value.StartsWith("gymshop-access=", StringComparison.Ordinal));
+        return Uri.UnescapeDataString(accessCookie["gymshop-access=".Length..]);
     }
 }

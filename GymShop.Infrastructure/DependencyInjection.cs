@@ -84,6 +84,7 @@ public static class DependencyInjection
             ActivatorUtilities.CreateInstance<NeonProductImageStorage>(provider, configuration));
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddSingleton<IValidateOptions<EmailOptions>>(new EmailOptionsValidator(environment.EnvironmentName));
         services.AddOptions<EmailOptions>()
             .Bind(configuration.GetSection(EmailOptions.SectionName))

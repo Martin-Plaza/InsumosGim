@@ -11,7 +11,8 @@ public sealed class JwtOptions
     public string? Issuer { get; init; }
     public string? Audience { get; init; }
     public string? Secret { get; init; }
-    public int ExpirationMinutes { get; init; } = 10080;
+    public int ExpirationMinutes { get; init; } = 15;
+    public int RefreshExpirationDays { get; init; } = 14;
 }
 
 public sealed class JwtOptionsValidator : IValidateOptions<JwtOptions>
@@ -32,6 +33,12 @@ public sealed class JwtOptionsValidator : IValidateOptions<JwtOptions>
         {
             return ValidateOptionsResult.Fail($"Jwt:Secret must contain at least {JwtOptions.MinimumSecretLength} characters.");
         }
+
+        if (options.ExpirationMinutes is < 5 or > 30)
+            return ValidateOptionsResult.Fail("Jwt:ExpirationMinutes must be between 5 and 30 minutes.");
+
+        if (options.RefreshExpirationDays is < 1 or > 30)
+            return ValidateOptionsResult.Fail("Jwt:RefreshExpirationDays must be between 1 and 30 days.");
 
         return ValidateOptionsResult.Success;
     }

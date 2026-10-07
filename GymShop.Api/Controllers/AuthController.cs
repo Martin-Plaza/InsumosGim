@@ -1,4 +1,5 @@
 using GymShop.Application.Abstractions;
+using GymShop.Application.Common;
 using GymShop.Application.DTOs.Auth;
 using GymShop.Application.UseCases.Auth;
 using GymShop.Api.RateLimiting;
@@ -6,6 +7,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
+using GymShop.Api.Security;
+using GymShop.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace GymShop.Api.Controllers;
 
@@ -22,6 +26,10 @@ public class AuthController : ApiControllerBase
     private readonly IConfirmPasswordResetUseCase _confirmPasswordReset;
     private readonly IGetCurrentUserUseCase _getCurrentUser;
     private readonly IGymShopRequestLimiter _requestLimiter;
+    private readonly IRefreshTokenService _refreshTokens;
+    private readonly IJwtTokenService _jwtTokens;
+    private readonly JwtOptions _jwtOptions;
+    private readonly IHostEnvironment _environment;
 
     public AuthController(
         IRegisterUserUseCase registerUser,
@@ -32,7 +40,11 @@ public class AuthController : ApiControllerBase
         IRequestPasswordResetUseCase requestPasswordReset,
         IConfirmPasswordResetUseCase confirmPasswordReset,
         IGetCurrentUserUseCase getCurrentUser,
-        IGymShopRequestLimiter requestLimiter)
+        IGymShopRequestLimiter requestLimiter,
+        IRefreshTokenService refreshTokens,
+        IJwtTokenService jwtTokens,
+        IOptions<JwtOptions> jwtOptions,
+        IHostEnvironment environment)
     {
         _registerUser = registerUser;
         _loginUser = loginUser;
@@ -43,6 +55,10 @@ public class AuthController : ApiControllerBase
         _confirmPasswordReset = confirmPasswordReset;
         _getCurrentUser = getCurrentUser;
         _requestLimiter = requestLimiter;
+        _refreshTokens = refreshTokens;
+        _jwtTokens = jwtTokens;
+        _jwtOptions = jwtOptions.Value;
+        _environment = environment;
     }
 
     /*
@@ -69,7 +85,7 @@ public class AuthController : ApiControllerBase
     [HttpPost("verify-email")]
     [EnableRateLimiting(RateLimitPolicies.RegistrationIp)]
     public async Task<ActionResult<AuthResponse>> VerifyEmail(VerifyEmailRequest request, CancellationToken cancellationToken) =>
-        FromResult(await _verifyEmail.ExecuteAsync(request, cancellationToken));
+        await CompleteAuthenticationAsync(await _verifyEmail.ExecuteAsync(request, cancellationToken), cancellationToken);
 
 
 
@@ -86,7 +102,7 @@ public class AuthController : ApiControllerBase
     {
         var subject = User.FindFirstValue(ClaimTypes.NameIdentifier);
         var linkingUserId = int.TryParse(subject, out var userId) ? userId : (int?)null;
-        return FromResult(await _googleLogin.ExecuteAsync(request, linkingUserId, cancellationToken));
+        return await CompleteAuthenticationAsync(await _googleLogin.ExecuteAsync(request, linkingUserId, cancellationToken), cancellationToken);
     }
 
 
@@ -99,7 +115,7 @@ public class AuthController : ApiControllerBase
         var accountKey = GymShopRequestLimiter.HashAccount(request.Email);
         var decision = _requestLimiter.Acquire(RateLimitPolicies.LoginAccount, accountKey);
         if (!decision.IsAllowed) return RateLimitResponse.Create(HttpContext, decision);
-        return FromResult(await _loginUser.ExecuteAsync(request, cancellationToken));
+        return await CompleteAuthenticationAsync(await _loginUser.ExecuteAsync(request, cancellationToken), cancellationToken);
     }
 
 
@@ -136,5 +152,88 @@ public class AuthController : ApiControllerBase
         CancellationToken cancellationToken)
     {
         return FromResult(await _getCurrentUser.ExecuteAsync(currentUser.UserId, cancellationToken));
+    }
+
+    [HttpPost("refresh")]
+    public async Task<ActionResult<AuthResponse>> Refresh(CancellationToken cancellationToken)
+    {
+        if (!Request.Cookies.TryGetValue(BrowserSessionSecurity.RefreshCookie, out var refreshToken))
+            return Unauthorized(new { message = "La sesión ya no es válida." });
+
+        var rotation = await _refreshTokens.RotateAsync(refreshToken, cancellationToken);
+        if (rotation is null)
+        {
+            DeleteSessionCookies();
+            return Unauthorized(new { message = "La sesión ya no es válida." });
+        }
+
+        var response = new AuthResponse(
+            _jwtTokens.CreateToken(rotation.User),
+            new UserResponse(rotation.User.Id, rotation.User.Email, rotation.User.Name, rotation.User.LastName, rotation.User.Role.Name));
+        WriteSessionCookies(response.Token, rotation.RefreshToken);
+        return Ok(response);
+    }
+
+    [HttpGet("csrf")]
+    public ActionResult<object> Csrf()
+    {
+        var token = BrowserSessionSecurity.CreateCsrfToken();
+        WriteCsrfCookie(token);
+        return Ok(new { token });
+    }
+
+    [HttpPost("logout")]
+    public async Task<ActionResult> Logout(CancellationToken cancellationToken)
+    {
+        Request.Cookies.TryGetValue(BrowserSessionSecurity.RefreshCookie, out var refreshToken);
+        await _refreshTokens.RevokeAsync(refreshToken, cancellationToken);
+        DeleteSessionCookies();
+        return NoContent();
+    }
+
+    private async Task<ActionResult<AuthResponse>> CompleteAuthenticationAsync(
+        AppResult<AuthResponse> result,
+        CancellationToken cancellationToken)
+    {
+        if (!result.IsSuccess) return ToErrorResponse(result.Error!);
+        var refreshToken = await _refreshTokens.IssueAsync(result.Value!.User.Id, cancellationToken);
+        WriteSessionCookies(result.Value.Token, refreshToken);
+        return Ok(result.Value);
+    }
+
+    private void WriteSessionCookies(string accessToken, string refreshToken)
+    {
+        var secure = !_environment.IsDevelopment();
+        var sameSite = secure ? SameSiteMode.None : SameSiteMode.Lax;
+        Response.Cookies.Append(BrowserSessionSecurity.AccessCookie, accessToken, new CookieOptions
+        {
+            HttpOnly = true, Secure = secure, SameSite = sameSite, Path = "/",
+            MaxAge = TimeSpan.FromMinutes(_jwtOptions.ExpirationMinutes)
+        });
+        Response.Cookies.Append(BrowserSessionSecurity.RefreshCookie, refreshToken, new CookieOptions
+        {
+            HttpOnly = true, Secure = secure, SameSite = sameSite, Path = "/api/auth",
+            MaxAge = TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)
+        });
+        WriteCsrfCookie(BrowserSessionSecurity.CreateCsrfToken());
+    }
+
+    private void WriteCsrfCookie(string token)
+    {
+        var secure = !_environment.IsDevelopment();
+        var sameSite = secure ? SameSiteMode.None : SameSiteMode.Lax;
+        Response.Cookies.Append(BrowserSessionSecurity.CsrfCookie, token, new CookieOptions
+        {
+            HttpOnly = false, Secure = secure, SameSite = sameSite, Path = "/",
+            MaxAge = TimeSpan.FromDays(_jwtOptions.RefreshExpirationDays)
+        });
+        Response.Headers[BrowserSessionSecurity.CsrfHeader] = token;
+    }
+
+    private void DeleteSessionCookies()
+    {
+        Response.Cookies.Delete(BrowserSessionSecurity.AccessCookie, new CookieOptions { Path = "/" });
+        Response.Cookies.Delete(BrowserSessionSecurity.RefreshCookie, new CookieOptions { Path = "/api/auth" });
+        Response.Cookies.Delete(BrowserSessionSecurity.CsrfCookie, new CookieOptions { Path = "/" });
     }
 }

@@ -130,7 +130,9 @@ builder.Services.AddCors(options =>
         policy
             .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .WithExposedHeaders(BrowserSessionSecurity.CsrfHeader)
+            .AllowCredentials();
     });
 });
 
@@ -213,6 +215,7 @@ app.UseExceptionHandler();
 app.UseStaticFiles();
 app.UseCors("Frontend");
 app.UseAuthentication();
+app.UseMiddleware<BrowserCsrfMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 

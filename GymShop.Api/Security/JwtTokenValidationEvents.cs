@@ -15,6 +15,17 @@ public sealed class JwtTokenValidationEvents : JwtBearerEvents
         _db = db;
     }
 
+    public override Task MessageReceived(MessageReceivedContext context)
+    {
+        if (string.IsNullOrWhiteSpace(context.Token) &&
+            context.Request.Cookies.TryGetValue(BrowserSessionSecurity.AccessCookie, out var token))
+        {
+            context.Token = token;
+        }
+
+        return Task.CompletedTask;
+    }
+
     public override async Task TokenValidated(TokenValidatedContext context)
     {
         var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);

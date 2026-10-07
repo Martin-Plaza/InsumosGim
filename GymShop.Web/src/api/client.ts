@@ -20,6 +20,62 @@ export class ApiError extends Error implements ApiErrorShape {
   }
 }
 
+const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+let csrfToken: string | undefined
+
+function cookie(name: string) {
+  const prefix = `${encodeURIComponent(name)}=`
+  const value = document.cookie.split('; ').find(item => item.startsWith(prefix))?.slice(prefix.length)
+  return value ? decodeURIComponent(value) : undefined
+}
+
+async function ensureCsrfToken() {
+  const cookieToken = cookie('XSRF-TOKEN')
+  if (cookieToken) return (csrfToken = cookieToken)
+  if (csrfToken) return csrfToken
+  if (new URL(API_URL, window.location.href).hostname === window.location.hostname) return undefined
+
+  const response = await fetch(`${API_URL}/api/auth/csrf`, { credentials: 'include', headers: { Accept: 'application/json' } })
+  if (!response.ok) return undefined
+  const body = await response.json() as { token?: string }
+  csrfToken = response.headers.get('X-CSRF-TOKEN') || body.token
+  return csrfToken
+}
+
+function captureCsrfToken(response: Response) {
+  csrfToken = response.headers.get('X-CSRF-TOKEN') || cookie('XSRF-TOKEN') || csrfToken
+}
+
+async function prepareHeaders(init: RequestInit, accept: string) {
+  const headers = new Headers(init.headers)
+  headers.set('Accept', accept)
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const method = (init.method || 'GET').toUpperCase()
+  const csrf = unsafeMethods.has(method) ? await ensureCsrfToken() : undefined
+  if (unsafeMethods.has(method) && csrf) headers.set('X-CSRF-TOKEN', csrf)
+  return headers
+}
+
+async function refreshBrowserSession() {
+  const csrf = await ensureCsrfToken()
+  if (!csrf) return false
+  const response = await fetch(`${API_URL}/api/auth/refresh`, {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRF-TOKEN': csrf, Accept: 'application/json' },
+  })
+  captureCsrfToken(response)
+  return response.ok
+}
+
+async function fetchWithSession(path: string, init: RequestInit, retry = true) {
+  const response = await fetch(`${API_URL}${path}`, { ...init, credentials: 'include' })
+  captureCsrfToken(response)
+  if (response.status !== 401 || !retry || !session.user() || path.startsWith('/api/auth/')) return response
+  if (!await refreshBrowserSession()) return response
+  const retried = await fetch(`${API_URL}${path}`, { ...init, credentials: 'include' })
+  captureCsrfToken(retried)
+  return retried
+}
+
 function errorMessage(status: number) {
   if (status === 0) return 'No pudimos conectarnos con el servicio. Revisá tu conexión e intentá nuevamente.'
   if (status === 401) return 'Tu sesión no es válida. Iniciá sesión nuevamente.'
@@ -49,13 +105,9 @@ async function normalizeError(response: Response): Promise<ApiError> {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Accept', 'application/json')
-  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const token = session.token()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const headers = await prepareHeaders(init, 'application/json')
   let response: Response
-  try { response = await fetch(`${API_URL}${path}`, { ...init, headers }) }
+  try { response = await fetchWithSession(path, { ...init, headers }) }
   catch (error) {
     if (error instanceof TypeError) throw new ApiError({ status: 0, code: 'network_unavailable', message: errorMessage(0) })
     throw error
@@ -70,12 +122,9 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
-  const headers = new Headers(init.headers)
-  headers.set('Accept', 'application/pdf')
-  const token = session.token()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const headers = await prepareHeaders(init, 'application/pdf')
   let response: Response
-  try { response = await fetch(`${API_URL}${path}`, { ...init, headers }) }
+  try { response = await fetchWithSession(path, { ...init, headers }) }
   catch (error) {
     if (error instanceof TypeError) throw new ApiError({ status: 0, code: 'network_unavailable', message: errorMessage(0) })
     throw error

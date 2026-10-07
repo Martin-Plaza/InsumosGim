@@ -63,7 +63,7 @@ function AppShell() {
   return <div className={adminArea ? 'app admin-app' : 'app'}>
     <RouteLoadingIndicator />
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
-    {!adminArea && <main>{notice && <div className="notice route-notice" role="status">{notice.message}</div>}<StorefrontRoutes user={user} onAuth={(auth, destination) => { session.save(auth.user, auth.token); setNotice({ message: `Hola, ${auth.user.name}.`, destination, shown: false }) }} /></main>}
+    {!adminArea && <main>{notice && <div className="notice route-notice" role="status">{notice.message}</div>}<StorefrontRoutes user={user} onAuth={(auth, destination) => { session.save(auth.user); setNotice({ message: `Hola, ${auth.user.name}.`, destination, shown: false }) }} /></main>}
     {adminArea && <AdminRoutes user={user} onLogout={logout} />}
     {!adminArea && <StorefrontFooter />}
   </div>

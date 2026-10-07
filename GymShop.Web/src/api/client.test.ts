@@ -17,17 +17,6 @@ describe('cliente HTTP y contrato GymShop', () => {
     expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
   })
 
-  it('envía el token de acceso de la pestaña cuando el navegador bloquea cookies cross-site', async () => {
-    session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' }, 'access-token')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ ok: true }))
-
-    await request('/api/cart')
-
-    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers)
-    expect(headers.get('Authorization')).toBe('Bearer access-token')
-    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include')
-  })
-
   it('envía el token CSRF en operaciones mutables', async () => {
     document.cookie = 'XSRF-TOKEN=csrf-seguro; Path=/'
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ ok: true }))

@@ -247,7 +247,7 @@ public class AuthController : ApiControllerBase
         var refreshToken = await _refreshTokens.IssueAsync(verified.User.Id, cancellationToken);
         WriteSessionCookies(accessToken, refreshToken);
         Response.Cookies.Delete(BrowserSessionSecurity.MfaChallengeCookie, new CookieOptions { Path = "/api/auth/mfa" });
-        return Ok(new MfaCompletedResponse(accessToken, new UserResponse(verified.User.Id, verified.User.Email, verified.User.Name, verified.User.LastName, verified.User.Role.Name), verified.RecoveryCodes));
+        return Ok(new MfaCompletedResponse(new UserResponse(verified.User.Id, verified.User.Email, verified.User.Name, verified.User.LastName, verified.User.Role.Name), verified.RecoveryCodes));
     }
 
     private bool TryGetMfaChallenge(out string challenge) =>

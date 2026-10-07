@@ -1,5 +1,5 @@
 import { session } from '../auth/session'
-import type { ApiErrorShape } from './types'
+import type { ApiErrorShape, AuthResponse } from './types'
 
 export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5093').replace(/\/$/, '')
 
@@ -63,6 +63,7 @@ async function refreshBrowserSession() {
     method: 'POST', credentials: 'include', headers: { 'X-CSRF-TOKEN': csrf, Accept: 'application/json' },
   })
   captureCsrfToken(response)
+  if (response.ok) session.save((await response.json() as AuthResponse).user)
   return response.ok
 }
 

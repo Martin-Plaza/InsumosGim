@@ -8,4 +8,5 @@ if (!URL.revokeObjectURL) URL.revokeObjectURL = () => undefined
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  sessionStorage.clear()
 })

@@ -15,7 +15,7 @@ describe('flujos y permisos de la aplicación', () => {
     render(<App />)
     expect(await screen.findByText('Productos destacados')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Inicio' })).not.toBeInTheDocument()
-    expect(screen.getByText('Producto 6')).toBeInTheDocument()
+    expect(await screen.findByText('Producto 6')).toBeInTheDocument()
     expect(screen.queryByText('Producto 7')).not.toBeInTheDocument()
     expect(await screen.findByText(/Entrená fuerte/)).toBeInTheDocument()
     expect(screen.getByText('Envíos a todo el país')).toBeInTheDocument()
@@ -68,7 +68,7 @@ describe('flujos y permisos de la aplicación', () => {
   })
 
   it('completa un login exitoso', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/products') ? json([]) : String(input).includes('/login') ? json({ token: 'jwt', user: { id: 1, email: 'user@gym.com', name: 'Ana', role: 'User' } }) : json({ items: [] }))
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => String(input).includes('/products') ? json([]) : String(input).includes('/login') ? json({ user: { id: 1, email: 'user@gym.com', name: 'Ana', role: 'User' } }) : json({ items: [] }))
     render(<App />)
     await userEvent.click(screen.getByRole('link', { name: 'Ingresar' }))
     await userEvent.type(screen.getByLabelText('Email'), 'user@gym.com')
@@ -76,6 +76,9 @@ describe('flujos y permisos de la aplicación', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Ingresar' }).at(-1)!)
     expect(await screen.findByRole('status')).toHaveTextContent('Hola, Ana.')
     expect(localStorage.getItem('gymshop.token')).toBeNull()
+    expect(sessionStorage.getItem('gymshop.access-token')).toBeNull()
+    await userEvent.click(screen.getByRole('link', { name: 'Catálogo' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('muestra credenciales inválidas y no crea sesión', async () => {
@@ -93,7 +96,7 @@ describe('flujos y permisos de la aplicación', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input)
       if (url.includes('/auth/register')) return json({ email: 'new@gym.com', expiresInSeconds: 60, developmentCode: '123456' })
-      if (url.includes('/auth/verify-email')) return json({ token: 'verified-jwt', user: { id: 8, email: 'new@gym.com', name: 'Nueva', lastName: 'Persona', role: 'User' } })
+      if (url.includes('/auth/verify-email')) return json({ user: { id: 8, email: 'new@gym.com', name: 'Nueva', lastName: 'Persona', role: 'User' } })
       if (url.includes('/cart')) return json({ items: [] })
       return json([])
     })

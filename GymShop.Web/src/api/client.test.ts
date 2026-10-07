@@ -6,7 +6,7 @@ import { session } from '../auth/session'
 const response = (body: unknown, status = 200, headers?: HeadersInit) => new Response(body === undefined ? undefined : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 
 describe('cliente HTTP y contrato GymShop', () => {
-  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); document.cookie = 'XSRF-TOKEN=; Max-Age=0; Path=/' })
+  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); sessionStorage.clear(); document.cookie = 'XSRF-TOKEN=; Max-Age=0; Path=/' })
 
   it('usa cookies del navegador sin exponer un Bearer', async () => {
     session.save({ id: 1, email: 'u@gym.com', name: 'U', role: 'User' })

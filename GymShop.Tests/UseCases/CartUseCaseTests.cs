@@ -65,7 +65,7 @@ public class CartUseCaseTests
     }
 
     [Fact]
-    public async Task CheckoutCart_creates_session_without_reserving_stock_or_clearing_cart()
+    public async Task CheckoutCart_creates_session_without_reserving_stock_and_clears_cart()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db);
@@ -85,7 +85,37 @@ public class CartUseCaseTests
         Assert.Equal(5, product.Stock);
         Assert.Empty(db.Orders);
         Assert.Single(db.CheckoutItems);
-        Assert.Single(db.CartItems);
+        Assert.Empty(db.CartItems);
+        Assert.NotNull(db.CheckoutSessions.Single().CartClearedAtUtc);
+    }
+
+    [Fact]
+    public async Task Pending_checkout_allows_a_new_purchase_without_reusing_previous_cart_items()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var firstProduct = SeedProduct(db, stock: 5, price: 100);
+        var secondProduct = SeedProduct(db, stock: 4, price: 250);
+        await db.SaveChangesAsync();
+        var add = new AddCartItemUseCase(db);
+        var checkout = new CheckoutCartUseCase(db);
+
+        await add.ExecuteAsync(user.Id, new AddCartItemRequest(firstProduct.Id, 1));
+        var first = await checkout.ExecuteAsync(user.Id,
+            new CheckoutCartRequest("HomeDelivery", "Primera dirección 123", 0, 100, 0, "checkout-first"));
+        await add.ExecuteAsync(user.Id, new AddCartItemRequest(secondProduct.Id, 1));
+        var second = await checkout.ExecuteAsync(user.Id,
+            new CheckoutCartRequest("HomeDelivery", "Segunda dirección 456", 0, 250, 0, "checkout-second"));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsSuccess);
+        Assert.Equal(2, db.CheckoutSessions.Count());
+        Assert.Equal(2, db.CheckoutItems.Count());
+        Assert.Empty(db.CartItems);
+        Assert.Equal(firstProduct.Id, first.Value!.Items.Single().ProductId);
+        Assert.Equal(secondProduct.Id, second.Value!.Items.Single().ProductId);
+        Assert.Equal(5, firstProduct.Stock);
+        Assert.Equal(4, secondProduct.Stock);
     }
 
     [Fact]
@@ -338,7 +368,7 @@ public class CartUseCaseTests
         Assert.Equal(CheckoutStatus.AwaitingPayment.ToString(), result.Value.Status);
         Assert.Empty(db.CouponRedemptions);
         Assert.Equal(5, product.Stock);
-        Assert.Single(db.CartItems);
+        Assert.Empty(db.CartItems);
         Assert.Empty(db.AuditEntries.Where(entry => entry.Action == "FreeOrderConfirmed"));
     }
 

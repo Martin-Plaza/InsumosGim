@@ -1257,13 +1257,15 @@ Los reembolsos parciales no se automatizan: el pago conserva `Approved`, la orde
 
 Las transiciones incompatibles con el estado actual responden `409 Conflict`. Los estados o formatos desconocidos continúan respondiendo errores de validacion.
 
-## Idempotencia al crear ordenes
+## Idempotencia al crear checkouts
 
-`POST /api/cart/checkout` acepta `idempotencyKey`. El frontend genera un UUID estable por usuario y lo conserva en `localStorage` hasta recibir la orden o recuperar una orden pendiente despues de un error incierto. Un reintento con la misma clave y los mismos datos devuelve el mismo `OrderId`, aunque el primer request ya haya vaciado el carrito o la orden haya cambiado de estado.
+`POST /api/cart/checkout` acepta `idempotencyKey`. El frontend genera un UUID por intento y lo conserva en `localStorage` mientras la respuesta sea incierta. El primer pago usa la misma clave para que el checkout y su intento inicial converjan en los reintentos. Cuando el servidor devuelve el checkout, incluso si la transferencia queda pendiente, la clave se elimina y la compra siguiente obtiene una nueva.
 
-La orden guarda la clave y una huella SHA-256 de los datos normalizados de checkout. La direccion no se duplica dentro de esa huella en texto legible. El indice unico `UX_Orders_UserId_CheckoutIdempotencyKey` respalda la garantia en PostgreSQL y permite que usuarios distintos utilicen accidentalmente el mismo UUID sin colisionar entre si.
+La sesión de checkout guarda la clave y una huella SHA-256 de los datos normalizados. El índice único `UX_CheckoutSessions_UserId_IdempotencyKey` respalda la garantía en PostgreSQL y permite que usuarios distintos utilicen accidentalmente el mismo UUID sin colisionar entre sí.
 
-La consulta idempotente se realiza despues de adquirir el bloqueo transaccional y antes de validar el carrito. Por eso dos requests concurrentes con la misma clave convergen en una sola orden: el primero crea y confirma; el segundo observa el resultado confirmado y lo reutiliza. Una misma clave con una huella distinta responde `409 Conflict` con el codigo `checkout_idempotency_conflict`.
+La consulta idempotente ocurre antes de validar el carrito. Por eso dos requests con la misma clave convergen en una sola sesión aunque el primero ya haya separado los artículos del carrito. Una misma clave con una huella distinta responde `409 Conflict` con el código `checkout_idempotency_conflict`.
+
+Al crear la sesión se copian productos, cantidades, precios, descuento y entrega, y luego se limpia el carrito activo sin modificar stock. El usuario puede iniciar otra compra mientras se verifica una transferencia. Al acreditar el pago se vuelve a validar la disponibilidad; si ya no alcanza, el checkout pasa a `StockUnavailable` y se coordina un cambio o la devolución.
 
 ## Concurrencia al crear pagos
 
@@ -1695,16 +1697,15 @@ Los productos que participen en envíos deben tener peso, largo, ancho y alto de
 Al confirmar, el frontend ejecuta:
 
 ```text
-POST /api/cart/checkout
 POST /api/cart/shipping-quotes
-POST /api/orders/{orderId}/payments
-GET  /api/orders/{orderId}
-GET  /api/payments/orders/{orderId}
+POST /api/cart/checkout
+GET  /api/cart/checkout/{checkoutId}
+POST /api/cart/checkout/{checkoutId}/payments   # solo para reintentar
 ```
 
-El pago siempre envía `provider: "Mock"`. No se utiliza ni se recrea `/api/payments/current`.
+El pago comercial envía `provider: "BankTransfer"` o `provider: "MercadoPago"`. No se utiliza ni se recrea `/api/payments/current`.
 
-El botón de confirmación usa un bloqueo sincrónico además del estado visual de carga. El frontend también conserva una clave de idempotencia estable por usuario hasta recibir la respuesta: si la red se corta despues de confirmar la transaccion, repetir el checkout devuelve la misma orden. Ante un error incierto conserva la clave y, como recuperacion adicional, consulta las ordenes pendientes. La clave se elimina solamente al recibir la orden o recuperar una pendiente existente.
+El botón de confirmación usa un bloqueo sincrónico además del estado visual de carga. Si la red se corta después de confirmar la transacción, la clave se conserva y repetir el checkout devuelve la misma sesión. Al recibir una respuesta correcta la clave se rota aunque el pago siga pendiente, de modo que una compra posterior no reutiliza el checkout anterior.
 
 La creación del pago sí utiliza una clave estable por orden. Actualizar un pago `Pending` solo vuelve a consultar su estado y no crea otro intento. Si un pago `Creating` necesita retomarse se conserva la misma clave. Un nuevo intento después de `CreationFailed`, `Rejected`, `Canceled` o `Expired` genera una clave nueva porque representa otra operación de negocio. Esto evita duplicar un mismo intento sin impedir que el usuario vuelva a pagar después de un resultado terminal.
 

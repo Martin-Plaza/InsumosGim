@@ -56,14 +56,17 @@ export function CheckoutSessionPage() {
   const refunded = checkout.status === 'Refunded'
   const stockFailure = checkout.status === 'StockUnavailable'
   const waiting = checkout.status === 'AwaitingPayment'
+  const waitingForTransfer = waiting && payment?.provider === 'BankTransfer'
   const title = completed ? '¡Compra confirmada!' : refunded ? 'Pago devuelto' : stockFailure ? 'No pudimos confirmar la compra' : 'Estamos esperando el pago'
   const message = completed
       ? 'La orden se creó después de confirmar la acreditación.'
     : refunded
-      ? 'La compra ya no podía confirmarse. El importe fue devuelto automáticamente.'
+      ? 'La compra ya no podía confirmarse. El importe fue devuelto.'
       : stockFailure
         ? payment?.failureReason || 'La compra ya no podía confirmarse. Estamos gestionando la devolución.'
-        : 'Tu carrito permanece disponible y el stock todavía no fue descontado.'
+        : waitingForTransfer
+          ? 'Podés seguir comprando mientras verificamos tu transferencia. Si algún producto deja de estar disponible, te contactaremos para ofrecerte un cambio o devolverte el dinero.'
+          : 'Podés seguir comprando mientras confirmamos el pago.'
   const canRetry = waiting && payment && terminalRetryablePayments.includes(payment.status)
 
   return <section className="checkout-result">

@@ -349,12 +349,38 @@ public sealed class CreateCheckoutPaymentUseCase : ICreateCheckoutPaymentUseCase
         if (checkout is null) return AppResult<PaymentResponse>.Failure(AppErrorType.NotFound, "Checkout no encontrado.");
         if (checkout.Status != CheckoutStatus.AwaitingPayment)
             return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "El checkout ya no admite pagos.");
-        return await CheckoutPaymentCreator.CreateAsync(_db, _gateways, checkout, request, PaymentCreationPolicy.Default, cancellationToken);
+        return await CheckoutPaymentCreator.CreateAndRegisterAsync(
+            _db, _gateways, checkout, request, PaymentCreationPolicy.Default, auditContext: null, cancellationToken);
     }
 }
 
 internal static class CheckoutPaymentCreator
 {
+    public static async Task<AppResult<PaymentResponse>> CreateAndRegisterAsync(
+        IApplicationDbContext db,
+        IEnumerable<IPaymentGateway> gateways,
+        CheckoutSession checkout,
+        CreatePaymentRequest request,
+        PaymentCreationPolicy policy,
+        IAuditContext? auditContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await CreateAsync(db, gateways, checkout, request, policy, cancellationToken);
+        if (!result.IsSuccess ||
+            !string.Equals(result.Value!.Provider, "BankTransfer", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(result.Value.Status, PaymentStatus.Pending.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            return result;
+        }
+
+        var payment = await db.Payments.SingleAsync(x => x.Id == result.Value.Id, cancellationToken);
+        var pendingOrder = await CheckoutCompletion.CreatePendingBankTransferOrderAsync(
+            db, checkout, payment, auditContext, cancellationToken);
+        return pendingOrder.IsSuccess
+            ? AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment))
+            : AppResult<PaymentResponse>.Failure(pendingOrder.Error!.Type, pendingOrder.Error.Message, pendingOrder.Error.Code);
+    }
+
     public static async Task<AppResult<PaymentResponse>> CreateAsync(
         IApplicationDbContext db,
         IEnumerable<IPaymentGateway> gateways,
@@ -878,7 +904,7 @@ internal static class PaymentStatusApplier
             return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
         }
 
-        if (payment.CheckoutSession is not null && payment.Order is null)
+        if (payment.CheckoutSession is not null)
         {
             if (payment.Status != PaymentStatus.Pending)
                 return AppResult<PaymentResponse>.Failure(AppErrorType.Conflict, "Transición de estado de pago inválida.");
@@ -906,6 +932,12 @@ internal static class PaymentStatusApplier
                 payment.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
                 payment.CheckoutSession.Status = CheckoutStatus.PaymentFailed;
                 payment.CheckoutSession.CompletedAtUtc = DateTime.UtcNow;
+                if (payment.Order is not null)
+                {
+                    payment.Order.Status = OrderStatus.Canceled;
+                    payment.Order.CancellationReason = payment.FailureReason ?? $"Pago resuelto como {newStatus}.";
+                    payment.Order.UpdatedAt = DateTime.UtcNow;
+                }
                 AuditTrail.Add(db, auditContext,
                     isProviderNotification ? "CheckoutPaymentResolvedByProvider" : "CheckoutPaymentResolvedManually",
                     "Payment", payment.Id,

@@ -1195,12 +1195,12 @@ La API no accede directamente a la persistencia. La logica se concentra en casos
 
 1. El usuario agrega productos al carrito con `POST /api/cart/items`.
 2. Ejecuta checkout con `POST /api/cart/checkout` enviando direccion de envio.
-3. El backend valida productos, stock y orden pendiente.
-4. Se crea la orden, sus items, se descuentan stocks y se limpia el carrito en una unica operacion atomica.
-5. El usuario crea el pago con `POST /api/orders/{orderId}/payments`.
-6. Si usa Mercado Pago, recibe una URL de checkout.
-7. Mercado Pago notifica al webhook.
-8. El backend valida autenticidad, consulta el pago al proveedor y actualiza la orden.
+3. El backend valida productos y stock, guarda una sesion de checkout con su snapshot y limpia el carrito sin descontar existencias.
+4. Con transferencia bancaria crea de inmediato una orden `Pending`, visible para el cliente y administracion, pero sin reservar stock.
+5. Con Mercado Pago crea solamente el checkout y el pago pendiente; todavia no existe una orden.
+6. El usuario puede iniciar otra compra mientras el primer pago sigue pendiente.
+7. Al acreditarse el pago se vuelve a validar el stock, se descuenta y la orden queda `Paid`: se confirma la orden pendiente de transferencia o se crea una nueva para Mercado Pago.
+8. Si despues de cobrar ya no hay stock, el caso queda marcado para coordinar un cambio o la devolucion.
 
 ## Mercado Pago
 
@@ -1209,14 +1209,14 @@ Mercado Pago esta deshabilitado por defecto mediante `MercadoPago:Enabled=false`
 La integracion cubre:
 
 - Creacion de preferencias de Checkout Pro.
-- Asociacion local entre pago y orden mediante `OrderId` y `ExternalReference`.
+- Asociacion local del pago con la sesion de checkout; `OrderId` se asigna recien cuando el proveedor confirma la acreditacion.
 - Recepcion de Webhook e IPN de pagos en `POST /api/payments/mercadopago/webhook`.
 - Validacion HMAC de Webhooks con `x-signature`, `x-request-id` y `MercadoPago:WebhookSecret`; el timestamp debe estar dentro de `MercadoPago:WebhookSignatureMaxAgeSeconds` (300 segundos por defecto) y los request IDs procesados se registran en PostgreSQL durante 24 horas para rechazar replays entre instancias.
 - Invalidacion de la preferencia de Checkout Pro despues del primer pago aprobado para cerrar enlaces abiertos; si Mercado Pago no acepta el cierre, el webhook responde `503` y el intento queda auditado para permitir el reintento sin aplicar el pago dos veces.
 - Compatibilidad con IPN legacy limitada a `topic=payment` e ID numerico. La IPN nunca se toma como prueba de pago: el backend consulta Mercado Pago con su propio access token y valida referencia externa, monto y moneda antes de modificar estados.
 - Idempotencia con `IdempotencyKey`.
-- Actualizacion de orden a `Paid` cuando el pago queda aprobado.
-- Cancelacion y restauracion de stock cuando el pago se rechaza, cancela o expira.
+- Creacion de la orden `Paid` cuando el pago queda aprobado.
+- Cierre del checkout sin crear una orden ni modificar stock cuando el pago se rechaza, cancela o expira.
 - Manejo seguro de notificaciones repetidas.
 
 ### Estado de validacion en staging
@@ -1230,9 +1230,9 @@ El modulo de Mercado Pago se considero finalizado en staging el 1 de octubre de 
 - Las notificaciones repetidas son idempotentes y no duplican cambios de estado, consumo de cupones ni movimientos de stock.
 - Despues del primer pago aprobado se invalida la preferencia. Un segundo intento desde un checkout que habia quedado abierto es rechazado por Mercado Pago.
 - Si el `PUT` de invalidacion falla, la orden permanece pagada, se registra `PaymentPreferenceInvalidationFailed` y se devuelve `503` para que Mercado Pago reintente el cierre sin aplicar nuevamente el pago.
-- Los estados rechazado, cancelado y expirado, incluida la restitucion unica de stock, estan cubiertos por pruebas automatizadas.
+- Los estados aprobado, rechazado, cancelado y expirado, sin movimientos de stock antes de la acreditacion, estan cubiertos por pruebas automatizadas.
 
-Las pruebas manuales de escenarios controlados con las tarjetas publicas `APRO` (aprobado) y `OTHE` (rechazado) no pudieron completarse porque el sandbox de Mercado Pago redirigio a `/fatal/` antes de crear un pago. Esa respuesta no incluyo `payment_id`, no produjo una notificacion y dejo correctamente la orden local en `Pending`. Las tarjetas predeterminadas de la cuenta compradora si permitieron completar pagos, por lo que el incidente se registra como una limitacion externa del sandbox y no como un defecto abierto de GymShop.
+Las pruebas manuales de escenarios controlados con las tarjetas publicas `APRO` (aprobado) y `OTHE` (rechazado) no pudieron completarse porque el sandbox de Mercado Pago redirigio a `/fatal/` antes de crear un pago. Esa respuesta no incluyo `payment_id` ni produjo una notificacion. Las tarjetas predeterminadas de la cuenta compradora si permitieron completar pagos, por lo que el incidente se registra como una limitacion externa del sandbox y no como un defecto abierto de GymShop.
 
 Este cierre corresponde a staging. Antes de habilitar cobros reales debe ejecutarse una prueba controlada de bajo importe con credenciales productivas, comprobar el Webhook automatico, verificar la invalidacion del checkout y realizar el reembolso desde Mercado Pago.
 
@@ -1242,9 +1242,11 @@ GymShop distingue una cancelacion previa a completar la venta de un reembolso co
 
 | Estado inicial | Evento | Payment final | Order final | Stock |
 |---|---|---|---|---|
-| `Pending` | Cancelacion del pedido | pagos pendientes `Canceled` | `Canceled` | se restaura una vez |
-| `Pending` | pago `Rejected`, `Canceled` o `Expired` | estado informado | `Canceled` | se restaura una vez |
-| `Pending` | pago `Approved` | `Approved` | `Paid` | no cambia |
+| Transferencia `Pending` | Cancelacion del pedido | pagos pendientes `Canceled` | `Canceled` | no cambia; no estaba reservado |
+| Transferencia `Pending` | pago `Rejected`, `Canceled` o `Expired` | estado informado | `Canceled` | no cambia; no estaba reservado |
+| Transferencia `Pending` | pago `Approved` | `Approved` | `Paid` | se descuenta al acreditar |
+| Mercado Pago sin orden | pago `Rejected`, `Canceled` o `Expired` | estado informado | no se crea | no cambia |
+| Mercado Pago sin orden | pago `Approved` | `Approved` | se crea `Paid` | se descuenta al acreditar |
 | `Paid` | despacho | `Approved` | `Shipped` | no cambia |
 | `Paid` | refund total confirmado | `Refunded` | `Refunded` | se restaura una vez |
 | `Shipped` | refund total confirmado | `Refunded` | `Refunded` | no se restaura automaticamente |
@@ -1265,11 +1267,11 @@ La sesión de checkout guarda la clave y una huella SHA-256 de los datos normali
 
 La consulta idempotente ocurre antes de validar el carrito. Por eso dos requests con la misma clave convergen en una sola sesión aunque el primero ya haya separado los artículos del carrito. Una misma clave con una huella distinta responde `409 Conflict` con el código `checkout_idempotency_conflict`.
 
-Al crear la sesión se copian productos, cantidades, precios, descuento y entrega, y luego se limpia el carrito activo sin modificar stock. El usuario puede iniciar otra compra mientras se verifica una transferencia. Al acreditar el pago se vuelve a validar la disponibilidad; si ya no alcanza, el checkout pasa a `StockUnavailable` y se coordina un cambio o la devolución.
+Al crear la sesión se copian productos, cantidades, precios, descuento y entrega, y luego se limpia el carrito activo sin modificar stock. El usuario puede iniciar otra compra mientras se verifica un pago. La transferencia crea una orden `Pending` para que el intento quede registrado y pueda confirmarse desde administracion, mientras que Mercado Pago no crea la orden hasta recibir la acreditacion. En ambos casos el stock se valida y descuenta recien al aprobar el pago; si ya no alcanza, el checkout pasa a `StockUnavailable` y se coordina un cambio o la devolución.
 
 ## Concurrencia al crear pagos
 
-La creacion de pagos reserva primero un registro local con estado `Creating`. Esa reserva se guarda antes de llamar al gateway y el indice parcial PostgreSQL `UX_Payments_OrderId_Active` permite solamente un pago `Creating` o `Pending` por orden. Los intentos `CreationFailed`, `Rejected`, `Canceled`, `Expired` y `Refunded` permanecen como historial y no bloquean un nuevo intento.
+La creacion de pagos reserva primero un registro local con estado `Creating`. Esa reserva se guarda antes de llamar al gateway. Los indices parciales PostgreSQL `UX_Payments_CheckoutSessionId_Active` y `UX_Payments_OrderId_Active` permiten solamente un pago `Creating` o `Pending` por checkout u orden. Los intentos `CreationFailed`, `Rejected`, `Canceled`, `Expired` y `Refunded` permanecen como historial y no bloquean un nuevo intento.
 
 `IdempotencyKey` puede ser enviada por el cliente. Si se omite, el servidor genera una clave con prefijo `server-`; `PaymentResponse` siempre expone la clave efectiva. Repetir una clave reutiliza el mismo intento. Para reintentar un `CreationFailed` se debe usar una clave nueva.
 
@@ -1913,7 +1915,7 @@ El segundo comando usa el servicio PostgreSQL de CI, ejecuta la suite completa, 
 
 Los datos mostrados al cliente se configuran en el backend, nunca en componentes React. Definir `BankTransfer:BankName`, `BankTransfer:AccountHolder`, `BankTransfer:Cbu`, `BankTransfer:Alias` y `BankTransfer:Cuit` mediante variables de entorno (`BankTransfer__Alias`, etc.), User Secrets o el gestor de secretos del entorno. Los valores de `appsettings.json` quedan vacíos deliberadamente.
 
-La transferencia crea un pago pendiente. Un Admin o SuperAdmin debe comprobar la acreditación bancaria e ingresar una referencia o motivo antes de confirmarla. Cargar un comprobante o iniciar una transferencia no aprueba el pedido. `Mock` solo se registra en Development. Mercado Pago permanece deshabilitado hasta configurar credenciales de prueba y su webhook verificado.
+La transferencia crea un pago y una orden `Pending` sin reservar stock. Un Admin o SuperAdmin debe comprobar la acreditación bancaria e ingresar una referencia o motivo antes de confirmarla; en ese momento se vuelve a validar y descontar el stock. Cargar un comprobante o iniciar una transferencia no aprueba el pedido. `Mock` solo se registra en Development. Mercado Pago no crea una orden pendiente: la crea directamente como `Paid` después de que su webhook verificado confirma el pago.
 
 - No commitear tokens, passwords ni secretos.
 - Usar User Secrets en desarrollo.

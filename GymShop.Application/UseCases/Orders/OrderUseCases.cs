@@ -294,6 +294,7 @@ public class CancelOrderUseCase : ICancelOrderUseCase
             OrderCompensation.CancelFreeOrderAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
         else
             OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason, _auditContext?.ActorUserId);
+        await OrderCompensation.MarkCheckoutFailedAsync(_db, order.Id, cancellationToken);
         AuditTrail.Add(_db, _auditContext, "OrderCanceled", "Order", order.Id,
             new { status = previousStatus.ToString() }, new { status = order.Status.ToString() }, reason);
         await _db.SaveChangesAsync(cancellationToken);
@@ -336,7 +337,9 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 
         foreach (var order in orders)
         {
-            OrderCompensation.CancelPendingAndRestoreStock(_db, order, "Pedido pendiente expirado.");
+            const string reason = "Pedido pendiente expirado.";
+            OrderCompensation.CancelPendingAndRestoreStock(_db, order, reason);
+            await OrderCompensation.MarkCheckoutFailedAsync(_db, order.Id, cancellationToken);
             AuditTrail.Add(_db, _auditContext, "OrderExpiredAdministratively", "Order", order.Id,
                 new { status = OrderStatus.Pending.ToString() }, new { status = order.Status.ToString() },
                 $"OlderThanMinutes={request.OlderThanMinutes}");
@@ -349,6 +352,16 @@ public class ExpirePendingOrdersUseCase : IExpirePendingOrdersUseCase
 
 internal static class OrderCompensation
 {
+    public static async Task MarkCheckoutFailedAsync(
+        IApplicationDbContext db, int orderId, CancellationToken cancellationToken)
+    {
+        var checkout = await db.CheckoutSessions.SingleOrDefaultAsync(x => x.OrderId == orderId, cancellationToken);
+        if (checkout is null || checkout.Status != CheckoutStatus.AwaitingPayment) return;
+
+        checkout.Status = CheckoutStatus.PaymentFailed;
+        checkout.CompletedAtUtc = DateTime.UtcNow;
+    }
+
     public static bool CancelFreeOrderAndRestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
     {
         if (order.Total != 0 || order.Status is not (OrderStatus.Paid or OrderStatus.Preparing) ||
@@ -393,6 +406,8 @@ internal static class OrderCompensation
 
     private static void RestoreStock(IApplicationDbContext db, Order order, string reason, int? actorUserId)
     {
+        if (!order.StockDeducted) return;
+
         foreach (var item in order.Items)
         {
             var previousStock = item.ProductVariant?.Stock ?? item.Product.Stock;
@@ -402,6 +417,7 @@ internal static class OrderCompensation
             StockMovementRecorder.Add(db, item.Product, StockMovementType.CancellationReturn, item.Quantity,
                 previousStock, reason, actorUserId, order, item.ProductVariant);
         }
+        order.StockDeducted = false;
     }
 
     public static bool ApplyConfirmedRefund(IApplicationDbContext db, Order order, string reason, int? actorUserId = null)
@@ -604,8 +620,7 @@ internal static class OrderMapper
                 .OrderByDescending(x => x.Id)
                 .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt,
                     x.FailureReason,
-                    order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved &&
-                    string.Equals(x.Provider, "MercadoPago", StringComparison.OrdinalIgnoreCase)))
+                    order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved))
                 .ToList(),
             string.IsNullOrWhiteSpace(order.ShippingPostalCode) ? null : new OrderShippingAddressResponse(
                 order.ShippingPostalCode,

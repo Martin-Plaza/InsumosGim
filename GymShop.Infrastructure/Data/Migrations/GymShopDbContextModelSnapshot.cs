@@ -973,6 +973,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<bool>("StockDeducted")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("CouponCode")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");

@@ -15,6 +15,7 @@ public class Order
     public decimal DiscountAmount { get; set; }
     public DeliveryMethod DeliveryMethod { get; set; } = DeliveryMethod.HomeDelivery;
     public decimal ShippingCost { get; set; }
+    public bool StockDeducted { get; set; } = true;
     public OrderStatus Status { get; set; } = OrderStatus.Paid;
     public string ShippingAddress { get; set; } = string.Empty;
     public string? ShippingPostalCode { get; set; }

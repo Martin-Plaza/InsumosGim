@@ -476,9 +476,9 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
 
         if (checkout.Total > 0 && _gateways.Any())
         {
-            var payment = await CheckoutPaymentCreator.CreateAsync(_db, _gateways, checkout,
+            var payment = await CheckoutPaymentCreator.CreateAndRegisterAsync(_db, _gateways, checkout,
                 new GymShop.Application.DTOs.Payments.CreatePaymentRequest(request.PaymentProvider ?? "BankTransfer", request.PaymentIdempotencyKey),
-                PaymentCreationPolicy.Default, cancellationToken);
+                PaymentCreationPolicy.Default, _auditContext, cancellationToken);
             if (!payment.IsSuccess && payment.Error?.Code != "payment_creation_failed")
                 return AppResult<CheckoutResponse>.Failure(payment.Error!.Type, payment.Error.Message, payment.Error.Code);
         }

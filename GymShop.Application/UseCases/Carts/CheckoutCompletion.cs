@@ -83,6 +83,43 @@ internal static class CheckoutSessionMapper
 
 internal static class CheckoutCompletion
 {
+    public static async Task<AppResult<Order>> CreatePendingBankTransferOrderAsync(
+        IApplicationDbContext db,
+        CheckoutSession checkout,
+        Payment payment,
+        IAuditContext? auditContext,
+        CancellationToken cancellationToken)
+    {
+        if (checkout.OrderId.HasValue)
+        {
+            var existing = checkout.Order ?? await db.Orders
+                .Include(x => x.Items)
+                .SingleAsync(x => x.Id == checkout.OrderId.Value, cancellationToken);
+            if (existing.Status != OrderStatus.Pending)
+                return AppResult<Order>.Failure(AppErrorType.Conflict, "El pedido asociado ya no esta pendiente de pago.");
+            if (payment.OrderId != existing.Id)
+            {
+                payment.Order = existing;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            return AppResult<Order>.Success(existing);
+        }
+
+        var now = DateTime.UtcNow;
+        var order = CreateOrderSnapshot(checkout, OrderStatus.Pending, stockDeducted: false, now);
+        CopyItems(checkout, order);
+        db.Orders.Add(order);
+        checkout.Order = order;
+        payment.Order = order;
+        await db.SaveChangesAsync(cancellationToken);
+
+        AuditTrail.Add(db, auditContext, "BankTransferOrderCreated", "Order", order.Id, null,
+            new { status = order.Status.ToString(), checkoutSessionId = checkout.Id, paymentId = payment.Id },
+            "Pedido pendiente creado para una transferencia bancaria sin reservar stock.");
+        await db.SaveChangesAsync(cancellationToken);
+        return AppResult<Order>.Success(order);
+    }
+
     public static async Task<AppResult<Order>> CompleteAsync(
         IApplicationDbContext db,
         CheckoutSession checkout,
@@ -90,10 +127,18 @@ internal static class CheckoutCompletion
         IAuditContext? auditContext,
         CancellationToken cancellationToken)
     {
+        var hadPendingOrder = checkout.OrderId.HasValue;
+        Order? order = null;
         if (checkout.OrderId.HasValue)
         {
-            var existing = await db.Orders.Include(x => x.Items).SingleAsync(x => x.Id == checkout.OrderId.Value, cancellationToken);
-            return AppResult<Order>.Success(existing);
+            order = checkout.Order ?? await db.Orders
+                .Include(x => x.Items)
+                .Include(x => x.CouponRedemption)
+                .SingleAsync(x => x.Id == checkout.OrderId.Value, cancellationToken);
+            if (order.Status == OrderStatus.Paid)
+                return AppResult<Order>.Success(order);
+            if (order.Status != OrderStatus.Pending)
+                return AppResult<Order>.Failure(AppErrorType.Conflict, "El pedido ya no está pendiente de pago.");
         }
 
         if (checkout.CouponId.HasValue)
@@ -131,53 +176,25 @@ internal static class CheckoutCompletion
         }
 
         var now = DateTime.UtcNow;
-        var order = new Order
+        if (order is null)
         {
-            UserId = checkout.UserId,
-            CheckoutIdempotencyKey = checkout.IdempotencyKey,
-            CheckoutRequestFingerprint = checkout.RequestFingerprint,
-            CreatedAt = now,
-            UpdatedAt = now,
-            Status = OrderStatus.Paid,
-            Subtotal = checkout.Subtotal,
-            CouponCode = checkout.CouponCode,
-            DiscountAmount = checkout.DiscountAmount,
-            DeliveryMethod = checkout.DeliveryMethod,
-            ShippingCost = checkout.ShippingCost,
-            Total = checkout.Total,
-            ShippingAddress = checkout.ShippingAddress,
-            ShippingPostalCode = checkout.ShippingPostalCode,
-            ShippingProvince = checkout.ShippingProvince,
-            ShippingCity = checkout.ShippingCity,
-            ShippingStreet = checkout.ShippingStreet,
-            ShippingStreetNumber = checkout.ShippingStreetNumber,
-            ShippingFloor = checkout.ShippingFloor,
-            ShippingApartment = checkout.ShippingApartment,
-            ShippingNotes = checkout.ShippingNotes,
-            ShippingQuoteId = checkout.ShippingQuoteId,
-            ShippingProviderCode = checkout.ShippingProviderCode,
-            ShippingServiceCode = checkout.ShippingServiceCode,
-            ShippingServiceName = checkout.ShippingServiceName,
-            PickupAddress = checkout.PickupAddress,
-            PickupHours = checkout.PickupHours,
-            PickupInstructions = checkout.PickupInstructions
-        };
+            order = CreateOrderSnapshot(checkout, OrderStatus.Paid, stockDeducted: true, now);
+            CopyItems(checkout, order);
+            db.Orders.Add(order);
+            checkout.Order = order;
+        }
+        else
+        {
+            order.Status = OrderStatus.Paid;
+            order.StockDeducted = true;
+            order.UpdatedAt = now;
+            order.CancellationReason = null;
+        }
 
         foreach (var line in checkout.Items)
         {
             var product = products[line.ProductId];
             var variant = line.ProductVariantId.HasValue ? product.Variants.Single(x => x.Id == line.ProductVariantId.Value) : null;
-            order.Items.Add(new OrderItem
-            {
-                ProductId = line.ProductId,
-                ProductName = line.ProductName,
-                ProductVariantId = line.ProductVariantId,
-                VariantSku = line.VariantSku,
-                VariantAttributesJson = line.VariantAttributesJson,
-                UnitPrice = line.UnitPrice,
-                Quantity = line.Quantity,
-                Subtotal = line.Subtotal
-            });
             var previousStock = variant?.Stock ?? product.Stock;
             if (variant is null) product.Stock -= line.Quantity;
             else variant.Stock -= line.Quantity;
@@ -186,7 +203,7 @@ internal static class CheckoutCompletion
                 "Venta confirmada después de la acreditación del pago.", order: order, variant: variant);
         }
 
-        if (checkout.CouponId.HasValue)
+        if (checkout.CouponId.HasValue && order.CouponRedemption is null)
         {
             order.CouponRedemption = new CouponRedemption
             {
@@ -198,8 +215,6 @@ internal static class CheckoutCompletion
             };
         }
 
-        db.Orders.Add(order);
-        checkout.Order = order;
         checkout.Status = CheckoutStatus.Completed;
         checkout.CompletedAtUtc = now;
         if (payment is not null)
@@ -231,10 +246,12 @@ internal static class CheckoutCompletion
 
         await db.SaveChangesAsync(cancellationToken);
         AuditTrail.Add(db, auditContext,
-            payment is null ? "FreeOrderConfirmed" : "OrderCreatedAfterPayment",
+            payment is null ? "FreeOrderConfirmed" : hadPendingOrder ? "BankTransferOrderPaid" : "OrderCreatedAfterPayment",
             "Order", order.Id, null,
             new { status = order.Status.ToString(), checkoutSessionId = checkout.Id, paymentId = payment?.Id },
-            payment is null ? "Pedido confirmado sin pago externo." : "Pedido creado después de acreditar el pago.");
+            payment is null ? "Pedido confirmado sin pago externo." : hadPendingOrder
+                ? "Pedido pendiente confirmado después de acreditar la transferencia."
+                : "Pedido creado después de acreditar el pago.");
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<Order>.Success(order);
     }
@@ -244,6 +261,15 @@ internal static class CheckoutCompletion
     {
         checkout.Status = CheckoutStatus.StockUnavailable;
         checkout.CompletedAtUtc = DateTime.UtcNow;
+        var pendingOrder = checkout.Order;
+        if (pendingOrder is null && checkout.OrderId.HasValue)
+            pendingOrder = await db.Orders.SingleAsync(x => x.Id == checkout.OrderId.Value, cancellationToken);
+        if (pendingOrder is not null)
+        {
+            pendingOrder.Status = OrderStatus.Canceled;
+            pendingOrder.CancellationReason = $"{detail} Requiere cambio o devolución.";
+            pendingOrder.UpdatedAt = DateTime.UtcNow;
+        }
         if (payment is not null)
         {
             payment.Status = PaymentStatus.Approved;
@@ -253,5 +279,57 @@ internal static class CheckoutCompletion
         }
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<Order>.Failure(AppErrorType.Conflict, detail, "paid_checkout_stock_unavailable");
+    }
+
+    private static Order CreateOrderSnapshot(
+        CheckoutSession checkout, OrderStatus status, bool stockDeducted, DateTime now) => new()
+    {
+        UserId = checkout.UserId,
+        CheckoutIdempotencyKey = checkout.IdempotencyKey,
+        CheckoutRequestFingerprint = checkout.RequestFingerprint,
+        CreatedAt = now,
+        UpdatedAt = now,
+        Status = status,
+        StockDeducted = stockDeducted,
+        Subtotal = checkout.Subtotal,
+        CouponCode = checkout.CouponCode,
+        DiscountAmount = checkout.DiscountAmount,
+        DeliveryMethod = checkout.DeliveryMethod,
+        ShippingCost = checkout.ShippingCost,
+        Total = checkout.Total,
+        ShippingAddress = checkout.ShippingAddress,
+        ShippingPostalCode = checkout.ShippingPostalCode,
+        ShippingProvince = checkout.ShippingProvince,
+        ShippingCity = checkout.ShippingCity,
+        ShippingStreet = checkout.ShippingStreet,
+        ShippingStreetNumber = checkout.ShippingStreetNumber,
+        ShippingFloor = checkout.ShippingFloor,
+        ShippingApartment = checkout.ShippingApartment,
+        ShippingNotes = checkout.ShippingNotes,
+        ShippingQuoteId = checkout.ShippingQuoteId,
+        ShippingProviderCode = checkout.ShippingProviderCode,
+        ShippingServiceCode = checkout.ShippingServiceCode,
+        ShippingServiceName = checkout.ShippingServiceName,
+        PickupAddress = checkout.PickupAddress,
+        PickupHours = checkout.PickupHours,
+        PickupInstructions = checkout.PickupInstructions
+    };
+
+    private static void CopyItems(CheckoutSession checkout, Order order)
+    {
+        foreach (var line in checkout.Items)
+        {
+            order.Items.Add(new OrderItem
+            {
+                ProductId = line.ProductId,
+                ProductName = line.ProductName,
+                ProductVariantId = line.ProductVariantId,
+                VariantSku = line.VariantSku,
+                VariantAttributesJson = line.VariantAttributesJson,
+                UnitPrice = line.UnitPrice,
+                Quantity = line.Quantity,
+                Subtotal = line.Subtotal
+            });
+        }
     }
 }

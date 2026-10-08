@@ -124,7 +124,7 @@ describe('panel administrativo', () => {
     expect(window.confirm).toHaveBeenCalled()
   })
 
-  it('muestra una incidencia destacada cuando MP aprobó después de cancelar', async () => {
+  it('muestra una incidencia destacada cuando un pago fue acreditado en un pedido cancelado', async () => {
     signIn('Admin'); window.history.replaceState(null, '', '/admin/pedidos')
     const incidentOrder = { ...orderDetail, status: 'Canceled', cancellationReason: 'Fraude', payments: [{ id: 44, provider: 'MercadoPago', amount: 15000, currency: 'ARS', status: 'Approved', createdAt: '2026-09-20T12:00:00Z', paidAt: '2026-09-20T15:00:00Z', failureReason: 'Requiere revisión y devolución.', requiresReview: true }] }
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
@@ -136,8 +136,8 @@ describe('panel administrativo', () => {
     render(<App />)
     await userEvent.click(await screen.findByText('#10'))
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Pago aprobado después de cancelar')
-    expect(alert).toHaveTextContent('Requiere revisión y devolución')
+    expect(alert).toHaveTextContent('Pago acreditado en un pedido cancelado')
+    expect(alert).toHaveTextContent('Requiere revisión para coordinar un cambio o la devolución')
   })
 
   it('ofrece cancelar un pedido gratuito pagado sin intentos de pago', async () => {

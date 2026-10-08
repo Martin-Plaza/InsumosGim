@@ -1,5 +1,18 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_STORE_NAME?: string
+  readonly VITE_STORE_DESCRIPTION?: string
+  readonly VITE_SITE_URL?: string
+  readonly VITE_SEO_IMAGE?: string
+  readonly VITE_TWITTER_HANDLE?: string
+  readonly VITE_SEO_EXTRA_PATHS?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 interface Window {
   google?: {
     accounts: { id: {

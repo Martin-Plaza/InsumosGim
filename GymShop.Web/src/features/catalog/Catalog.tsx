@@ -12,7 +12,7 @@ const numberOrNull = (value: string) => value === '' ? null : Number(value)
 export function Catalog() {
   const cart = useCart(); const [searchParams] = useSearchParams()
   const [products, setProducts] = useState<Product[]>([]); const [categories, setCategories] = useState<Category[]>([])
-  const [query, setQuery] = useState(''); const [category, setCategory] = useState(() => searchParams.get('categoria') ?? '')
+  const [query, setQuery] = useState(() => searchParams.get('buscar') ?? ''); const [category, setCategory] = useState(() => searchParams.get('categoria') ?? '')
   const [availability, setAvailability] = useState<AvailabilityFilter>('all'); const [minPrice, setMinPrice] = useState(''); const [maxPrice, setMaxPrice] = useState('')
   const [sort, setSort] = useState<CatalogSort>('relevance'); const [filtersOpen, setFiltersOpen] = useState(false); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState('')
   const filterTriggerRef = useRef<HTMLButtonElement>(null); const filterCloseRef = useRef<HTMLButtonElement>(null)

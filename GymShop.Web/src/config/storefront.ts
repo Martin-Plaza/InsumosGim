@@ -1,5 +1,7 @@
+const storeName = import.meta.env.VITE_STORE_NAME?.trim() || 'GymShop'
+
 export const storefront = {
-  identity: { name: 'GymShop', logoUrl: null as string | null, monogram: 'G' },
+  identity: { name: storeName, logoUrl: null as string | null, monogram: storeName.charAt(0).toUpperCase() || 'G' },
   theme: {
     colors: { accent: '#d7ff45', background: '#101210', panel: '#1a1d1a', text: '#eef0ed', muted: '#9da39b' },
     fonts: { body: 'Inter, sans-serif', display: "'Barlow Condensed', sans-serif" },

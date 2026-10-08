@@ -32,6 +32,7 @@ import { Home } from './features/home/Home'
 import { OrdersView } from './features/orders/OrdersView'
 import { AppErrorBoundary, NotFoundPage } from './features/errors/ErrorPages'
 import { ContactPage, PrivacyPage, ShippingReturnsPage, TermsPage, WithdrawalPage } from './features/legal/LegalPages'
+import { RouteSeo } from './features/seo/RouteSeo'
 
 export default function App() {
   return <AppErrorBoundary><BrowserRouter><CartProvider><AppShell /><CartDrawer /></CartProvider></BrowserRouter></AppErrorBoundary>
@@ -61,6 +62,7 @@ function AppShell() {
   const adminArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
 
   return <div className={adminArea ? 'app admin-app' : 'app'}>
+    <RouteSeo />
     <RouteLoadingIndicator />
     {!adminArea && <StorefrontHeader user={user} onLogout={logout} onCart={cart.openDrawer} cartCount={cart.count} />}
     {!adminArea && <main>{notice && <div className="notice route-notice" role="status">{notice.message}</div>}<StorefrontRoutes user={user} onAuth={(auth, destination) => { session.save(auth.user); setNotice({ message: `Hola, ${auth.user.name}.`, destination, shown: false }) }} /></main>}

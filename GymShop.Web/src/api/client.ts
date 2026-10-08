@@ -1,7 +1,11 @@
 import { session } from '../auth/session'
 import type { ApiErrorShape, AuthResponse } from './types'
 
-export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5093').replace(/\/$/, '')
+// Production requests stay on the storefront origin and are proxied to the API
+// by Vercel. This keeps session cookies first-party on mobile browsers.
+export const API_URL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL || 'http://localhost:5093').replace(/\/$/, '')
+  : ''
 
 export class ApiError extends Error implements ApiErrorShape {
   status: number

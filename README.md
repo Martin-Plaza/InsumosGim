@@ -1106,6 +1106,12 @@ Variables frontend:
 ```text
 VITE_API_URL=http://localhost:5093
 VITE_GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID_PUBLICO>
+VITE_STORE_NAME=<NOMBRE_DE_LA_TIENDA>
+VITE_STORE_DESCRIPTION=<DESCRIPCION_CORTA>
+VITE_SITE_URL=https://www.ejemplo.com
+VITE_SEO_IMAGE=/imagen-social-1200x630.png
+VITE_TWITTER_HANDLE=<USUARIO_X_OPCIONAL>
+VITE_SEO_EXTRA_PATHS=/catalogo/1,/catalogo/2
 VITE_LEGAL_BUSINESS_NAME=<RAZON_SOCIAL>
 VITE_LEGAL_CUIT=<CUIT>
 VITE_LEGAL_ADDRESS=<DOMICILIO_LEGAL>
@@ -1115,6 +1121,14 @@ VITE_LEGAL_EMAIL=<EMAIL_DE_CONTACTO>
 No se deben colocar JWT, credenciales de usuarios ni secretos de Mercado Pago en variables `VITE_*`: Vite las incorpora al bundle publico.
 
 Los datos `VITE_LEGAL_*` son públicos y alimentan las páginas de términos, privacidad, envíos, contacto y arrepentimiento. En una demo pueden omitirse y la interfaz mostrará una advertencia; antes de operar una tienda real deben completarse con los datos verificables del vendedor. El botón de arrepentimiento queda disponible sin autenticación en el pie de toda la tienda.
+
+### SEO y dominio público
+
+El frontend administra título, descripción, canonical, Open Graph, Twitter Cards y directivas de indexación por ruta. Las fichas de producto agregan datos estructurados `Product` con precio y disponibilidad; el sitio agrega `OnlineStore` y `WebSite`. Las rutas privadas (`/admin`, `/checkout`, `/ordenes`, `/carrito` y `/login`) siempre usan `noindex`.
+
+El build genera `robots.txt` y `sitemap.xml`. Mientras `VITE_SITE_URL` no sea una URL HTTPS real, `robots.txt` bloquea todo el sitio y el HTML conserva `noindex` para evitar indexar una demo. Al configurar el dominio, el build habilita indexación y publica el sitemap. `VITE_SEO_EXTRA_PATHS` permite sumar rutas de productos o campañas separadas por coma hasta que exista una generación automática desde el catálogo real.
+
+La imagen social debería ser absoluta o estar publicada en el mismo dominio, idealmente en formato 1200×630. Para previews sociales específicos por producto y SEO completo en crawlers que no ejecutan JavaScript, el despliegue definitivo debería sumar prerenderizado o SSR; la configuración y los datos estructurados ya quedan centralizados para esa migración.
 
 ### Registro, verificacion y Google
 

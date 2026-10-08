@@ -211,17 +211,23 @@ internal static class CheckoutCompletion
             payment.FailureReason = null;
         }
 
-        var cartItems = await db.CartItems.Where(x => x.CartId == checkout.CartId).ToListAsync(cancellationToken);
-        foreach (var purchased in checkout.Items)
+        // Checkouts created before the cart-detachment rollout still need the legacy cleanup.
+        // New checkouts clear the purchased snapshot up front, so touching the cart here could
+        // remove products the customer added for a later purchase while payment was pending.
+        if (checkout.CartClearedAtUtc is null)
         {
-            var current = cartItems.SingleOrDefault(x => x.ProductId == purchased.ProductId && x.ProductVariantId == purchased.ProductVariantId);
-            if (current is null) continue;
-            if (current.Quantity <= purchased.Quantity) db.CartItems.Remove(current);
-            else current.Quantity -= purchased.Quantity;
+            var cartItems = await db.CartItems.Where(x => x.CartId == checkout.CartId).ToListAsync(cancellationToken);
+            foreach (var purchased in checkout.Items)
+            {
+                var current = cartItems.SingleOrDefault(x => x.ProductId == purchased.ProductId && x.ProductVariantId == purchased.ProductVariantId);
+                if (current is null) continue;
+                if (current.Quantity <= purchased.Quantity) db.CartItems.Remove(current);
+                else current.Quantity -= purchased.Quantity;
+            }
+            var cart = await db.Carts.SingleAsync(x => x.Id == checkout.CartId, cancellationToken);
+            if (cart.CouponId == checkout.CouponId) cart.CouponId = null;
+            cart.UpdatedAt = now;
         }
-        var cart = await db.Carts.SingleAsync(x => x.Id == checkout.CartId, cancellationToken);
-        if (cart.CouponId == checkout.CouponId) cart.CouponId = null;
-        cart.UpdatedAt = now;
 
         await db.SaveChangesAsync(cancellationToken);
         AuditTrail.Add(db, auditContext,
@@ -243,7 +249,7 @@ internal static class CheckoutCompletion
             payment.Status = PaymentStatus.Approved;
             payment.PaidAt ??= DateTime.UtcNow;
             payment.UpdatedAt = DateTime.UtcNow;
-            payment.FailureReason = $"{detail} El pago debe devolverse automáticamente.";
+            payment.FailureReason = $"{detail} Te contactaremos para ofrecerte un cambio o gestionar la devolución.";
         }
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<Order>.Failure(AppErrorType.Conflict, detail, "paid_checkout_stock_unavailable");

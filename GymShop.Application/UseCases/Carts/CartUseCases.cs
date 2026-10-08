@@ -457,6 +457,11 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             });
         }
 
+        var checkoutCreatedAt = DateTime.UtcNow;
+        _db.CartItems.RemoveRange(cart.Items);
+        cart.CouponId = null;
+        cart.UpdatedAt = checkoutCreatedAt;
+        checkout.CartClearedAtUtc = checkoutCreatedAt;
         _db.CheckoutSessions.Add(checkout);
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -474,7 +479,7 @@ public class CheckoutCartUseCase : ICheckoutCartUseCase
             var payment = await CheckoutPaymentCreator.CreateAsync(_db, _gateways, checkout,
                 new GymShop.Application.DTOs.Payments.CreatePaymentRequest(request.PaymentProvider ?? "BankTransfer", request.PaymentIdempotencyKey),
                 PaymentCreationPolicy.Default, cancellationToken);
-            if (!payment.IsSuccess)
+            if (!payment.IsSuccess && payment.Error?.Code != "payment_creation_failed")
                 return AppResult<CheckoutResponse>.Failure(payment.Error!.Type, payment.Error.Message, payment.Error.Code);
         }
 

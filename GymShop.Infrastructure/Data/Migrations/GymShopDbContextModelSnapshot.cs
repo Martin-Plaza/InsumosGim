@@ -544,6 +544,9 @@ namespace GymShop.Infrastructure.Data.PostgresMigrations
                     b.Property<int>("CartId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CartClearedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("CompletedAtUtc")
                         .HasColumnType("timestamp with time zone");
 

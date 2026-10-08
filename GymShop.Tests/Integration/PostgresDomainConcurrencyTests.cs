@@ -53,7 +53,7 @@ public sealed class PostgresDomainConcurrencyTests
         Assert.Equal(1, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
         Assert.Empty(await verification.Orders.ToListAsync());
         Assert.Equal(2, await verification.CheckoutSessions.CountAsync());
-        Assert.Equal(2, await verification.CartItems.CountAsync());
+        Assert.Empty(await verification.CartItems.ToListAsync());
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public sealed class PostgresDomainConcurrencyTests
         Assert.Single(await verification.CheckoutSessions.Where(x => x.UserId == userId).ToListAsync());
         Assert.Empty(await verification.Orders.Where(x => x.UserId == userId).ToListAsync());
         Assert.Equal(2, (await verification.Products.SingleAsync(x => x.Id == productId)).Stock);
-        Assert.Single(await verification.CartItems.Where(x => x.Cart.UserId == userId).ToListAsync());
+        Assert.Empty(await verification.CartItems.Where(x => x.Cart.UserId == userId).ToListAsync());
     }
 
     [Fact]

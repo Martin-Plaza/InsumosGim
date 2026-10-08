@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
-import type { BillingDocument, Order, Payment } from '../../api/types'
+import type { BillingDocument, CheckoutSession, Order, Payment } from '../../api/types'
 
 const product = { id: 4, name: 'Kettlebell 16kg', price: 42000, stock: 12, imageUrl: '/kettlebell.webp' }
 const cart = { id: 1, userId: 7, subtotal: 84000, discount: 0, couponCode: null, total: 84000, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000, stock: product.stock, imageUrl: product.imageUrl }] }
@@ -10,6 +10,13 @@ const emptyCart = { ...cart, total: 0, items: [] }
 const order: Order = { id: 81, userId: 7, userEmail: 'u@gym.com', userName: 'Usuario', createdAt: '2026-08-11T10:00:00Z', updatedAt: null, total: 84000, status: 'Pending', shippingAddress: 'Av. Siempre Viva 742, Córdoba', cancellationReason: null, items: [{ productId: 4, productName: product.name, unitPrice: product.price, quantity: 2, subtotal: 84000 }], payments: [] }
 const quote = { id: '4ad310db-2407-4d8e-b114-52a59a620b67', providerCode: 'OwnFleet', serviceCode: 'standard', serviceName: 'Envío estándar', price: 6500, estimatedDeliveryFrom: '2026-08-12T10:00:00Z', estimatedDeliveryTo: '2026-08-14T10:00:00Z', expiresAtUtc: '2099-08-11T10:15:00Z' }
 const payment = (status: Payment['status']): Payment => ({ id: 91, orderId: 81, provider: 'BankTransfer', externalReference: 'order-81', providerPreferenceId: null, providerPaymentId: null, idempotencyKey: 'key', amount: 84000, currency: 'ARS', status, checkoutUrl: null, failureReason: status === 'Rejected' ? 'Transferencia rechazada.' : null, createdAt: '2026-08-11T10:00:01Z', updatedAt: null, paidAt: null })
+const pendingCheckout: CheckoutSession = {
+  id: 501, orderId: null, userId: 7, createdAt: '2026-08-11T10:00:00Z', expiresAt: '2026-08-12T10:00:00Z',
+  subtotal: 84000, couponCode: null, discountAmount: 0, deliveryMethod: 'HomeDelivery', shippingCost: 6500, total: 90500,
+  status: 'AwaitingPayment', shippingAddress: 'Av. Corrientes 5500, CABA', pickupAddress: '', pickupHours: '', pickupInstructions: '',
+  items: order.items,
+  payment: { ...payment('Pending'), orderId: null, checkoutSessionId: 501, externalReference: 'checkout-501-payment-91', amount: 90500 },
+}
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } }))
 
 function authenticate() {
@@ -140,6 +147,32 @@ describe('checkout y pago por orderId', () => {
     expect(JSON.parse(paymentCall!.body || '{}').provider).toBe('BankTransfer')
     expect(JSON.parse(paymentCall!.body || '{}').idempotencyKey).toBe(localStorage.getItem('gymshop.payment-key.81'))
     expect(calls.some(call => call.url.includes('/api/payments/current'))).toBe(false)
+  })
+
+  it('libera el carrito y rota la clave cuando la transferencia queda pendiente', async () => {
+    let checkedOut = false
+    let checkoutBody: Record<string, string> = {}
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); const method = init?.method || 'GET'
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/cart/shipping-quotes') && method === 'POST') return json([quote])
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: true, mercadoPagoUnavailableReason: null })
+      if (url.endsWith('/api/cart/checkout') && method === 'POST') { checkedOut = true; checkoutBody = JSON.parse(String(init?.body)); return json(pendingCheckout) }
+      if (url.endsWith('/api/cart/checkout/501')) return json(pendingCheckout)
+      if (url.endsWith('/api/payments/bank-transfer-details')) return json({ bankName: 'Banco', accountHolder: 'Tienda', cbu: '123', alias: 'tienda', cuit: '' })
+      if (url.endsWith('/api/cart')) return json(checkedOut ? emptyCart : cart)
+      return json([])
+    })
+    render(<App />)
+    expect(await screen.findByText(/La disponibilidad se confirma al acreditar el pago/)).toBeInTheDocument()
+    await fillAddressAndQuote()
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar y pagar' }))
+
+    expect(await screen.findByRole('heading', { name: 'Estamos esperando el pago' })).toBeInTheDocument()
+    expect(screen.getByText(/Podés seguir comprando mientras verificamos tu transferencia/)).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/checkout/pago/501')
+    expect(checkoutBody.paymentIdempotencyKey).toBe(checkoutBody.idempotencyKey)
+    expect(localStorage.getItem('gymshop.checkout-key.7')).toBeNull()
   })
 
   it('confirma una orden gratuita con retiro sin crear un pago y tolera doble click', async () => {

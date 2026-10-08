@@ -36,6 +36,7 @@ public class CheckoutSession
     public string PickupInstructions { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAtUtc { get; set; } = DateTime.UtcNow.AddHours(24);
+    public DateTime? CartClearedAtUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
 
     public User User { get; set; } = null!;

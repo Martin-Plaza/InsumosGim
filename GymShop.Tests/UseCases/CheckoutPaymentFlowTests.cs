@@ -1,4 +1,5 @@
 using GymShop.Application.Common;
+using GymShop.Application.Abstractions;
 using GymShop.Application.DTOs.Carts;
 using GymShop.Application.DTOs.Payments;
 using GymShop.Application.UseCases.Carts;
@@ -14,7 +15,7 @@ namespace GymShop.Tests.UseCases;
 public class CheckoutPaymentFlowTests
 {
     [Fact]
-    public async Task Paid_checkout_creates_order_decrements_stock_and_removes_purchased_cart_quantity()
+    public async Task Paid_checkout_creates_order_decrements_stock_and_preserves_new_cart_items()
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var user = await SeedUserAsync(db);
@@ -30,8 +31,10 @@ public class CheckoutPaymentFlowTests
         Assert.True(checkout.IsSuccess);
         Assert.Equal(5, product.Stock);
         Assert.Empty(db.Orders);
-        Assert.Single(db.CartItems);
+        Assert.Empty(db.CartItems);
         var payment = Assert.Single(db.Payments);
+
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
 
         var approved = await new UpdatePaymentStatusUseCase(db).ExecuteAsync(
             payment.Id,
@@ -39,7 +42,7 @@ public class CheckoutPaymentFlowTests
 
         Assert.True(approved.IsSuccess);
         Assert.Equal(3, product.Stock);
-        Assert.Empty(db.CartItems);
+        Assert.Equal(1, (await db.CartItems.SingleAsync()).Quantity);
         var order = Assert.Single(db.Orders);
         Assert.Equal(OrderStatus.Paid, order.Status);
         Assert.Equal(order.Id, payment.OrderId);
@@ -112,11 +115,43 @@ public class CheckoutPaymentFlowTests
         Assert.Equal(CheckoutStatus.StockUnavailable, db.CheckoutSessions.Single().Status);
     }
 
+    [Fact]
+    public async Task Payment_creation_failure_keeps_checkout_recoverable_after_cart_is_cleared()
+    {
+        await using var db = await TestDbContextFactory.CreateAsync();
+        var user = await SeedUserAsync(db);
+        var product = new Product { Name = "Mancuerna", Description = "", Price = 100, Stock = 2, IsActive = true };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        await new AddCartItemUseCase(db).ExecuteAsync(user.Id, new AddCartItemRequest(product.Id, 1));
+
+        var result = await new CheckoutCartUseCase(db, gateways: [new FailingBankTransferGateway()]).ExecuteAsync(
+            user.Id,
+            new CheckoutCartRequest("HomeDelivery", "Calle 123", 0, 100, 0, "checkout-failed-payment", PaymentProvider: "BankTransfer", PaymentIdempotencyKey: "payment-failed"));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PaymentStatus.CreationFailed.ToString(), result.Value!.Payment!.Status);
+        Assert.Empty(db.CartItems);
+        Assert.Equal(2, product.Stock);
+        Assert.Empty(db.Orders);
+    }
+
     private static async Task<User> SeedUserAsync(GymShop.Infrastructure.Data.GymShopDbContext db)
     {
         var user = new User { Name = "Cliente", Email = $"checkout-{Guid.NewGuid():N}@test.com", PasswordHash = "x", RoleId = 1, IsActive = true };
         db.Users.Add(user);
         await db.SaveChangesAsync();
         return user;
+    }
+
+    private sealed class FailingBankTransferGateway : IPaymentGateway
+    {
+        public bool CanHandle(string provider) => string.Equals(provider, "BankTransfer", StringComparison.OrdinalIgnoreCase);
+
+        public Task<PaymentPreferenceResult> CreatePreferenceAsync(Order order, string? idempotencyKey, string? externalReference = null, CancellationToken cancellationToken = default) =>
+            throw new PaymentGatewayException("No se pudo iniciar la transferencia.");
+
+        public Task<ProviderPaymentResult> GetPaymentAsync(string providerPaymentId, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

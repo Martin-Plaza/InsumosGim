@@ -126,10 +126,12 @@ public sealed class CreateOrderReceiptUseCase(
             IssuerFiscalAddress = billingProfile.FiscalAddress.Trim(),
             IssuerGrossIncomeNumber = billingProfile.GrossIncomeNumber.Trim(),
             IssuerActivityStartDate = billingProfile.ActivityStartDate,
-            RecipientName = $"{order.User.Name} {order.User.LastName}".Trim(),
+            RecipientName = order.User is null
+                ? $"{order.GuestFirstName} {order.GuestLastName}".Trim()
+                : $"{order.User.Name} {order.User.LastName}".Trim(),
             RecipientDocumentType = FiscalIdentityDocumentType.None,
             RecipientTaxCondition = RecipientTaxCondition.ConsumerFinal,
-            RecipientEmail = order.User.Email,
+            RecipientEmail = order.User?.Email ?? order.GuestEmail ?? string.Empty,
             RecipientAddress = order.ShippingAddress,
             Subtotal = order.Subtotal,
             DiscountAmount = order.DiscountAmount,
@@ -390,10 +392,12 @@ public sealed class CreateArcaHomologationInvoiceUseCase(
                 IssuerFiscalAddress = billingProfile.FiscalAddress.Trim(),
                 IssuerGrossIncomeNumber = billingProfile.GrossIncomeNumber.Trim(),
                 IssuerActivityStartDate = billingProfile.ActivityStartDate,
-                RecipientName = $"{order.User.Name} {order.User.LastName}".Trim(),
+                RecipientName = order.User is null
+                    ? $"{order.GuestFirstName} {order.GuestLastName}".Trim()
+                    : $"{order.User.Name} {order.User.LastName}".Trim(),
                 RecipientDocumentType = FiscalIdentityDocumentType.None,
                 RecipientTaxCondition = RecipientTaxCondition.ConsumerFinal,
-                RecipientEmail = order.User.Email,
+                RecipientEmail = order.User?.Email ?? order.GuestEmail ?? string.Empty,
                 RecipientAddress = order.ShippingAddress,
                 Subtotal = order.Subtotal,
                 DiscountAmount = order.DiscountAmount,

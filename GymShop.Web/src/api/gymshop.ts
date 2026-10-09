@@ -1,5 +1,5 @@
 import { json, request, requestBlob } from './client'
-import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, CheckoutSession, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, MfaCompleted, MfaSetup, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
+import type { AdminCategory, AdminUser, AdminUserDetail, AdminUserFilters, AdminUserPage, ArcaConnectionStatus, AuditPage, AuthResponse, BillingDocument, BillingProfile, Cart, Category, CategoryInput, CheckoutSession, Coupon, CouponInput, CouponPage, CreateProductInput, DashboardFilters, DashboardStatistics, DeliveryMethod, GuestCheckoutInput, GuestCheckoutResponse, MfaCompleted, MfaSetup, Order, OrderFilters, OrderHistoryEvent, OrderPage, OrderSummary, PasswordResetCompleted, PasswordResetPending, Payment, Product, ProductAttributeDefinition, ProductImageUpload, RegistrationPending, Role, ShippingAddressInput, ShippingOptions, ShippingQuote, StockAdjustment, StockMovementPage, UpdateProductInput, User } from './types'
 import type { BankTransferDetails, PaymentMethods, PaymentProvider } from './types'
 
 export const api = {
@@ -57,6 +57,9 @@ export const api = {
   shippingQuotes: (destination: ShippingAddressInput) => request<ShippingQuote[]>('/api/cart/shipping-quotes', json('POST', { destination })),
   checkout: (data: { deliveryMethod: DeliveryMethod; shippingAddress: string | null; expectedShippingCost: number; expectedSubtotal: number; expectedDiscount: number; idempotencyKey: string; shippingQuoteId?: string | null; shippingDestination?: ShippingAddressInput | null; paymentProvider?: PaymentProvider; paymentIdempotencyKey?: string }) => request<CheckoutSession>('/api/cart/checkout', json('POST', data)),
   checkoutSession: (id: number) => request<CheckoutSession>(`/api/cart/checkout/${id}`),
+  guestCheckout: (data: GuestCheckoutInput) => request<GuestCheckoutResponse>('/api/guest-checkout', json('POST', data)),
+  guestOrder: (id: number, accessToken: string) => request<Order>(`/api/guest-checkout/orders/${id}?accessToken=${encodeURIComponent(accessToken)}`),
+  guestCheckoutSession: (id: number, accessToken: string) => request<CheckoutSession>(`/api/guest-checkout/sessions/${id}?accessToken=${encodeURIComponent(accessToken)}`),
   myOrders: () => request<OrderSummary[]>('/api/orders/my'),
   myOrderBillingDocuments: (id: number) => request<BillingDocument[]>(`/api/orders/${id}/billing-documents`),
   myBillingDocumentPdf: (orderId: number, documentId: string) => requestBlob(`/api/orders/${orderId}/billing-documents/${documentId}/pdf`),
@@ -113,6 +116,23 @@ export function checkoutKey(userId: number) {
     localStorage.setItem(key, value)
   }
   return value
+}
+
+export function guestCheckoutKey() {
+  const key = 'gymshop.guest-checkout-key'
+  let value = localStorage.getItem(key)
+  if (!value) { value = crypto.randomUUID(); localStorage.setItem(key, value) }
+  return value
+}
+
+export function clearGuestCheckoutKey() { localStorage.removeItem('gymshop.guest-checkout-key') }
+
+export function saveGuestAccess(kind: 'order' | 'checkout', id: number, token: string) {
+  sessionStorage.setItem(`gymshop.guest-access.${kind}.${id}`, token)
+}
+
+export function guestAccess(kind: 'order' | 'checkout', id: number) {
+  return new URLSearchParams(window.location.search).get('access') || sessionStorage.getItem(`gymshop.guest-access.${kind}.${id}`)
 }
 
 export function clearCheckoutKey(userId: number) {

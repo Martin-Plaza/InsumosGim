@@ -26,7 +26,7 @@ public record ExpirePendingOrdersResponse(int CanceledOrders);
 
 public record OrderResponse(
     int Id,
-    int UserId,
+    int? UserId,
     string? UserEmail,
     string UserName,
     DateTime CreatedAt,
@@ -51,7 +51,9 @@ public record OrderResponse(
     OrderShippingAddressResponse? ShippingDestination = null,
     string? ShippingProviderCode = null,
     string? ShippingServiceCode = null,
-    string? ShippingServiceName = null
+    string? ShippingServiceName = null,
+    string? CustomerPhone = null,
+    DateTime? ExpiresAt = null
 );
 
 public sealed record OrderShippingAddressResponse(
@@ -66,7 +68,7 @@ public sealed record OrderShippingAddressResponse(
 
 public record OrderSummaryResponse(
     int Id,
-    int UserId,
+    int? UserId,
     string? UserEmail,
     string UserName,
     DateTime CreatedAt,

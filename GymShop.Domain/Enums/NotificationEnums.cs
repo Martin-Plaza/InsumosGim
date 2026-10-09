@@ -9,7 +9,9 @@ public enum TransactionalNotificationType
     OrderShipped,
     OrderReadyForPickup,
     PaymentRefunded,
-    BillingDocumentAvailable
+    BillingDocumentAvailable,
+    OrderExpired,
+    StockUnavailableAfterPayment
 }
 
 public enum NotificationDeliveryStatus

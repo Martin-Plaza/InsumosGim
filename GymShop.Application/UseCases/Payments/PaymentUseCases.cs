@@ -3,6 +3,7 @@ using GymShop.Application.Common;
 using GymShop.Application.DTOs.Payments;
 using GymShop.Application.UseCases.Carts;
 using GymShop.Application.UseCases.Orders;
+using GymShop.Application.UseCases.Stock;
 using GymShop.Domain.Entities;
 using GymShop.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -846,6 +847,9 @@ internal static class PaymentQueries
             .ThenInclude(x => x.Items)
             .ThenInclude(x => x.Product)
             .Include(x => x.Order!)
+            .ThenInclude(x => x.Items)
+            .ThenInclude(x => x.ProductVariant)
+            .Include(x => x.Order!)
             .ThenInclude(x => x.CouponRedemption)
             .Include(x => x.CheckoutSession!)
             .ThenInclude(x => x.Items)
@@ -1002,8 +1006,26 @@ internal static class PaymentStatusApplier
 
         if (newStatus == PaymentStatus.Approved)
         {
-            payment.FailureReason = null;
             payment.PaidAt = DateTime.UtcNow;
+            if (!payment.Order.StockReserved)
+            {
+                var stockError = ReserveStockAfterGuestTransfer(db, payment.Order, auditContext?.ActorUserId);
+                if (stockError is not null)
+                {
+                    payment.Status = PaymentStatus.Approved;
+                    payment.FailureReason = $"{stockError} Contactar al cliente para ofrecer un cambio o gestionar la devolución.";
+                    payment.Order.Status = OrderStatus.Canceled;
+                    payment.Order.CancellationReason = payment.FailureReason;
+                    payment.Order.UpdatedAt = DateTime.UtcNow;
+                    AuditTrail.Add(db, auditContext, "GuestTransferPaidWithoutStock", "Payment", payment.Id,
+                        new { paymentStatus = previousPaymentStatus.ToString(), orderStatus = previousOrderStatus.ToString() },
+                        new { paymentStatus = payment.Status.ToString(), orderStatus = payment.Order.Status.ToString(), requiresReview = true },
+                        payment.FailureReason);
+                    await db.SaveChangesAsync(cancellationToken);
+                    return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+                }
+            }
+            payment.FailureReason = null;
             payment.Order.Status = OrderStatus.Paid;
             payment.Order.UpdatedAt = DateTime.UtcNow;
             CouponRedemptionLifecycle.Consume(payment.Order);
@@ -1028,6 +1050,30 @@ internal static class PaymentStatusApplier
 
         await db.SaveChangesAsync(cancellationToken);
         return AppResult<PaymentResponse>.Success(PaymentMapper.ToResponse(payment));
+    }
+
+    private static string? ReserveStockAfterGuestTransfer(IApplicationDbContext db, Order order, int? actorUserId)
+    {
+        foreach (var item in order.Items)
+        {
+            if (!item.Product.IsActive) return $"{item.ProductName} ya no está disponible.";
+            if (item.ProductVariantId.HasValue && (item.ProductVariant is null || !item.ProductVariant.IsActive))
+                return $"La variante de {item.ProductName} ya no está disponible.";
+            if ((item.ProductVariant?.Stock ?? item.Product.Stock) < item.Quantity)
+                return $"No queda stock suficiente de {item.ProductName}.";
+        }
+
+        foreach (var item in order.Items)
+        {
+            var previous = item.ProductVariant?.Stock ?? item.Product.Stock;
+            if (item.ProductVariant is null) item.Product.Stock -= item.Quantity;
+            else item.ProductVariant.Stock -= item.Quantity;
+            item.Product.UpdatedAt = DateTime.UtcNow;
+            StockMovementRecorder.Add(db, item.Product, StockMovementType.Sale, -item.Quantity, previous,
+                "Venta confirmada después de acreditar una transferencia de invitado.", actorUserId, order, item.ProductVariant);
+        }
+        order.StockReserved = true;
+        return null;
     }
 
     private static string? NormalizeProviderPaymentId(string? currentValue, string? newValue) =>

@@ -1112,6 +1112,9 @@ VITE_SITE_URL=https://www.ejemplo.com
 VITE_SEO_IMAGE=/imagen-social-1200x630.png
 VITE_TWITTER_HANDLE=<USUARIO_X_OPCIONAL>
 VITE_SEO_EXTRA_PATHS=/catalogo/1,/catalogo/2
+VITE_INSTAGRAM_URL=
+VITE_FACEBOOK_URL=
+VITE_SOCIAL_EMAIL=
 VITE_LEGAL_BUSINESS_NAME=<RAZON_SOCIAL>
 VITE_LEGAL_CUIT=<CUIT>
 VITE_LEGAL_ADDRESS=<DOMICILIO_LEGAL>
@@ -1129,6 +1132,8 @@ El frontend administra título, descripción, canonical, Open Graph, Twitter Car
 El build genera `robots.txt` y `sitemap.xml`. Mientras `VITE_SITE_URL` no sea una URL HTTPS real, `robots.txt` bloquea todo el sitio y el HTML conserva `noindex` para evitar indexar una demo. Al configurar el dominio, el build habilita indexación y publica el sitemap. `VITE_SEO_EXTRA_PATHS` permite sumar rutas de productos o campañas separadas por coma hasta que exista una generación automática desde el catálogo real.
 
 La imagen social debería ser absoluta o estar publicada en el mismo dominio, idealmente en formato 1200×630. Para previews sociales específicos por producto y SEO completo en crawlers que no ejecutan JavaScript, el despliegue definitivo debería sumar prerenderizado o SSR; la configuración y los datos estructurados ya quedan centralizados para esa migración.
+
+El footer muestra accesos preparados para Instagram, Facebook y correo. Mientras `VITE_INSTAGRAM_URL`, `VITE_FACEBOOK_URL` y `VITE_SOCIAL_EMAIL` estén vacíos, los íconos se muestran deshabilitados como “próximamente”. Al completar esas variables, pasan a ser enlaces activos sin necesidad de modificar el código.
 
 ### Registro, verificacion y Google
 
@@ -1925,7 +1930,9 @@ El segundo comando usa el servicio PostgreSQL de CI, ejecuta la suite completa, 
 
 ## Transferencia bancaria
 
-Los datos mostrados al cliente se configuran en el backend, nunca en componentes React. Definir `BankTransfer:BankName`, `BankTransfer:AccountHolder`, `BankTransfer:Cbu`, `BankTransfer:Alias` y `BankTransfer:Cuit` mediante variables de entorno (`BankTransfer__Alias`, etc.), User Secrets o el gestor de secretos del entorno. Los valores de `appsettings.json` quedan vacíos deliberadamente.
+Los datos mostrados al cliente se configuran en el backend, nunca en componentes React. Definir `BankTransfer:BankName`, `BankTransfer:AccountHolder`, `BankTransfer:Cbu`, `BankTransfer:Alias` y `BankTransfer:Cuit` mediante variables de entorno (`BankTransfer__Alias`, etc.), User Secrets o el gestor de secretos del entorno. Los valores de `appsettings.json` quedan vacíos deliberadamente. `BankTransfer:PendingOrderLifetimeHours` (por defecto, 24) controla cuánto tiempo permanece vigente una orden de transferencia de invitado.
+
+El checkout admite compras sin cuenta. Para transferencia se crea una orden pendiente, se envían por email los datos bancarios y el enlace privado de consulta, y no se descuenta stock hasta confirmar la acreditación. Si al acreditarse ya no hay disponibilidad, la orden queda cancelada y marcada para contactar al cliente y gestionar el cambio o la devolución. Para Mercado Pago se guarda una sesión de checkout y la orden se crea únicamente cuando el proveedor confirma el pago aprobado.
 
 La transferencia crea un pago pendiente. Un Admin o SuperAdmin debe comprobar la acreditación bancaria e ingresar una referencia o motivo antes de confirmarla. Cargar un comprobante o iniciar una transferencia no aprueba el pedido. `Mock` solo se registra en Development. Mercado Pago permanece deshabilitado hasta configurar credenciales de prueba y su webhook verificado.
 

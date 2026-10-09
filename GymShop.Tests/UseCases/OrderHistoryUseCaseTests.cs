@@ -60,7 +60,7 @@ public class OrderHistoryUseCaseTests
     {
         await using var db = await TestDbContextFactory.CreateAsync();
         var order = await SeedOrderAsync(db);
-        var actor = order.User;
+        var actor = order.User!;
         var payment = new Payment { OrderId = order.Id, Provider = "Mock", ExternalReference = $"order-{order.Id}", Amount = order.Total, Status = PaymentStatus.Refunded };
         db.Payments.Add(payment);
         await db.SaveChangesAsync();

@@ -62,7 +62,7 @@ public class GetMyOrdersUseCase : IGetMyOrdersUseCase
             .Include(x => x.Payments)
             .Include(x => x.CouponRedemption)
             .OrderByDescending(x => x.Id)
-            .Select(x => OrderMapper.ToSummaryResponse(x, x.User.Email))
+            .Select(x => OrderMapper.ToSummaryResponse(x, x.User!.Email))
             .ToListAsync(cancellationToken);
     }
 }
@@ -134,8 +134,10 @@ public class GetOrdersUseCase : IGetOrdersUseCase
             var isOrderNumber = int.TryParse(search.TrimStart('#'), out var orderId);
             query = query.Where(x =>
                 (isOrderNumber && x.Id == orderId) ||
-                x.User.Email.ToLower().Contains(search) ||
-                (x.User.Name + " " + (x.User.LastName ?? "")).ToLower().Contains(search));
+                (x.User != null && (x.User.Email.ToLower().Contains(search) ||
+                    (x.User.Name + " " + (x.User.LastName ?? "")).ToLower().Contains(search))) ||
+                ((x.GuestEmail ?? "").ToLower().Contains(search)) ||
+                (((x.GuestFirstName ?? "") + " " + (x.GuestLastName ?? "")).ToLower().Contains(search)));
         }
         if (status.HasValue) query = query.Where(x => x.Status == status.Value);
         if (filter.FromUtc.HasValue) query = query.Where(x => x.CreatedAt >= filter.FromUtc.Value);
@@ -147,8 +149,10 @@ public class GetOrdersUseCase : IGetOrdersUseCase
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
             .Select(x => new OrderSummaryResponse(
-                x.Id, x.UserId, x.User.Email,
-                (x.User.Name + " " + (x.User.LastName ?? "")).Trim(),
+                x.Id, x.UserId, x.User != null ? x.User.Email : x.GuestEmail ?? string.Empty,
+                x.User != null
+                    ? (x.User.Name + " " + (x.User.LastName ?? "")).Trim()
+                    : ((x.GuestFirstName ?? "") + " " + (x.GuestLastName ?? "")).Trim(),
                 x.CreatedAt, x.Total, x.DeliveryMethod.ToString(), x.Status.ToString(), x.UpdatedAt,
                 x.Payments.OrderByDescending(payment => payment.Id).Select(payment => payment.Status.ToString()).FirstOrDefault(),
                 x.Payments.OrderByDescending(payment => payment.Id).Select(payment => (int?)payment.Id).FirstOrDefault()))
@@ -357,7 +361,7 @@ internal static class OrderCompensation
             return false;
         }
 
-        RestoreStock(db, order, reason, actorUserId);
+        if (order.StockReserved) RestoreStock(db, order, reason, actorUserId);
         order.Status = OrderStatus.Canceled;
         order.CancellationReason ??= reason;
         order.UpdatedAt = DateTime.UtcNow;
@@ -384,7 +388,7 @@ internal static class OrderCompensation
             payment.UpdatedAt = DateTime.UtcNow;
         }
 
-        RestoreStock(db, order, reason, actorUserId);
+        if (order.StockReserved) RestoreStock(db, order, reason, actorUserId);
 
         CouponRedemptionLifecycle.Release(order);
 
@@ -576,8 +580,8 @@ internal static class OrderMapper
         return new OrderResponse(
             order.Id,
             order.UserId,
-            order.User.Email,
-            $"{order.User.Name} {order.User.LastName}".Trim(),
+            order.User?.Email ?? order.GuestEmail,
+            order.User is null ? $"{order.GuestFirstName} {order.GuestLastName}".Trim() : $"{order.User.Name} {order.User.LastName}".Trim(),
             order.CreatedAt,
             order.Subtotal,
             order.CouponCode,
@@ -604,8 +608,7 @@ internal static class OrderMapper
                 .OrderByDescending(x => x.Id)
                 .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt,
                     x.FailureReason,
-                    order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved &&
-                    string.Equals(x.Provider, "MercadoPago", StringComparison.OrdinalIgnoreCase)))
+                    order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved))
                 .ToList(),
             string.IsNullOrWhiteSpace(order.ShippingPostalCode) ? null : new OrderShippingAddressResponse(
                 order.ShippingPostalCode,
@@ -618,7 +621,9 @@ internal static class OrderMapper
                 order.ShippingNotes),
             order.ShippingProviderCode,
             order.ShippingServiceCode,
-            order.ShippingServiceName
+            order.ShippingServiceName,
+            order.GuestPhone,
+            order.ExpiresAtUtc
         );
     }
 
@@ -630,7 +635,7 @@ internal static class OrderMapper
             order.Id,
             order.UserId,
             userEmail,
-            $"{order.User.Name} {order.User.LastName}".Trim(),
+            order.User is null ? $"{order.GuestFirstName} {order.GuestLastName}".Trim() : $"{order.User.Name} {order.User.LastName}".Trim(),
             order.CreatedAt,
             order.Total,
             order.DeliveryMethod.ToString(),

@@ -116,8 +116,13 @@ public static class DependencyInjection
         }
         services.AddScoped<TransactionalNotificationProcessor>();
         services.AddHostedService<TransactionalNotificationWorker>();
+        services.AddHostedService<GuestOrderExpirationWorker>();
         services.AddScoped<IExternalIdentityVerifier>(_ => new GoogleIdentityVerifier(configuration));
+        var bankTransferOptions = configuration.GetSection(BankTransferOptions.SectionName).Get<BankTransferOptions>() ?? new BankTransferOptions();
+        if (bankTransferOptions.PendingOrderLifetimeHours is < 1 or > 168)
+            throw new InvalidOperationException("BankTransfer:PendingOrderLifetimeHours must be between 1 and 168.");
         services.Configure<BankTransferOptions>(configuration.GetSection(BankTransferOptions.SectionName));
+        services.AddSingleton<IBankTransferSettings>(bankTransferOptions);
         services.AddScoped<IPaymentGateway, BankTransferPaymentGateway>();
         if (environment.IsDevelopment()) services.AddScoped<IPaymentGateway, MockPaymentGateway>();
         services.AddHttpClient<IPaymentGateway, MercadoPagoPaymentGateway>(client =>

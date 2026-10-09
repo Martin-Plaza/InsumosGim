@@ -23,3 +23,8 @@ public sealed class FreeShippingSettings : IShippingSettings
     public string PickupInstructions => string.Empty;
     public string PickupHours => string.Empty;
 }
+
+public interface IBankTransferSettings
+{
+    int PendingOrderLifetimeHours { get; }
+}

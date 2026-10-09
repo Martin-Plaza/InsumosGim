@@ -66,6 +66,7 @@ public class PaymentsController : ApiControllerBase
     }
 
     [HttpGet("bank-transfer-details")]
+    [AllowAnonymous]
     public ActionResult<BankTransferDetailsResponse> GetBankTransferDetails() => Ok(new BankTransferDetailsResponse(
         _bankTransferOptions.BankName,
         _bankTransferOptions.AccountHolder,
@@ -74,11 +75,13 @@ public class PaymentsController : ApiControllerBase
         _bankTransferOptions.Cuit));
 
     [HttpGet("methods")]
+    [AllowAnonymous]
     public ActionResult<PaymentMethodsResponse> GetMethods()
     {
         var mercadoPagoAvailable = IsMercadoPagoAvailable(_mercadoPagoOptions);
         return Ok(new PaymentMethodsResponse(
             BankTransferAvailable: true,
+            BankTransferPendingOrderLifetimeHours: _bankTransferOptions.PendingOrderLifetimeHours,
             MercadoPagoAvailable: mercadoPagoAvailable,
             MercadoPagoUnavailableReason: mercadoPagoAvailable ? null : "Mercado Pago no está disponible en este momento."));
     }

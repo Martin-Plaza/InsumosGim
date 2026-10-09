@@ -53,6 +53,7 @@ public class CartController : ApiControllerBase
     }
 
     [HttpGet("shipping-options")]
+    [AllowAnonymous]
     public ActionResult<ShippingOptionsResponse> GetShippingOptions() => Ok(new ShippingOptionsResponse(
         _shippingSettings.HomeDeliveryCost,
         _shippingSettings.PickupAddress,

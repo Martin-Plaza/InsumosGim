@@ -6,6 +6,7 @@ public static class ValidationLimits
 {
     public const int Email = 256;
     public const int UserName = 100;
+    public const int Phone = 30;
     public const int PasswordMin = 8;
     public const int PasswordMax = 128;
     public const int ProductName = 150;

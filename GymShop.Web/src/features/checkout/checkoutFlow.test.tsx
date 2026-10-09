@@ -537,3 +537,55 @@ describe('checkout y pago por orderId', () => {
     expect(screen.getAllByRole('button', { name: 'Descargar PDF' })).toHaveLength(2)
   })
 })
+
+describe('checkout invitado', () => {
+  beforeEach(() => {
+    localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks()
+    window.history.replaceState(null, '', '/checkout')
+    localStorage.setItem('gymshop.guest-cart.v1', JSON.stringify(cart.items))
+  })
+
+  it('crea una orden pendiente por transferencia con datos de contacto y sin requerir cuenta', async () => {
+    const token = '3c44e646-2f94-4e88-aad7-794f2e2f61eb'
+    const guestOrder: Order = {
+      ...order, id: 701, userId: null, userEmail: 'ana@example.com', userName: 'Ana Prueba',
+      customerPhone: '+54 341 555 0101', expiresAt: '2026-08-12T10:00:00Z', shippingCost: 6500, total: 90500,
+      payments: [{ id: 702, provider: 'BankTransfer', amount: 90500, currency: 'ARS', status: 'Pending', createdAt: '2026-08-11T10:00:00Z', paidAt: null }]
+    }
+    let requestBody: Record<string, unknown> | null = null
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/cart/shipping-options')) return json({ homeDeliveryCost: 6500, pickupAddress: 'Av. Demo 123', pickupInstructions: '', pickupHours: '' })
+      if (url.endsWith('/api/payments/methods')) return json({ bankTransferAvailable: true, mercadoPagoAvailable: true, mercadoPagoUnavailableReason: null })
+      if (url.endsWith('/api/guest-checkout') && init?.method === 'POST') {
+        requestBody = JSON.parse(String(init.body))
+        return json({ kind: 'Order', accessToken: token, expiresAt: guestOrder.expiresAt, order: guestOrder, checkout: null })
+      }
+      if (url.includes('/api/guest-checkout/orders/701?')) return json(guestOrder)
+      if (url.endsWith('/api/payments/bank-transfer-details')) return json({ bankName: 'Banco', accountHolder: 'GymShop', cbu: '123', alias: 'GYMSHOP', cuit: '' })
+      return json([])
+    })
+
+    render(<App />)
+    await userEvent.type(await screen.findByLabelText('Nombre'), 'Ana')
+    await userEvent.type(screen.getByLabelText('Apellido'), 'Prueba')
+    await userEvent.type(screen.getByLabelText('Email'), 'ana@example.com')
+    await userEvent.type(screen.getByLabelText('Teléfono'), '+54 341 555 0101')
+    await userEvent.type(screen.getByLabelText('Código postal'), '2000')
+    await userEvent.type(screen.getByLabelText('Provincia'), 'Santa Fe')
+    await userEvent.type(screen.getByLabelText('Ciudad o localidad'), 'Rosario')
+    await userEvent.type(screen.getByLabelText('Calle'), 'Córdoba')
+    await userEvent.type(screen.getByLabelText('Número'), '1234')
+    expect(screen.getByText(/24 horas para transferir/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Generar orden de transferencia' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/checkout/orden/701'))
+    expect(requestBody).toMatchObject({
+      customer: { firstName: 'Ana', lastName: 'Prueba', email: 'ana@example.com', phone: '+54 341 555 0101' },
+      paymentProvider: 'BankTransfer', expectedSubtotal: 84000, expectedShippingCost: 6500,
+      items: [{ productId: 4, quantity: 2 }]
+    })
+    expect(await screen.findByText(/El stock se validará cuando se acredite el pago/)).toBeInTheDocument()
+    expect(localStorage.getItem('gymshop.guest-cart.v1')).toBeNull()
+  })
+})

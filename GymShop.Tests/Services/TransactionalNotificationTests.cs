@@ -140,7 +140,7 @@ public sealed class TransactionalNotificationTests
         {
             FromName = "GymShop",
             PublicAppUrl = "https://demo.example"
-        }), new FixedTimeProvider(Now), NullLogger<TransactionalNotificationProcessor>.Instance);
+        }), Options.Create(new BankTransferOptions()), new FixedTimeProvider(Now), NullLogger<TransactionalNotificationProcessor>.Instance);
 
     private static Order CreateOrder() => new()
     {

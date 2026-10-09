@@ -19,4 +19,5 @@ public record PaymentResponse(int Id, int? OrderId, int? CheckoutSessionId, stri
 
 public record BankTransferDetailsResponse(string BankName, string AccountHolder, string Cbu, string Alias, string Cuit);
 
-public record PaymentMethodsResponse(bool BankTransferAvailable, bool MercadoPagoAvailable, string? MercadoPagoUnavailableReason);
+public record PaymentMethodsResponse(bool BankTransferAvailable, int BankTransferPendingOrderLifetimeHours,
+    bool MercadoPagoAvailable, string? MercadoPagoUnavailableReason);

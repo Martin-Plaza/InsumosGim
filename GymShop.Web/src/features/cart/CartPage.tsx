@@ -20,10 +20,7 @@ export function CartPage() {
     finally { applying.current = false; setCouponBusy(false) }
   }
   const continueToCheckout = async () => {
-    if (!session.user()) {
-      navigate('/login', { state: { returnTo: '/checkout', message: 'Iniciá sesión para finalizar la compra. Conservaremos y combinaremos tu carrito.' } })
-      return
-    }
+    if (!session.user()) { navigate('/checkout'); return }
     const normalizedCode = code.trim()
     if (!normalizedCode || cart.couponCode) { navigate('/checkout'); return }
     if (applying.current) return
@@ -58,7 +55,7 @@ export function CartPage() {
         {cart.discount > 0 && <div><span>Descuento</span><strong>−{money(cart.discount)}</strong></div>}
         <div className="cart-total"><span>Total</span><strong>{money(cart.total)}</strong></div>
         <div className="cart-summary-actions">
-          <button type="button" className="primary checkout-action" aria-label={session.user() ? 'Continuar al checkout' : 'Ingresar para comprar'} disabled={couponBusy} onClick={() => void continueToCheckout()}>{session.user() ? couponBusy ? 'Validando cupón…' : 'Continuar al checkout →' : 'Ingresar para comprar →'}</button>
+          <button type="button" className="primary checkout-action" aria-label="Continuar al checkout" disabled={couponBusy} onClick={() => void continueToCheckout()}>{couponBusy ? 'Validando cupón…' : session.user() ? 'Continuar al checkout →' : 'Comprar sin cuenta →'}</button>
           <button type="button" className="clear-cart-action" onClick={() => void cart.clear()}>Vaciar carrito</button>
         </div>
       </aside>

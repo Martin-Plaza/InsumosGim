@@ -19,11 +19,13 @@ public sealed class TransactionalNotificationProcessor(
     IReceiptPdfRenderer receiptRenderer,
     IBillingProfile billingProfile,
     IOptions<EmailOptions> options,
+    IOptions<BankTransferOptions> bankTransferOptions,
     TimeProvider timeProvider,
     ILogger<TransactionalNotificationProcessor> logger)
 {
     private const int MaxAttempts = 8;
     private readonly EmailOptions _options = options.Value;
+    private readonly BankTransferOptions _bankTransfer = bankTransferOptions.Value;
 
     public async Task<int> ProcessBatchAsync(CancellationToken cancellationToken = default)
     {
@@ -115,12 +117,19 @@ public sealed class TransactionalNotificationProcessor(
             .Include(x => x.Items)
             .Include(x => x.Payments)
             .SingleOrDefaultAsync(x => x.Id == message.OrderId, cancellationToken);
-        if (order?.User is null || string.IsNullOrWhiteSpace(order.User.Email)) return null;
-        var name = HtmlEncoder.Default.Encode(order.User.Name);
-        var orderUrl = Link($"/ordenes");
+        if (order is null) return null;
+        var recipientEmail = order.User?.Email ?? order.GuestEmail;
+        var customerName = order.User?.Name ?? order.GuestFirstName;
+        if (string.IsNullOrWhiteSpace(recipientEmail) || string.IsNullOrWhiteSpace(customerName)) return null;
+        var name = HtmlEncoder.Default.Encode(customerName);
+        var orderUrl = order.UserId.HasValue ? Link("/ordenes") : order.GuestAccessToken.HasValue ? Link($"/checkout/orden/{order.Id}?access={order.GuestAccessToken.Value:D}") : null;
         var amount = order.Total.ToString("C", CultureInfo.GetCultureInfo("es-AR"));
         var (subject, heading, text) = message.Type switch
         {
+            TransactionalNotificationType.OrderCreated when !order.UserId.HasValue && order.Status == OrderStatus.Pending =>
+                ($"Datos para transferir · pedido #{order.Id}", "Pedido pendiente de transferencia", GuestTransferText(order, amount)),
+            TransactionalNotificationType.OrderCreated when !order.UserId.HasValue =>
+                ($"Recibimos tu pedido #{order.Id}", "Pedido recibido", $"Registramos tu pedido por {amount}. Podés consultar su estado desde el enlace privado de este email."),
             TransactionalNotificationType.OrderCreated => ($"Recibimos tu pedido #{order.Id}", "Pedido recibido", $"Registramos tu pedido por {amount}. Podés consultar su estado y continuar con el pago desde Mis órdenes."),
             TransactionalNotificationType.PaymentApproved => ($"Pago aprobado para el pedido #{order.Id}", "Pago aprobado", $"Confirmamos el pago de {amount}. Adjuntamos la constancia interna de tu compra y ya podemos comenzar a preparar tu pedido."),
             TransactionalNotificationType.PaymentRejected => ($"No se aprobó el pago del pedido #{order.Id}", "Pago no aprobado", "El proveedor no aprobó el intento de pago. Podés revisar el pedido e intentar nuevamente mientras continúe pendiente."),
@@ -129,15 +138,18 @@ public sealed class TransactionalNotificationProcessor(
             TransactionalNotificationType.OrderReadyForPickup => ($"Tu pedido #{order.Id} está listo para retirar", "Listo para retirar", PickupText(order)),
             TransactionalNotificationType.PaymentRefunded => ($"Reembolso confirmado para el pedido #{order.Id}", "Reembolso confirmado", $"El proveedor confirmó el reembolso de {amount}."),
             TransactionalNotificationType.BillingDocumentAvailable => await BillingTextAsync(message, order.Id, cancellationToken),
+            TransactionalNotificationType.OrderExpired => ($"Venció el pedido #{order.Id}", "Pedido vencido", "El plazo para realizar la transferencia terminó y el pedido fue dado de baja. No realices pagos usando esta referencia."),
+            TransactionalNotificationType.StockUnavailableAfterPayment => ($"Necesitamos resolver el pedido #{order.Id}", "Producto sin stock después del pago", "Recibimos el pago, pero uno de los productos ya no está disponible. Te contactaremos para ofrecerte un cambio o gestionar la devolución."),
             _ => throw new ArgumentOutOfRangeException()
         };
         var safeText = HtmlEncoder.Default.Encode(text);
-        var button = orderUrl is null ? string.Empty : $"<p><a href=\"{HtmlEncoder.Default.Encode(orderUrl)}\" style=\"display:inline-block;padding:12px 18px;background:#c7ff2f;color:#111;text-decoration:none;font-weight:700\">Ver mis órdenes</a></p>";
+        var buttonLabel = order.UserId.HasValue ? "Ver mis órdenes" : "Ver pedido";
+        var button = orderUrl is null ? string.Empty : $"<p><a href=\"{HtmlEncoder.Default.Encode(orderUrl)}\" style=\"display:inline-block;padding:12px 18px;background:#c7ff2f;color:#111;text-decoration:none;font-weight:700\">{buttonLabel}</a></p>";
         var html = $"<main style=\"font-family:Arial,sans-serif;max-width:620px;margin:auto;color:#171b18\"><h1>{HtmlEncoder.Default.Encode(heading)}</h1><p>Hola {name},</p><p>{safeText}</p>{button}<p style=\"color:#667085\">Este es un mensaje automático de {_options.FromName}.</p></main>";
         IReadOnlyList<EmailAttachment>? attachments = message.Type == TransactionalNotificationType.PaymentApproved
             ? [BuildPurchaseReceipt(order, message.PaymentId)]
             : null;
-        return new TransactionalEmailMessage(message.Type.ToString(), order.User.Email, subject, html, $"notification/{message.Id:N}", attachments);
+        return new TransactionalEmailMessage(message.Type.ToString(), recipientEmail, subject, html, $"notification/{message.Id:N}", attachments);
     }
 
     private EmailAttachment BuildPurchaseReceipt(Order order, int? paymentId)
@@ -160,10 +172,10 @@ public sealed class TransactionalNotificationProcessor(
             IssuerFiscalAddress = billingProfile.FiscalAddress.Trim(),
             IssuerGrossIncomeNumber = billingProfile.GrossIncomeNumber.Trim(),
             IssuerActivityStartDate = billingProfile.ActivityStartDate,
-            RecipientName = $"{order.User.Name} {order.User.LastName}".Trim(),
+            RecipientName = order.User is null ? $"{order.GuestFirstName} {order.GuestLastName}".Trim() : $"{order.User.Name} {order.User.LastName}".Trim(),
             RecipientDocumentType = FiscalIdentityDocumentType.None,
             RecipientTaxCondition = RecipientTaxCondition.ConsumerFinal,
-            RecipientEmail = order.User.Email,
+            RecipientEmail = order.User?.Email ?? order.GuestEmail,
             RecipientAddress = order.ShippingAddress,
             Subtotal = order.Subtotal,
             DiscountAmount = order.DiscountAmount,
@@ -202,6 +214,14 @@ public sealed class TransactionalNotificationProcessor(
     private string? Link(string path) => string.IsNullOrWhiteSpace(_options.PublicAppUrl)
         ? null
         : $"{_options.PublicAppUrl.TrimEnd('/')}{path}";
+    private string GuestTransferText(Order order, string amount)
+    {
+        var deadline = (order.ExpiresAtUtc ?? order.CreatedAt.AddHours(_bankTransfer.PendingOrderLifetimeHours)).ToString("dd/MM/yyyy HH:mm", CultureInfo.GetCultureInfo("es-AR"));
+        var bank = string.IsNullOrWhiteSpace(_bankTransfer.BankName) ? "banco a confirmar" : _bankTransfer.BankName;
+        var alias = string.IsNullOrWhiteSpace(_bankTransfer.Alias) ? "alias a confirmar" : _bankTransfer.Alias;
+        var cbu = string.IsNullOrWhiteSpace(_bankTransfer.Cbu) ? "CBU a confirmar" : _bankTransfer.Cbu;
+        return $"Registramos tu pedido por {amount}. Transferí antes del {deadline} usando como referencia el pedido #{order.Id}. Datos: {bank}; alias {alias}; CBU {cbu}. La disponibilidad se confirma al acreditar la transferencia. Si algún producto no está disponible, te contactaremos para ofrecerte un cambio o gestionar la devolución.";
+    }
     private static string TrackingText(Order order) => string.IsNullOrWhiteSpace(order.TrackingNumber)
         ? "Tu pedido salió del comercio y está en camino."
         : $"Tu pedido está en camino con {order.Carrier}. Número de seguimiento: {order.TrackingNumber}.";

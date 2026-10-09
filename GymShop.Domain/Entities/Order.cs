@@ -5,7 +5,14 @@ namespace GymShop.Domain.Entities;
 public class Order
 {
     public int Id { get; set; }
-    public int UserId { get; set; }
+    public int? UserId { get; set; }
+    public string? GuestFirstName { get; set; }
+    public string? GuestLastName { get; set; }
+    public string? GuestEmail { get; set; }
+    public string? GuestPhone { get; set; }
+    public Guid? GuestAccessToken { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    public bool StockReserved { get; set; } = true;
     public string? CheckoutIdempotencyKey { get; set; }
     public string? CheckoutRequestFingerprint { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -38,7 +45,7 @@ public class Order
     public string? CancellationReason { get; set; }
     public DateTime? UpdatedAt { get; set; }
 
-    public User User { get; set; } = null!;
+    public User? User { get; set; }
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public ICollection<BillingDocument> BillingDocuments { get; set; } = new List<BillingDocument>();

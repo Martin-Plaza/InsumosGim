@@ -7,6 +7,9 @@ interface ImportMetaEnv {
   readonly VITE_SEO_IMAGE?: string
   readonly VITE_TWITTER_HANDLE?: string
   readonly VITE_SEO_EXTRA_PATHS?: string
+  readonly VITE_INSTAGRAM_URL?: string
+  readonly VITE_FACEBOOK_URL?: string
+  readonly VITE_SOCIAL_EMAIL?: string
 }
 
 interface ImportMeta {

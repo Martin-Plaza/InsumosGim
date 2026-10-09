@@ -135,7 +135,7 @@ public sealed class BillingDocumentUseCaseTests
         });
         await db.SaveChangesAsync();
 
-        var result = await new GetCustomerOrderBillingDocumentsUseCase(db).ExecuteAsync(order.Id, order.UserId);
+        var result = await new GetCustomerOrderBillingDocumentsUseCase(db).ExecuteAsync(order.Id, order.UserId!.Value);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(receipt.Value!.Id, Assert.Single(result.Value!).Id);
@@ -147,7 +147,7 @@ public sealed class BillingDocumentUseCaseTests
         await using var db = await TestDbContextFactory.CreateAsync();
         var order = await AddOrder(db, OrderStatus.Paid, 35000, PaymentStatus.Approved);
         var receipt = await CreateUseCase(db).ExecuteAsync(order.Id, "private-customer-receipt");
-        var otherUserId = order.UserId + 999;
+        var otherUserId = order.UserId!.Value + 999;
         var list = await new GetCustomerOrderBillingDocumentsUseCase(db).ExecuteAsync(order.Id, otherUserId);
         var adminPdf = new GetBillingDocumentPdfUseCase(db, new TestReceiptPdfRenderer(), new TestFiscalInvoicePdfRenderer());
         var pdf = await new GetCustomerBillingDocumentPdfUseCase(db, adminPdf)

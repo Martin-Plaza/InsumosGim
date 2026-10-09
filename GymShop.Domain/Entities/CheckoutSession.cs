@@ -5,8 +5,13 @@ namespace GymShop.Domain.Entities;
 public class CheckoutSession
 {
     public int Id { get; set; }
-    public int UserId { get; set; }
-    public int CartId { get; set; }
+    public int? UserId { get; set; }
+    public int? CartId { get; set; }
+    public string? GuestFirstName { get; set; }
+    public string? GuestLastName { get; set; }
+    public string? GuestEmail { get; set; }
+    public string? GuestPhone { get; set; }
+    public Guid? GuestAccessToken { get; set; }
     public int? OrderId { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
     public string RequestFingerprint { get; set; } = string.Empty;
@@ -39,8 +44,8 @@ public class CheckoutSession
     public DateTime? CartClearedAtUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
 
-    public User User { get; set; } = null!;
-    public Cart Cart { get; set; } = null!;
+    public User? User { get; set; }
+    public Cart? Cart { get; set; }
     public Coupon? Coupon { get; set; }
     public Order? Order { get; set; }
     public ICollection<CheckoutItem> Items { get; set; } = new List<CheckoutItem>();

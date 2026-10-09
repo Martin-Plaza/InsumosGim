@@ -8,6 +8,11 @@ export const storefront = {
   },
   market: { locale: 'es-AR', currency: 'ARS', region: 'AR' },
   contact: { email: 'hola@gymshop.demo', phone: '+54 11 5555 0101', whatsapp: '+54 9 11 5555 0101' },
+  social: {
+    instagramUrl: import.meta.env.VITE_INSTAGRAM_URL?.trim() || '',
+    facebookUrl: import.meta.env.VITE_FACEBOOK_URL?.trim() || '',
+    email: import.meta.env.VITE_SOCIAL_EMAIL?.trim() || '',
+  },
   legal: {
     businessName: import.meta.env.VITE_LEGAL_BUSINESS_NAME?.trim() || 'Comercio de demostración',
     cuit: import.meta.env.VITE_LEGAL_CUIT?.trim() || '',
@@ -34,7 +39,7 @@ export const storefront = {
     registrationTitle: 'Empezá a entrenar',
     orderPaymentAction: 'Crear / consultar pago',
     cartAuthenticatedExplanation: 'En el siguiente paso confirmarás la entrega y elegirás el medio de pago.',
-    cartGuestExplanation: 'Podés armar tu carrito como visitante. Te pediremos iniciar sesión antes de comprar.',
+      cartGuestExplanation: 'Podés finalizar la compra sin crear una cuenta. Te pediremos tus datos de contacto en el siguiente paso.',
     localCodeLabel: 'Código Mock local',
     footer: 'GymShop · Compra segura',
     categoriesEyebrow: 'ENTRENÁ A TU MANERA', categoriesTitle: 'Explorá por categoría',

@@ -96,7 +96,7 @@ internal static class CheckoutCompletion
             return AppResult<Order>.Success(existing);
         }
 
-        if (checkout.CouponId.HasValue)
+        if (checkout.CouponId.HasValue && checkout.UserId.HasValue)
         {
             var coupon = await db.Coupons.SingleOrDefaultAsync(x => x.Id == checkout.CouponId.Value, cancellationToken);
             var activeUses = await db.CouponRedemptions.CountAsync(
@@ -162,6 +162,11 @@ internal static class CheckoutCompletion
             PickupHours = checkout.PickupHours,
             PickupInstructions = checkout.PickupInstructions
         };
+        order.GuestFirstName = checkout.GuestFirstName;
+        order.GuestLastName = checkout.GuestLastName;
+        order.GuestEmail = checkout.GuestEmail;
+        order.GuestPhone = checkout.GuestPhone;
+        order.GuestAccessToken = checkout.GuestAccessToken;
 
         foreach (var line in checkout.Items)
         {
@@ -186,12 +191,12 @@ internal static class CheckoutCompletion
                 "Venta confirmada después de la acreditación del pago.", order: order, variant: variant);
         }
 
-        if (checkout.CouponId.HasValue)
+        if (checkout.CouponId.HasValue && checkout.UserId.HasValue)
         {
             order.CouponRedemption = new CouponRedemption
             {
                 CouponId = checkout.CouponId.Value,
-                UserId = checkout.UserId,
+                UserId = checkout.UserId.Value,
                 Status = CouponRedemptionStatus.Consumed,
                 ReservedAtUtc = now,
                 ConsumedAtUtc = now
@@ -214,9 +219,9 @@ internal static class CheckoutCompletion
         // Checkouts created before the cart-detachment rollout still need the legacy cleanup.
         // New checkouts clear the purchased snapshot up front, so touching the cart here could
         // remove products the customer added for a later purchase while payment was pending.
-        if (checkout.CartClearedAtUtc is null)
+        if (checkout.CartClearedAtUtc is null && checkout.CartId.HasValue)
         {
-            var cartItems = await db.CartItems.Where(x => x.CartId == checkout.CartId).ToListAsync(cancellationToken);
+            var cartItems = await db.CartItems.Where(x => x.CartId == checkout.CartId.Value).ToListAsync(cancellationToken);
             foreach (var purchased in checkout.Items)
             {
                 var current = cartItems.SingleOrDefault(x => x.ProductId == purchased.ProductId && x.ProductVariantId == purchased.ProductVariantId);
@@ -224,7 +229,7 @@ internal static class CheckoutCompletion
                 if (current.Quantity <= purchased.Quantity) db.CartItems.Remove(current);
                 else current.Quantity -= purchased.Quantity;
             }
-            var cart = await db.Carts.SingleAsync(x => x.Id == checkout.CartId, cancellationToken);
+            var cart = await db.Carts.SingleAsync(x => x.Id == checkout.CartId.Value, cancellationToken);
             if (cart.CouponId == checkout.CouponId) cart.CouponId = null;
             cart.UpdatedAt = now;
         }

@@ -338,15 +338,24 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.CancellationReason).HasMaxLength(500);
             entity.Property(x => x.CheckoutIdempotencyKey).HasMaxLength(ValidationLimits.IdempotencyKey);
             entity.Property(x => x.CheckoutRequestFingerprint).HasMaxLength(64);
+            entity.Property(x => x.GuestFirstName).HasMaxLength(ValidationLimits.UserName);
+            entity.Property(x => x.GuestLastName).HasMaxLength(ValidationLimits.UserName);
+            entity.Property(x => x.GuestEmail).HasMaxLength(ValidationLimits.Email);
+            entity.Property(x => x.GuestPhone).HasMaxLength(ValidationLimits.Phone);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(x => x.UpdatedAt).IsConcurrencyToken();
 
             entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.GuestAccessToken).IsUnique().HasFilter("\"GuestAccessToken\" IS NOT NULL");
             entity.HasIndex(x => x.ShippingQuoteId).IsUnique().HasFilter("\"ShippingQuoteId\" IS NOT NULL");
             entity.HasIndex(x => new { x.UserId, x.CheckoutIdempotencyKey })
                 .IsUnique()
                 .HasDatabaseName("UX_Orders_UserId_CheckoutIdempotencyKey")
                 .HasFilter("\"CheckoutIdempotencyKey\" IS NOT NULL");
+            entity.HasIndex(x => x.CheckoutIdempotencyKey)
+                .IsUnique()
+                .HasDatabaseName("UX_Orders_Guest_CheckoutIdempotencyKey")
+                .HasFilter("\"UserId\" IS NULL AND \"CheckoutIdempotencyKey\" IS NOT NULL");
             entity
                 .HasOne(x => x.User)
                 .WithMany(x => x.Orders)
@@ -562,8 +571,14 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             entity.Property(x => x.PickupAddress).HasMaxLength(ValidationLimits.ShippingAddress).IsRequired();
             entity.Property(x => x.PickupHours).HasMaxLength(ValidationLimits.PickupHours).IsRequired();
             entity.Property(x => x.PickupInstructions).HasMaxLength(ValidationLimits.PickupInstructions).IsRequired();
+            entity.Property(x => x.GuestFirstName).HasMaxLength(ValidationLimits.UserName);
+            entity.Property(x => x.GuestLastName).HasMaxLength(ValidationLimits.UserName);
+            entity.Property(x => x.GuestEmail).HasMaxLength(ValidationLimits.Email);
+            entity.Property(x => x.GuestPhone).HasMaxLength(ValidationLimits.Phone);
             entity.Property(x => x.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(x => new { x.UserId, x.IdempotencyKey }).IsUnique().HasDatabaseName("UX_CheckoutSessions_UserId_IdempotencyKey");
+            entity.HasIndex(x => x.GuestAccessToken).IsUnique().HasFilter("\"GuestAccessToken\" IS NOT NULL");
+            entity.HasIndex(x => x.IdempotencyKey).IsUnique().HasDatabaseName("UX_CheckoutSessions_Guest_IdempotencyKey").HasFilter("\"UserId\" IS NULL");
             entity.HasIndex(x => x.OrderId).IsUnique().HasFilter("\"OrderId\" IS NOT NULL");
             entity.HasIndex(x => new { x.UserId, x.Status });
             entity.HasOne(x => x.User).WithMany(x => x.CheckoutSessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
@@ -691,6 +706,8 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
                 OrderStatus.Preparing => TransactionalNotificationType.OrderPreparing,
                 OrderStatus.Shipped when entry.Entity.DeliveryMethod == DeliveryMethod.StorePickup => TransactionalNotificationType.OrderReadyForPickup,
                 OrderStatus.Shipped => TransactionalNotificationType.OrderShipped,
+                OrderStatus.Canceled when entry.Entity.CancellationReason?.Contains("vencid", StringComparison.OrdinalIgnoreCase) == true => TransactionalNotificationType.OrderExpired,
+                OrderStatus.Canceled when entry.Entity.CancellationReason?.Contains("stock", StringComparison.OrdinalIgnoreCase) == true => TransactionalNotificationType.StockUnavailableAfterPayment,
                 _ => (TransactionalNotificationType?)null
             };
             if (type is not null) Queue(type.Value, entry.Entity, $"order:{entry.Entity.Id}:{type}", now);
@@ -701,7 +718,7 @@ public class GymShopDbContext : DbContext, IApplicationDbContext
             if (entry.State != EntityState.Modified || !entry.Property(x => x.Status).IsModified || entry.Entity.Order is null) continue;
             var type = entry.Entity.Status switch
             {
-                PaymentStatus.Approved => TransactionalNotificationType.PaymentApproved,
+                PaymentStatus.Approved when entry.Entity.Order.Status != OrderStatus.Canceled => TransactionalNotificationType.PaymentApproved,
                 PaymentStatus.Rejected => TransactionalNotificationType.PaymentRejected,
                 PaymentStatus.Refunded => TransactionalNotificationType.PaymentRefunded,
                 _ => (TransactionalNotificationType?)null

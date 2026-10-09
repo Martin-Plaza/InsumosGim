@@ -22,7 +22,7 @@ public record CheckoutCartRequest(
 public sealed record CheckoutResponse(
     int Id,
     int? OrderId,
-    int UserId,
+    int? UserId,
     DateTime CreatedAt,
     DateTime ExpiresAt,
     decimal Subtotal,
@@ -70,3 +70,31 @@ public record ShippingOptionsResponse(decimal HomeDeliveryCost, string PickupAdd
 public record CartResponse(int Id, int UserId, decimal Subtotal, decimal Discount, decimal Total, string? CouponCode, List<CartItemResponse> Items);
 public record CartItemResponse(int ProductId, string ProductName, decimal UnitPrice, int Quantity, decimal Subtotal, int Stock, string? ImageUrl,
     int? ProductVariantId = null, string? VariantSku = null, Dictionary<string, string>? VariantAttributes = null);
+
+public sealed record GuestCustomerRequest(
+    [Required, StringLength(ValidationLimits.UserName)] string FirstName,
+    [Required, StringLength(ValidationLimits.UserName)] string LastName,
+    [Required, EmailAddress, StringLength(ValidationLimits.Email)] string Email,
+    [Required, Phone, StringLength(ValidationLimits.Phone)] string Phone);
+
+public sealed record GuestCartItemRequest(
+    [Range(1, int.MaxValue)] int ProductId,
+    [Range(1, 100)] int Quantity,
+    int? ProductVariantId = null);
+
+public sealed record GuestCheckoutRequest(
+    [Required] GuestCustomerRequest Customer,
+    [Required, MinLength(1)] List<GuestCartItemRequest> Items,
+    [Required, StringLength(30)] string DeliveryMethod,
+    ShippingAddressRequest? ShippingDestination,
+    [NonNegativeSqlDecimal] decimal ExpectedShippingCost,
+    [SqlDecimal] decimal ExpectedSubtotal,
+    [Required, StringLength(ValidationLimits.PaymentProvider)] string PaymentProvider,
+    [Required, StringLength(ValidationLimits.IdempotencyKey)] string IdempotencyKey);
+
+public sealed record GuestCheckoutResponse(
+    string Kind,
+    Guid AccessToken,
+    DateTime ExpiresAt,
+    OrderResponse? Order,
+    CheckoutResponse? Checkout);

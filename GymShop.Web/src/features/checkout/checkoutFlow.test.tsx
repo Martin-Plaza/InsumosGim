@@ -550,7 +550,7 @@ describe('checkout invitado', () => {
     const guestOrder: Order = {
       ...order, id: 701, userId: null, userEmail: 'ana@example.com', userName: 'Ana Prueba',
       customerPhone: '+54 341 555 0101', expiresAt: '2026-08-12T10:00:00Z', shippingCost: 6500, total: 90500,
-      payments: [{ id: 702, provider: 'BankTransfer', amount: 90500, currency: 'ARS', status: 'Pending', createdAt: '2026-08-11T10:00:00Z', paidAt: null }]
+      payments: [{ id: 702, provider: 'BankTransfer', externalReference: '481726395', amount: 90500, currency: 'ARS', status: 'Pending', createdAt: '2026-08-11T10:00:00Z', paidAt: null }]
     }
     let requestBody: Record<string, unknown> | null = null
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
@@ -586,6 +586,7 @@ describe('checkout invitado', () => {
       items: [{ productId: 4, quantity: 2 }]
     })
     expect(await screen.findByText(/El stock se validará cuando se acredite el pago/)).toBeInTheDocument()
+    expect(screen.getByText('481726395')).toBeInTheDocument()
     expect(localStorage.getItem('gymshop.guest-cart.v1')).toBeNull()
   })
 })

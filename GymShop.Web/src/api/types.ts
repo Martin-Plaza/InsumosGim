@@ -35,7 +35,7 @@ export interface ProductImageUpload { url: string; key: string }
 export interface CartItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; stock: number; imageUrl: string | null; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
 export interface Cart { id: number; userId: number; subtotal: number; discount: number; total: number; couponCode: string | null; items: CartItem[] }
 export interface OrderItem { productId: number; productName: string; unitPrice: number; quantity: number; subtotal: number; productVariantId?: number | null; variantSku?: string | null; variantAttributes?: Record<string, string> | null }
-export interface OrderPayment { id: number; provider: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null; failureReason?: string | null; requiresReview?: boolean }
+export interface OrderPayment { id: number; provider: string; externalReference: string; amount: number; currency: string; status: PaymentStatus; createdAt: string; paidAt: string | null; failureReason?: string | null; requiresReview?: boolean }
 export type DeliveryMethod = 'StorePickup' | 'HomeDelivery'
 export interface ShippingOptions { homeDeliveryCost: number; pickupAddress: string; pickupInstructions: string; pickupHours: string }
 export interface ShippingAddressInput { postalCode: string; province: string; city: string; street: string; streetNumber: string; floor?: string | null; apartment?: string | null; notes?: string | null }

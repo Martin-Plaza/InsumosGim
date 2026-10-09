@@ -113,6 +113,7 @@ public record OrderItemResponse(
 public record OrderPaymentResponse(
     int Id,
     string Provider,
+    string ExternalReference,
     decimal Amount,
     string Currency,
     string Status,

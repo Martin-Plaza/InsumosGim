@@ -280,7 +280,9 @@ internal static class PaymentCreator
         Payment reservation,
         CancellationToken cancellationToken)
     {
-        reservation.ExternalReference = PaymentExternalReferences.Build(order.Id, reservation.Id);
+        reservation.ExternalReference = string.Equals(reservation.Provider, "BankTransfer", StringComparison.OrdinalIgnoreCase)
+            ? await BankTransferReference.CreateUniqueAsync(db, cancellationToken)
+            : PaymentExternalReferences.Build(order.Id, reservation.Id);
         await db.SaveChangesAsync(cancellationToken);
         PaymentPreferenceResult preference;
         try

@@ -606,7 +606,7 @@ internal static class OrderMapper
                 .ToList(),
             order.Payments
                 .OrderByDescending(x => x.Id)
-                .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt,
+                .Select(x => new OrderPaymentResponse(x.Id, x.Provider, x.ExternalReference, x.Amount, x.Currency, x.Status.ToString(), x.CreatedAt, x.PaidAt,
                     x.FailureReason,
                     order.Status == OrderStatus.Canceled && x.Status == PaymentStatus.Approved))
                 .ToList(),

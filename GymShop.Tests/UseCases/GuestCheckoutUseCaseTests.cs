@@ -31,7 +31,10 @@ public sealed class GuestCheckoutUseCaseTests
         Assert.False(order.StockReserved);
         Assert.Equal(OrderStatus.Pending, order.Status);
         Assert.Equal(3, product.Stock);
-        Assert.Equal(PaymentStatus.Pending, Assert.Single(order.Payments).Status);
+        var pendingPayment = Assert.Single(order.Payments);
+        Assert.Equal(PaymentStatus.Pending, pendingPayment.Status);
+        Assert.Matches("^[0-9]{9}$", pendingPayment.ExternalReference);
+        Assert.Equal(pendingPayment.ExternalReference, Assert.Single(result.Value.Order!.Payments).ExternalReference);
 
         var payment = await db.Payments.SingleAsync();
         var approved = await new UpdatePaymentStatusUseCase(db).ExecuteAsync(

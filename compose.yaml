@@ -35,6 +35,12 @@ services:
       Email__PublicAppUrl: ${GYMSHOP_EMAIL_PUBLIC_APP_URL:-}
       Email__TransactionalNotificationsEnabled: ${GYMSHOP_EMAIL_TRANSACTIONAL_NOTIFICATIONS_ENABLED:-true}
       Email__ExposeDevelopmentCodes: ${GYMSHOP_EXPOSE_DEVELOPMENT_CODES:-false}
+      BankTransfer__BankName: ${GYMSHOP_BANK_NAME:-}
+      BankTransfer__AccountHolder: ${GYMSHOP_BANK_ACCOUNT_HOLDER:-}
+      BankTransfer__Cbu: ${GYMSHOP_BANK_CBU:-}
+      BankTransfer__Alias: ${GYMSHOP_BANK_ALIAS:-}
+      BankTransfer__Cuit: ${GYMSHOP_BANK_CUIT:-}
+      BankTransfer__PendingOrderLifetimeHours: ${GYMSHOP_BANK_PENDING_ORDER_LIFETIME_HOURS:-24}
       RateLimiting__Enabled: "true"
       SeedSuperAdmin__Email: ${GYMSHOP_SEED_ADMIN_EMAIL:-admin@gymshop.com}
       SeedSuperAdmin__Name: ${GYMSHOP_SEED_ADMIN_NAME:-Super Admin}
@@ -67,6 +73,12 @@ services:
       Email__PublicAppUrl: ${GYMSHOP_EMAIL_PUBLIC_APP_URL:-}
       Email__TransactionalNotificationsEnabled: ${GYMSHOP_EMAIL_TRANSACTIONAL_NOTIFICATIONS_ENABLED:-true}
       Email__ExposeDevelopmentCodes: ${GYMSHOP_EXPOSE_DEVELOPMENT_CODES:-false}
+      BankTransfer__BankName: ${GYMSHOP_BANK_NAME:-}
+      BankTransfer__AccountHolder: ${GYMSHOP_BANK_ACCOUNT_HOLDER:-}
+      BankTransfer__Cbu: ${GYMSHOP_BANK_CBU:-}
+      BankTransfer__Alias: ${GYMSHOP_BANK_ALIAS:-}
+      BankTransfer__Cuit: ${GYMSHOP_BANK_CUIT:-}
+      BankTransfer__PendingOrderLifetimeHours: ${GYMSHOP_BANK_PENDING_ORDER_LIFETIME_HOURS:-24}
       RateLimiting__Enabled: "true"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

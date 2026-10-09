@@ -119,7 +119,7 @@ public sealed class GuestCheckoutUseCase(
             await db.SaveChangesAsync(cancellationToken);
             order.Payments.Add(new Payment
             {
-                Provider = "BankTransfer", ExternalReference = $"order-{order.Id}", ProviderPreferenceId = $"transfer-{order.Id}",
+                Provider = "BankTransfer", ExternalReference = await BankTransferReference.CreateUniqueAsync(db, cancellationToken), ProviderPreferenceId = $"transfer-{order.Id}",
                 IdempotencyKey = $"guest-transfer-{idempotencyKey}", Amount = order.Total, Currency = "ARS",
                 Status = PaymentStatus.Pending, CreatedAt = now, UpdatedAt = now
             });

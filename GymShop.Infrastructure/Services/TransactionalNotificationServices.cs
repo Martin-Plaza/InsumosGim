@@ -220,7 +220,12 @@ public sealed class TransactionalNotificationProcessor(
         var bank = string.IsNullOrWhiteSpace(_bankTransfer.BankName) ? "banco a confirmar" : _bankTransfer.BankName;
         var alias = string.IsNullOrWhiteSpace(_bankTransfer.Alias) ? "alias a confirmar" : _bankTransfer.Alias;
         var cbu = string.IsNullOrWhiteSpace(_bankTransfer.Cbu) ? "CBU a confirmar" : _bankTransfer.Cbu;
-        return $"Registramos tu pedido por {amount}. Transferí antes del {deadline} usando como referencia el pedido #{order.Id}. Datos: {bank}; alias {alias}; CBU {cbu}. La disponibilidad se confirma al acreditar la transferencia. Si algún producto no está disponible, te contactaremos para ofrecerte un cambio o gestionar la devolución.";
+        var reference = order.Payments
+            .Where(x => x.Provider == "BankTransfer")
+            .OrderByDescending(x => x.Id)
+            .Select(x => x.ExternalReference)
+            .FirstOrDefault() ?? order.Id.ToString(CultureInfo.InvariantCulture);
+        return $"Registramos tu pedido por {amount}. Transferí antes del {deadline} e indicá la referencia {reference}. Datos: {bank}; alias {alias}; CBU {cbu}. La disponibilidad se confirma al acreditar la transferencia. Si algún producto no está disponible, te contactaremos para ofrecerte un cambio o gestionar la devolución.";
     }
     private static string TrackingText(Order order) => string.IsNullOrWhiteSpace(order.TrackingNumber)
         ? "Tu pedido salió del comercio y está en camino."
